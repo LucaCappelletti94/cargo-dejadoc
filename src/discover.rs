@@ -118,8 +118,13 @@ fn collect(
         }
     };
     let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    // A file module with a companion directory keeps its children there.
+    let base = match file.file_stem() {
+        Some(stem) if dir.join(stem).is_dir() => dir.join(stem),
+        _ => dir.to_path_buf(),
+    };
     let mut children = Vec::new();
-    mod_decls(&parsed.items, dir, &mut children);
+    mod_decls(&parsed.items, &base, &mut children);
     out.push((file.to_path_buf(), parsed));
     for child in children {
         collect(&child, out, visited)?;
@@ -147,7 +152,9 @@ fn mod_decls(items: &[syn::Item], dir: &std::path::Path, out: &mut Vec<PathBuf>)
     }
 }
 
-/// File for `mod name;` in `dir`, honouring a `#[path = "…"]` override.
+/// File for `mod name;` in `dir`. A top-level `#[path = "…"]` wins, as it
+/// does for rustc; otherwise the first existing `path` from a
+/// `#[cfg_attr(…, path = "…")]` is used, since cfg is not evaluated.
 fn resolve_mod_path(
     dir: &std::path::Path,
     name: &syn::Ident,
@@ -167,11 +174,49 @@ fn resolve_mod_path(
         };
         return Some(dir.join(s.value()));
     }
+    let candidates: Vec<PathBuf> = attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg_attr"))
+        .filter_map(|a| {
+            let Meta::List(list) = &a.meta else {
+                return None;
+            };
+            Some(cfg_attr_paths(&list.tokens))
+        })
+        .flatten()
+        .map(|p| dir.join(p))
+        .collect();
+    if let Some(path) = candidates.into_iter().find(|p| p.exists()) {
+        return Some(path);
+    }
     let plain = dir.join(format!("{name}.rs"));
     if plain.exists() {
         return Some(plain);
     }
     Some(dir.join(name.to_string()).join("mod.rs"))
+}
+
+/// The `path = "…"` values inside a `cfg_attr` attribute's tokens.
+fn cfg_attr_paths(tokens: &proc_macro2::TokenStream) -> Vec<String> {
+    let trees = tokens.clone().into_iter().collect::<Vec<_>>();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i + 2 < trees.len() {
+        if matches!(
+            (&trees[i], &trees[i + 1]),
+            (
+                proc_macro2::TokenTree::Ident(id),
+                proc_macro2::TokenTree::Punct(eq)
+            ) if id == "path" && eq.as_char() == '='
+        ) {
+            let text = trees[i + 2].to_string();
+            if let Ok(s) = syn::parse_str::<syn::LitStr>(&text) {
+                out.push(s.value());
+            }
+        }
+        i += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -213,6 +258,57 @@ mod tests {
         std::fs::write(dir.path().join("a").join("mod.rs"), "pub fn g() {}\n").unwrap();
         let result = module_tree(&target(&root)).unwrap();
         assert_eq!(files(result).len(), 2);
+    }
+    #[test]
+    fn cfg_attr_path_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(
+            &root,
+            "#[cfg_attr(a, path = \"other.rs\")]\npub mod renamed;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 2);
+    }
+
+    #[test]
+    fn cfg_attr_path_takes_the_existing_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(
+            &root,
+            "#[cfg_attr(a, path = \"missing1.rs\")]\n\
+             #[cfg_attr(b, path = \"present.rs\")]\n\
+             pub mod m;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("present.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let names: Vec<String> = files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["lib.rs", "present.rs"]);
+    }
+
+    #[test]
+    fn file_module_companion_directory() {
+        // `de.rs` with a companion `de/` keeps its child modules in `de/`,
+        // as in serde_derive.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod de;\n").unwrap();
+        std::fs::write(dir.path().join("de.rs"), "pub mod child;\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("de")).unwrap();
+        std::fs::write(dir.path().join("de").join("child.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let names: Vec<String> = files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["lib.rs", "de.rs", "child.rs"]);
     }
 
     #[test]
