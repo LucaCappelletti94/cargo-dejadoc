@@ -19,12 +19,8 @@ env:
 
 jobs:
   mutants:
-    name: Mutation testing
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-    # The run is report-only: nine documented equivalent mutants (unreachable
-    # syn-only match arms and values no code path reads) cap the raw score at
-    # ~94%, so a --fail-under gate would be red on every run.
+    # The --exclude-re flags drop the nine documented equivalent mutants (plans/dejadoc.md),
+    # because cargo-mutants exits 2 on any missed mutant and would otherwise be red forever.
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
@@ -49,4 +45,8 @@ jobs:
         run: cargo install cargo-mutants --locked
 
       - name: Run mutants
-        run: cargo mutants --cap-lints true --timeout 60
+        run: >-
+          cargo mutants --cap-lints true --timeout 60
+          -E 'delete match arm (syn::)?(ImplItem|TraitItem|ForeignItem)::Macro\(m\) in (impl_assoc_name|trait_assoc_name|foreign_name|assoc_attrs|trait_assoc_attrs|foreign_attrs)'
+          -E 'replace match guard mac\.path\.is_ident("concat") with true'
+          -E 'replace \+ with [-*] in merge_parts'
