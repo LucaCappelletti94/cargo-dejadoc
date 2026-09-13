@@ -1,5 +1,3 @@
-//! Workspace, target, and module-tree discovery.
-
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -118,13 +116,14 @@ fn collect(
         }
     };
     let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-    // A file module with a companion directory keeps its children there.
+    // A file module with a companion directory keeps its child modules
+    // there; `#[path]` in that file is still relative to `dir`.
     let base = match file.file_stem() {
         Some(stem) if dir.join(stem).is_dir() => dir.join(stem),
         _ => dir.to_path_buf(),
     };
     let mut children = Vec::new();
-    mod_decls(&parsed.items, &base, &mut children);
+    mod_decls(&parsed.items, dir, &base, &mut children);
     out.push((file.to_path_buf(), parsed));
     for child in children {
         collect(&child, out, visited)?;
@@ -133,17 +132,24 @@ fn collect(
 }
 
 /// Collect the files of `mod name;` declarations, at every nesting depth.
-/// Inline mods share the defining file's directory, as rustc does.
-fn mod_decls(items: &[syn::Item], dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+/// `dir` is the directory containing the defining file (explicit `#[path]`
+/// resolves against it); `base` is the implicit child directory (the
+/// companion directory for a file module).
+fn mod_decls(
+    items: &[syn::Item],
+    dir: &std::path::Path,
+    base: &std::path::Path,
+    out: &mut Vec<PathBuf>,
+) {
     use syn::Item;
 
     for item in items {
         if let Item::Mod(moditem) = item {
             if let Some((_, children)) = &moditem.content {
-                mod_decls(children, dir, out);
+                mod_decls(children, dir, base, out);
                 continue;
             }
-            match resolve_mod_path(dir, &moditem.ident, &moditem.attrs) {
+            match resolve_mod_path(dir, base, &moditem.ident, &moditem.attrs) {
                 Some(path) if path.exists() => out.push(path),
                 Some(path) => eprintln!("dejadoc: warning: missing module file {path:?}"),
                 None => {}
@@ -155,13 +161,16 @@ fn mod_decls(items: &[syn::Item], dir: &std::path::Path, out: &mut Vec<PathBuf>)
 /// File for `mod name;` in `dir`. A top-level `#[path = "…"]` wins, as it
 /// does for rustc; otherwise the first existing `path` from a
 /// `#[cfg_attr(…, path = "…")]` is used, since cfg is not evaluated.
+/// Explicit paths resolve against `dir`; the plain fallback against `base`.
 fn resolve_mod_path(
     dir: &std::path::Path,
+    base: &std::path::Path,
     name: &syn::Ident,
     attrs: &[syn::Attribute],
 ) -> Option<PathBuf> {
     use syn::{Expr, ExprLit, Lit, Meta};
 
+    let name = name.to_string().trim_start_matches("r#").to_string();
     if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("path")) {
         let Meta::NameValue(nv) = &attr.meta else {
             return None;
@@ -189,11 +198,11 @@ fn resolve_mod_path(
     if let Some(path) = candidates.into_iter().find(|p| p.exists()) {
         return Some(path);
     }
-    let plain = dir.join(format!("{name}.rs"));
+    let plain = base.join(format!("{name}.rs"));
     if plain.exists() {
         return Some(plain);
     }
-    Some(dir.join(name.to_string()).join("mod.rs"))
+    Some(base.join(&name).join("mod.rs"))
 }
 
 /// The `path = "…"` values inside a `cfg_attr` attribute's tokens.
@@ -323,6 +332,35 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(got, vec!["lib.rs", "other.rs"]);
+    }
+
+    #[test]
+    fn raw_identifier_module_file() {
+        // `mod r#extern;` resolves to `extern.rs`, not `r#extern.rs`.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod r#extern;\n").unwrap();
+        std::fs::write(dir.path().join("extern.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 2);
+    }
+
+    #[test]
+    fn path_attribute_uses_the_defining_directory() {
+        // `#[path]` inside a file module is relative to the directory
+        // containing that file, not its companion directory.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a;\n").unwrap();
+        std::fs::write(dir.path().join("a.rs"), "#[path = \"a/b.rs\"]\nmod b;\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("b.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let names: Vec<String> = files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["lib.rs", "a.rs", "b.rs"]);
     }
 
     #[test]

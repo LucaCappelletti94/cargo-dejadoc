@@ -15,13 +15,15 @@ use crate::DocTest;
 use crate::discover::Target;
 use crate::fence;
 
-/// A run of doc text with per-line source positions.
+/// A run of doc text with per-line source positions. One source spans the
+/// item's whole doc stream: its lines may come from different files
+/// (`#[doc = include_str!(…)]` splices other files in).
 struct DocSource {
     text: String,
     /// 1-based source line of each text line; one entry per text line.
     lines: Vec<u32>,
-    /// Absolute path of the file the text lives in.
-    file: PathBuf,
+    /// File of each text line; one entry per text line.
+    files: Vec<PathBuf>,
 }
 
 /// Extract doctest blocks from one parsed source file.
@@ -264,18 +266,20 @@ fn push_include(parts: &mut Vec<(String, u32, PathBuf)>, file: &Path, p: &str) {
     }
 }
 
-/// Merge consecutive parts sharing a file into single sources.
+/// Merge all parts of one item's doc stream into a single source: rustdoc
+/// assembles the stream regardless of where each line comes from.
 fn merge_parts(parts: Vec<(String, u32, PathBuf)>) -> Vec<DocSource> {
     let mut out: Vec<DocSource> = Vec::new();
     for (text, line, file) in parts {
         let lines = line_range(&text, line);
-        if out.last().is_some_and(|src| src.file == file) {
-            let last = out.last_mut().unwrap();
+        let files = vec![file; lines.len()];
+        if let Some(last) = out.last_mut() {
             last.text.push('\n');
             last.text.push_str(&text);
             last.lines.extend(lines);
+            last.files.extend(files);
         } else {
-            out.push(DocSource { text, lines, file });
+            out.push(DocSource { text, lines, files });
         }
     }
     out
@@ -347,10 +351,9 @@ fn blocks(src: &DocSource, item: &str, root: &Path) -> Vec<DocTest> {
         if !counted {
             continue;
         }
-        let file = src
-            .file
+        let file = src.files[f.line]
             .strip_prefix(root)
-            .unwrap_or(&src.file)
+            .unwrap_or(&src.files[f.line])
             .to_path_buf();
         out.push(DocTest {
             file,
@@ -832,6 +835,40 @@ pub fn raw() {}
                 dt("src/lib.rs", 21, "mycrate::Ty", &[], "fn f() {}", false),
                 dt("src/lib.rs", 25, "mycrate::Tr", &[], "fn g() {}", false),
             ]
+        );
+    }
+
+    #[test]
+    fn fence_spanning_include() {
+        // A fence straddling a `#[doc = include_str!(…)]` part belongs to
+        // the item's one doc stream, as rustdoc assembles it.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("doc.md"), "fn main() {}").unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "/// ```\n#[doc = include_str!(\"doc.md\")]\n/// ```\npub fn f() {}\n",
+        )
+        .unwrap();
+        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+        let parsed = syn::parse_file(&code).unwrap();
+        let target = Target {
+            name: "mycrate".into(),
+            kind: crate::discover::TargetKind::Lib,
+            src: src.join("lib.rs"),
+        };
+        let dts = extract(&target, &src.join("lib.rs"), &parsed, dir.path());
+        assert_eq!(
+            dts,
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
         );
     }
 }
