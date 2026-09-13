@@ -37,7 +37,10 @@ struct Args {
 }
 
 fn main() -> ExitCode {
-    let args: Vec<String> = std::env::args().filter(|a| a != "dejadoc").collect();
+    let mut args: Vec<String> = std::env::args().collect();
+    if args.get(1).is_some_and(|a| a == "dejadoc") {
+        args.remove(1);
+    }
     let args = Args::parse_from(args);
     let opts = dejadoc::Options {
         package: args.package,

@@ -103,3 +103,26 @@ fn binary_runs_end_to_end() {
     assert_eq!(value["total"], 8);
     assert_eq!(value["groups"].as_array().unwrap().len(), 2);
 }
+
+#[test]
+fn package_named_dejadoc_is_not_filtered() {
+    // Only the cargo subcommand token at position 1 is stripped; a flag
+    // value that happens to be "dejadoc" must survive to clap.
+    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let out = Command::new(bin)
+        .current_dir(FIXTURE)
+        .arg("dejadoc")
+        .arg("--json")
+        .arg("--package")
+        .arg("dejadoc")
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {:?}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
+    assert_eq!(value["total"], 0);
+}

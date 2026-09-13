@@ -215,9 +215,9 @@ fn push_doc(
     }
 }
 
-/// Doc text sources from an item's attributes: `#[doc = "…"]` literals,
-/// `include_str!` files, and `concat!` mixes of both. Consecutive text from
-/// the same file merges into one source, as rustdoc does.
+/// Doc text from an item's attributes: `#[doc = "…"]` literals,
+/// `include_str!` files, and `concat!` mixes, assembled into one doc
+/// stream as rustdoc does, so fences may straddle include boundaries.
 fn doc_sources(attrs: &[syn::Attribute], file: &Path) -> Vec<DocSource> {
     let mut parts: Vec<(String, u32, PathBuf)> = Vec::new();
     for attr in attrs.iter().filter(|a| a.path().is_ident("doc")) {
@@ -274,6 +274,12 @@ fn merge_parts(parts: Vec<(String, u32, PathBuf)>) -> Vec<DocSource> {
         let lines = line_range(&text, line);
         let files = vec![file; lines.len()];
         if let Some(last) = out.last_mut() {
+            // The separator after a part ending in a newline adds one
+            // blank line; attribute it to the previous part's file.
+            if last.text.ends_with('\n') {
+                last.lines.push(*last.lines.last().unwrap() + 1);
+                last.files.push(last.files.last().unwrap().clone());
+            }
             last.text.push('\n');
             last.text.push_str(&text);
             last.lines.extend(lines);
@@ -295,8 +301,7 @@ fn strip_doc_spaces(text: &str) -> String {
 }
 /// 1-based source lines occupied by `text` starting at `line`.
 fn line_range(text: &str, line: u32) -> Vec<u32> {
-    // `str::count` is gone on this toolchain; `matches` counts the same way.
-    let n = text.matches('\n').count() + 1;
+    let n = text.lines().count();
     debug_assert!(n <= u32::MAX as usize, "doc text exceeds u32 lines");
     (line..line.saturating_add(n as u32)).collect()
 }
@@ -870,5 +875,29 @@ pub fn raw() {}
                 false
             )]
         );
+    }
+
+    #[test]
+    fn newline_terminated_doc_part_keeps_line_mapping() {
+        // A doc part ending in a newline plus the merge separator yields
+        // one extra text line; the line mapping must cover it, since
+        // fences are indexed by text line.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "#[doc = \"x\\n\"]\n#[doc = \"a\\n```rust\"]\npub fn f() {}\n",
+        )
+        .unwrap();
+        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+        let parsed = syn::parse_file(&code).unwrap();
+        let target = Target {
+            name: "mycrate".into(),
+            kind: crate::discover::TargetKind::Lib,
+            src: src.join("lib.rs"),
+        };
+        let dts = extract(&target, &src.join("lib.rs"), &parsed, dir.path());
+        assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
 }
