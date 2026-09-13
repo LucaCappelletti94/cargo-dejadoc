@@ -1,5 +1,4 @@
-//! Find duplicated Rust doctests across a workspace.
-
+#![doc = include_str!("../README.md")]
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
