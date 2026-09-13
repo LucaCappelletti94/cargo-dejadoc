@@ -1,5 +1,7 @@
 # cargo-dejadoc
 
+![CI](https://github.com/LucaCappelletti94/cargo-dejadoc/actions/workflows/ci.yml/badge.svg)
+
 Whoa, deja vu. Find duplicated Rust doctests across a workspace.
 
 `cargo dejadoc` scans every doctest your workspace's rustdoc would run,
