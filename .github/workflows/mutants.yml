@@ -19,6 +19,9 @@ env:
 
 jobs:
   mutants:
+    name: Mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
     # The --exclude-re flags drop the nine documented equivalent mutants (plans/dejadoc.md),
     # because cargo-mutants exits 2 on any missed mutant and would otherwise be red forever.
     if: >-
