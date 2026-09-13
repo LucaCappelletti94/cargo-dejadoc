@@ -51,5 +51,5 @@ jobs:
         run: >-
           cargo mutants --cap-lints true --timeout 60
           -E 'delete match arm (syn::)?(ImplItem|TraitItem|ForeignItem)::Macro\(m\) in (impl_assoc_name|trait_assoc_name|foreign_name|assoc_attrs|trait_assoc_attrs|foreign_attrs)'
-          -E 'replace match guard mac\.path\.is_ident("concat") with true'
+          -E 'replace match guard mac\.path\.is_ident\("concat"\) with true'
           -E 'replace \+ with [-*] in merge_parts'
