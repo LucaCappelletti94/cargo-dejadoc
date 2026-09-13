@@ -713,6 +713,22 @@ mod tests {
     }
 
     #[test]
+    fn tilde_fence_doctest_extracts() {
+        let src = "/// ~~~rust\n/// fn main() {}\n/// ~~~\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
     fn min_rustc_recorded() {
         let src = "/// ```rust,min rustc 1.45\n/// fn main() {}\n/// ```\npub fn f() {}\n";
         assert_eq!(
