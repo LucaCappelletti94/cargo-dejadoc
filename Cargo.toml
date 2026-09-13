@@ -1,0 +1,25 @@
+[package]
+name = "dejadoc"
+version = "0.1.0"
+edition = "2024"
+description = "Find duplicated Rust doctests across a workspace"
+
+[[bin]]
+name = "cargo-dejadoc"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1.0.104"
+blake3 = "1.8.7"
+cargo_metadata = "0.23.1"
+clap = { version = "4.6.6", features = ["derive"] }
+owo-colors = "4.4.0"
+proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
+quote = "1.0.47"
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+syn = { version = "3.0.5", features = ["full"] }
+toml = "1.1.6"
+
+[dev-dependencies]
+tempfile = "3.27.0"
