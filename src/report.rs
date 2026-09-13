@@ -60,7 +60,7 @@ pub fn human(report: &Report, verbose: bool) -> String {
 ///
 /// # Panics
 ///
-/// `Report` is `Serialize`; serialization failure would be a bug in this
+/// `Report` is `Serialize`. Serialization failure would be a bug in this
 /// crate.
 #[must_use]
 pub fn json(report: &Report) -> String {

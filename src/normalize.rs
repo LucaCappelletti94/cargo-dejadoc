@@ -9,8 +9,8 @@ use quote::ToTokens;
 /// Canonical form of a doctest body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Canonical {
-    /// Canonical text: deterministic token-stream string, or the collapsed
-    /// text fallback.
+    /// Canonical text, a deterministic token-stream string, or the
+    /// collapsed text fallback.
     pub text: String,
     /// True when no `syn` parse succeeded and the text fallback was used.
     pub unparsed: bool,

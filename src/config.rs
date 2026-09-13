@@ -3,15 +3,16 @@
 #[cfg(feature = "std")]
 use std::path::Path;
 
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 /// Parameters from a `.dejadoc.toml` file.
-pub struct Config {
+pub(crate) struct Config {
     /// Report groups with at least this many sites.
-    pub threshold: Option<usize>,
+    pub(crate) threshold: Option<usize>,
     /// Skip blocks with fewer tokens than this.
     #[serde(rename = "min-tokens")]
-    pub min_tokens: Option<usize>,
+    pub(crate) min_tokens: Option<usize>,
 }
 
 #[cfg(feature = "std")]
@@ -20,7 +21,7 @@ pub struct Config {
 /// # Errors
 ///
 /// Fails when the file exists but cannot be read or is not valid TOML.
-pub fn load(path: &Path) -> crate::Result<Config> {
+pub(crate) fn load(path: &Path) -> crate::Result<Config> {
     if !path.exists() {
         return Ok(Config::default());
     }

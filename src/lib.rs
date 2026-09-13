@@ -16,7 +16,7 @@ use std::format;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
-pub mod config;
+mod config;
 #[cfg(feature = "std")]
 pub mod discover;
 pub mod extract;
@@ -26,8 +26,8 @@ pub mod report;
 
 pub use report::{human, json};
 
-/// Scan parameters. Values left unset fall back to `.dejadoc.toml`, then
-/// to defaults (threshold 2, min-tokens 0).
+/// Scan parameters. Unset values fall back to `.dejadoc.toml`, then to
+/// defaults.
 #[cfg(feature = "std")]
 #[derive(Debug, Clone, Default)]
 pub struct Dejadoc {
@@ -81,8 +81,8 @@ impl Dejadoc {
     /// # Errors
     ///
     /// Fails when `cargo metadata` cannot resolve the workspace, when the
-    /// config file cannot be read or is not valid TOML, or when a module
-    /// file cannot be canonicalized.
+    /// config cannot be read or parsed, or when a module file cannot be
+    /// canonicalized.
     pub fn run(self, root: impl AsRef<Path>) -> Result<Report> {
         let Self {
             package,
@@ -112,10 +112,7 @@ impl Dejadoc {
                     match std::fs::read_to_string(&inc) {
                         Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
                         Err(err) => {
-                            eprintln!(
-                                "dejadoc: warning: cannot read doc include {}: {err}",
-                                inc.display()
-                            );
+                            eprintln!("dejadoc: cannot read doc include {}: {err}", inc.display());
                             None
                         }
                     }
@@ -137,13 +134,13 @@ impl Dejadoc {
 #[cfg(feature = "std")]
 #[derive(Debug, thiserror::Error)]
 pub enum Error {
-    /// `cargo metadata` could not resolve the workspace.
+    /// The workspace could not be resolved.
     #[error("workspace: {0}")]
     Workspace(#[source] cargo_metadata::Error),
     /// A file could not be read.
     #[error("I/O: {0}")]
     Io(#[source] std::io::Error),
-    /// The config file cannot be read or is not valid TOML.
+    /// The config file could not be read or parsed.
     #[error("config: {0}")]
     Config(#[source] toml::de::Error),
 }
@@ -182,7 +179,7 @@ pub struct DocTest {
     pub line: u32,
     /// Item path, e.g. `mycrate::parser::parse`.
     pub item: String,
-    /// Doctest attributes: `no_run`, `should_panic`, …
+    /// Doctest attributes such as `no_run` and `should_panic`.
     pub info: Vec<String>,
     /// Raw block body.
     pub code: String,

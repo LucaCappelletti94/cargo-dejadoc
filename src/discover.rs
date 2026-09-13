@@ -30,7 +30,7 @@ pub enum TargetKind {
     Example,
 }
 
-/// A resolved workspace: root directory and the targets to scan.
+/// A resolved workspace root and the targets to scan.
 #[derive(Debug, Clone)]
 pub struct Workspace {
     /// Workspace root directory.
@@ -97,12 +97,12 @@ fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<
     None
 }
 
-/// Parse the target's module tree: each file with its parsed contents and
+/// Parse the target's module tree, each file with its parsed contents and
 /// the module-path segments from the target root (empty for the root file).
 ///
 /// # Errors
 ///
-/// Fails when a module file cannot be canonicalized; unreadable or
+/// Fails when a module file cannot be canonicalized. Unreadable or
 /// unparseable files are skipped with a warning.
 pub fn module_tree(target: &Target) -> crate::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
@@ -124,14 +124,14 @@ fn collect(
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(err) => {
-            eprintln!("dejadoc: warning: cannot read {}: {err}", file.display());
+            eprintln!("dejadoc: cannot read {}: {err}", file.display());
             return Ok(());
         }
     };
     let parsed = match syn::parse_file(&text) {
         Ok(parsed) => parsed,
         Err(err) => {
-            eprintln!("dejadoc: warning: cannot parse {}: {err}", file.display());
+            eprintln!("dejadoc: cannot parse {}: {err}", file.display());
             return Ok(());
         }
     };
@@ -155,7 +155,7 @@ fn collect(
 
 /// Collect the `mod name;` files and their module names, at every nesting
 /// depth. `dir` is the directory containing the defining file (explicit
-/// `#[path]` resolves against it); `base` is the implicit child directory
+/// `#[path]` resolves against it). `base` is the implicit child directory
 /// (the companion directory for a file module).
 fn mod_decls(
     items: &[syn::Item],
@@ -179,7 +179,7 @@ fn mod_decls(
                 .to_string();
             match resolve_mod_path(dir, base, &name, &moditem.attrs) {
                 Some(path) if path.exists() => out.push((path, name)),
-                Some(path) => eprintln!("dejadoc: warning: missing module file {}", path.display()),
+                Some(path) => eprintln!("dejadoc: missing module file {}", path.display()),
                 None => {}
             }
         }
@@ -187,9 +187,10 @@ fn mod_decls(
 }
 
 /// File for `mod name;` in `dir`. A top-level `#[path = "…"]` wins, as it
-/// does for rustc; otherwise the first existing `path` from a
+/// does for rustc. Otherwise the first existing `path` from a
 /// `#[cfg_attr(…, path = "…")]` is used, since cfg is not evaluated.
-/// Explicit paths resolve against `dir`; the plain fallback against `base`.
+/// Explicit paths resolve against `dir`. The plain fallback resolves against
+/// `base`.
 fn resolve_mod_path(
     dir: &std::path::Path,
     base: &std::path::Path,

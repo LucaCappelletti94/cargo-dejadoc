@@ -1,4 +1,4 @@
-//! The cargo-dejadoc binary: CLI argument parsing and exit codes.
+//! CLI argument parsing and exit codes for the cargo-dejadoc binary.
 
 use clap::Parser;
 use std::path::{Path, PathBuf};

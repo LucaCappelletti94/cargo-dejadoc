@@ -19,7 +19,7 @@ use crate::DocTest;
 use crate::fence;
 
 /// A run of doc text with per-line source positions. One source spans the
-/// item's whole doc stream: its lines may come from different files
+/// item's whole doc stream, and its lines may come from different files
 /// (`#[doc = include_str!(…)]` splices other files in).
 struct DocSource {
     text: String,
@@ -31,8 +31,8 @@ struct DocSource {
 
 /// Extract doctest blocks from one parsed source file, under the item path
 /// `prefix` (the target name for the root file, with module segments for
-/// submodules). Site paths drop the `root` prefix; `read_include` resolves an
-/// `include_str!` doc splice to `(path, text)`.
+/// submodules). Site paths drop the `root` prefix. `read_include` resolves
+/// an `include_str!` doc splice to `(path, text)`.
 #[must_use]
 pub fn extract(
     prefix: &str,
@@ -239,9 +239,9 @@ fn push_doc(
     }
 }
 
-/// Doc text from an item's attributes: `#[doc = "…"]` literals,
+/// Doc text from an item's attributes, `#[doc = "…"]` literals,
 /// `include_str!` files, and `concat!` mixes, assembled into one doc
-/// stream as rustdoc does, so fences may straddle include boundaries.
+/// stream, so fences may straddle include boundaries.
 fn doc_sources(
     attrs: &[syn::Attribute],
     file: &str,
@@ -292,8 +292,7 @@ fn push_include(
     }
 }
 
-/// Merge all parts of one item's doc stream into a single source: rustdoc
-/// assembles the stream regardless of where each line comes from.
+/// Merge all parts of one item's doc stream into a single source.
 fn merge_parts(parts: Vec<(String, u32, String)>) -> Vec<DocSource> {
     let mut out: Vec<DocSource> = Vec::new();
     let mut prev: Option<(u32, String)> = None;
@@ -326,7 +325,7 @@ fn merge_parts(parts: Vec<(String, u32, String)>) -> Vec<DocSource> {
     out
 }
 
-/// Strip one leading space per line: `///` comments keep it in the `#[doc]`
+/// Strip one leading space per line. `///` comments keep it in the `#[doc]`
 /// value, but rustdoc drops it.
 fn strip_doc_spaces(text: &str) -> String {
     text.split('\n')
@@ -492,7 +491,7 @@ fn type_name(ty: &Type) -> String {
     }
 }
 
-/// Local name a `use` tree introduces; groups of names keep their tree form.
+/// Local name a `use` tree introduces. Groups of names keep their tree form.
 fn use_name(tree: &UseTree) -> String {
     match tree {
         UseTree::Path(p) => use_name(&p.tree),
@@ -744,10 +743,7 @@ mod tests {
             match std::fs::read_to_string(&path) {
                 Ok(text) => Some((path.to_string_lossy().into_owned(), text)),
                 Err(err) => {
-                    std::eprintln!(
-                        "dejadoc: warning: cannot read doc include {}: {err}",
-                        path.display()
-                    );
+                    std::eprintln!("dejadoc: cannot read doc include {}: {err}", path.display());
                     None
                 }
             }
