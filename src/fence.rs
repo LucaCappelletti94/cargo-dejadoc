@@ -13,6 +13,7 @@ pub struct Fence {
 
 /// Scan `text` for fenced code blocks. An unterminated block at EOF is
 /// emitted, matching rustdoc.
+#[must_use]
 pub fn scan(text: &str) -> Vec<Fence> {
     let mut out = Vec::new();
     let mut open: Option<(String, usize, Vec<String>)> = None;

@@ -1,3 +1,5 @@
+//! Workspace and module-tree discovery.
+
 use std::collections::HashSet;
 use std::path::PathBuf;
 
@@ -15,8 +17,11 @@ pub struct Target {
 /// Kind of target, matching what `cargo test --doc` runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TargetKind {
+    /// A library (or proc-macro) target.
     Lib,
+    /// A binary target.
     Bin,
+    /// An example target.
     Example,
 }
 
@@ -30,6 +35,10 @@ pub struct Workspace {
 }
 
 /// Resolve the workspace containing `root` and the targets to scan.
+///
+/// # Errors
+///
+/// Fails when `cargo metadata` cannot be run for `root`.
 pub fn workspace(
     root: &std::path::Path,
     package: Option<&str>,
@@ -45,7 +54,7 @@ pub fn workspace(
         .iter()
         .filter(|p| package.is_none_or(|want| p.name == want))
     {
-        for target in package.targets.iter() {
+        for target in &package.targets {
             if let Some(kind) = scan_kind(&target.kind, all_targets) {
                 targets.push(Target {
                     name: target.name.clone(),
@@ -85,6 +94,11 @@ fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<
 
 /// Parse the target's module tree: each file with its parsed contents and
 /// the module-path segments from the target root (empty for the root file).
+///
+/// # Errors
+///
+/// Fails when a module file cannot be canonicalized; unreadable or
+/// unparseable files are skipped with a warning.
 pub fn module_tree(target: &Target) -> anyhow::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
     let mut visited = HashSet::new();
@@ -105,14 +119,14 @@ fn collect(
     let text = match std::fs::read_to_string(file) {
         Ok(text) => text,
         Err(err) => {
-            eprintln!("dejadoc: warning: cannot read {file:?}: {err}");
+            eprintln!("dejadoc: warning: cannot read {}: {err}", file.display());
             return Ok(());
         }
     };
     let parsed = match syn::parse_file(&text) {
         Ok(parsed) => parsed,
         Err(err) => {
-            eprintln!("dejadoc: warning: cannot parse {file:?}: {err}");
+            eprintln!("dejadoc: warning: cannot parse {}: {err}", file.display());
             return Ok(());
         }
     };
@@ -160,7 +174,7 @@ fn mod_decls(
                 .to_string();
             match resolve_mod_path(dir, base, &name, &moditem.attrs) {
                 Some(path) if path.exists() => out.push((path, name)),
-                Some(path) => eprintln!("dejadoc: warning: missing module file {path:?}"),
+                Some(path) => eprintln!("dejadoc: warning: missing module file {}", path.display()),
                 None => {}
             }
         }

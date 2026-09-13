@@ -2,42 +2,48 @@
 
 use crate::Report;
 
+use std::fmt::Write;
+
 /// Render the report for humans.
+#[must_use]
 pub fn human(report: &Report, verbose: bool) -> String {
     let mut out = String::new();
-    out.push_str(&format!(
-        "{} doctests, {} unique, {} duplicated groups\n",
+    let _ = writeln!(
+        &mut out,
+        "{} doctests, {} unique, {} duplicated groups",
         report.total,
         report.unique,
         report.groups.len()
-    ));
+    );
     if report.groups.is_empty() {
         return out;
     }
     out.push('\n');
     for (i, group) in report.groups.iter().enumerate() {
-        out.push_str(&format!(
-            "[{}] {} sites, {} tokens\n",
+        let _ = writeln!(
+            &mut out,
+            "[{}] {} sites, {} tokens",
             group.id,
             group.sites.len(),
             group.tokens
-        ));
+        );
         for site in &group.sites {
             let info = if site.info.is_empty() {
                 String::new()
             } else {
                 format!("   ({})", site.info.join(", "))
             };
-            out.push_str(&format!(
-                "  {}:{}  {}{}\n",
+            let _ = writeln!(
+                &mut out,
+                "  {}:{}  {}{}",
                 site.file.display(),
                 site.line,
                 site.item,
                 info
-            ));
+            );
             if verbose {
                 for line in site.code.lines() {
-                    out.push_str(&format!("    {line}\n"));
+                    let _ = writeln!(&mut out, "    {line}");
                 }
             }
         }
@@ -49,8 +55,13 @@ pub fn human(report: &Report, verbose: bool) -> String {
 }
 
 /// Render the report as JSON.
+///
+/// # Panics
+///
+/// `Report` is `Serialize`; serialization failure would be a bug in this
+/// crate.
+#[must_use]
 pub fn json(report: &Report) -> String {
-    // `Report` is `Serialize`; failure would be a bug in this crate.
     serde_json::to_string(report).expect("Report serializes to JSON")
 }
 
@@ -64,7 +75,7 @@ mod tests {
             file: std::path::PathBuf::from(file),
             line,
             item: item.to_string(),
-            info: info.iter().map(|s| s.to_string()).collect(),
+            info: info.iter().map(ToString::to_string).collect(),
             code: code.to_string(),
             allow: false,
         }

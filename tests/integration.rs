@@ -1,3 +1,5 @@
+//! End-to-end tests of the scan through the real workspace fixtures.
+
 use dejadoc::{Options, Report, run};
 use std::path::Path;
 use std::process::Command;
@@ -65,7 +67,7 @@ fn config_threshold_suppresses_groups() {
         ..Options::default()
     };
     let report = run(Path::new(FIXTURE), &opts).unwrap();
-    assert!(report.groups.is_empty());
+    assert_eq!(report.groups, Vec::new());
 
     // CLI threshold overrides the config file.
     let opts = Options {

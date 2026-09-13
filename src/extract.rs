@@ -28,6 +28,7 @@ struct DocSource {
 /// Extract doctest blocks from one parsed source file, under the item path
 /// `prefix` (the target name for the root file, with module segments for
 /// submodules).
+#[must_use]
 pub fn extract(prefix: &str, file: &Path, parsed: &syn::File, root: &Path) -> Vec<DocTest> {
     let mut out = Vec::new();
     // File-level `//!` docs: inner doc attributes only.
@@ -199,9 +200,8 @@ fn foreign_attrs(foreign: &ForeignItem) -> &[syn::Attribute] {
 
 fn line_of(span: proc_macro2::Span) -> u32 {
     let line = span.start().line;
-    // Spans count file lines; multi-gigabyte files do not occur.
-    debug_assert!(line <= u32::MAX as usize, "span line overflows u32");
-    line as u32
+    // A line count beyond u32::MAX is physically unreachable; clamp it.
+    u32::try_from(line).unwrap_or(u32::MAX)
 }
 
 fn push_doc(
@@ -240,7 +240,11 @@ fn doc_sources(attrs: &[syn::Attribute], file: &Path) -> Vec<DocSource> {
                     for part in concat.0 {
                         match part {
                             ConcatPart::Lit(s) => {
-                                parts.push((strip_doc_spaces(&s.value()), line, file.to_path_buf()))
+                                parts.push((
+                                    strip_doc_spaces(&s.value()),
+                                    line,
+                                    file.to_path_buf(),
+                                ));
                             }
                             ConcatPart::Include(s) => push_include(&mut parts, file, &s.value()),
                         }
@@ -260,10 +264,12 @@ fn push_include(parts: &mut Vec<(String, u32, PathBuf)>, file: &Path, p: &str) {
     };
     match std::fs::read_to_string(&path) {
         Ok(text) => parts.push((text, 1, path)),
-        Err(err) => eprintln!(
-            "dejadoc: warning: cannot read doc include {:?}: {err}",
-            path
-        ),
+        Err(err) => {
+            eprintln!(
+                "dejadoc: warning: cannot read doc include {}: {err}",
+                path.display()
+            );
+        }
     }
 }
 
@@ -311,9 +317,8 @@ fn strip_doc_spaces(text: &str) -> String {
 }
 /// 1-based source lines occupied by `text` starting at `line`.
 fn line_range(text: &str, line: u32) -> Vec<u32> {
-    let n = text.lines().count();
-    debug_assert!(n <= u32::MAX as usize, "doc text exceeds u32 lines");
-    (line..line.saturating_add(n as u32)).collect()
+    let n = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
+    (line..line.saturating_add(n)).collect()
 }
 
 struct ConcatParts(Vec<ConcatPart>);
@@ -433,8 +438,7 @@ fn item_name(item: &Item) -> Option<String> {
         Item::ExternCrate(e) => e
             .rename
             .as_ref()
-            .map(|(_, i)| i.to_string())
-            .unwrap_or_else(|| e.ident.to_string()),
+            .map_or_else(|| e.ident.to_string(), |(_, i)| i.to_string()),
         Item::Macro(m) => macro_name(m.ident.as_ref(), &m.mac),
         _ => return None,
     })
@@ -450,7 +454,7 @@ fn macro_name(ident: Option<&Ident>, mac: &Macro) -> String {
                 .collect::<Vec<_>>()
                 .join("::")
         },
-        |i| i.to_string(),
+        ToString::to_string,
     )
 }
 
@@ -499,7 +503,7 @@ mod tests {
             file: PathBuf::from(file),
             line,
             item: item.into(),
-            info: info.iter().map(|s| s.to_string()).collect(),
+            info: info.iter().map(ToString::to_string).collect(),
             code: code.into(),
             allow,
         }

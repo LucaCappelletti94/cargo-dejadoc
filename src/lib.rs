@@ -21,6 +21,7 @@ pub struct Options {
     pub all_targets: bool,
     /// Report groups with at least this many sites.
     pub threshold: Option<usize>,
+    /// Skip blocks with fewer tokens than this.
     pub min_tokens: Option<usize>,
     /// Explicit `.dejadoc.toml` location.
     pub config: Option<PathBuf>,
@@ -72,6 +73,7 @@ pub struct Report {
 }
 
 /// Exit status for a finished scan.
+#[must_use]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     use std::process::ExitCode;
     if report.groups.is_empty() || no_fail {
@@ -83,6 +85,12 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 
 /// Scan `root` (any directory inside the workspace) and report duplicated
 /// doctests.
+///
+/// # Errors
+///
+/// Fails when `cargo metadata` cannot resolve the workspace, when the config
+/// file cannot be read or is not valid TOML, or when a module file cannot be
+/// canonicalized.
 pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
     let workspace = discover::workspace(root, opts.package.as_deref(), opts.all_targets)?;
     let config_path = opts
@@ -183,7 +191,7 @@ mod tests {
             dt("b.rs", 2, "m::b", "let x = 1;", false),
         ];
         let report = group(&blocks, 3, 0);
-        assert!(report.groups.is_empty());
+        assert_eq!(report.groups, Vec::new());
         assert_eq!(report.unique, 1);
     }
 
@@ -194,7 +202,7 @@ mod tests {
             dt("b.rs", 2, "m::b", "let x = 1;", false),
         ];
         let report = group(&blocks, 2, 100);
-        assert!(report.groups.is_empty());
+        assert_eq!(report.groups, Vec::new());
         assert_eq!(report.unique, 1);
     }
 
@@ -260,7 +268,7 @@ mod tests {
             dt("b.rs", 2, "m::b", "let y = 2;", false),
         ];
         let report = group(&blocks, 2, 0);
-        assert!(report.groups.is_empty());
+        assert_eq!(report.groups, Vec::new());
         assert_eq!(report.unique, 2);
         assert_eq!(report.total, 2);
     }

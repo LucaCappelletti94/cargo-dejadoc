@@ -4,6 +4,7 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
+/// Parameters from a `.dejadoc.toml` file.
 pub struct Config {
     /// Report groups with at least this many sites.
     pub threshold: Option<usize>,
@@ -13,6 +14,10 @@ pub struct Config {
 }
 
 /// Load `path`, or the default config when the file is absent.
+///
+/// # Errors
+///
+/// Fails when the file exists but cannot be read or is not valid TOML.
 pub fn load(path: &Path) -> anyhow::Result<Config> {
     if !path.exists() {
         return Ok(Config::default());

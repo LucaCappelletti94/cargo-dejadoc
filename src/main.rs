@@ -1,9 +1,15 @@
+//! The cargo-dejadoc binary: CLI argument parsing and exit codes.
+
 use clap::Parser;
 use std::path::{Path, PathBuf};
 
 use std::process::ExitCode;
 
 #[derive(clap::Parser)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "the bools are clap CLI flags, not an accumulating design"
+)]
 #[command(
     name = "dejadoc",
     version,

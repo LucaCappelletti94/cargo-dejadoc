@@ -14,6 +14,7 @@ pub struct Canonical {
 }
 
 /// Compute the canonical form of a doctest body.
+#[must_use]
 pub fn canonicalize(code: &str) -> Canonical {
     // rustdoc drops any line whose first non-whitespace character is `#`.
     let body: String = code
@@ -68,7 +69,7 @@ mod tests {
     fn item_body_parses() {
         let a = canonicalize("fn main() { }");
         assert!(!a.unparsed);
-        assert!(!a.text.is_empty());
+        assert_ne!(a.text, "");
         assert!(a.tokens > 0);
     }
 
