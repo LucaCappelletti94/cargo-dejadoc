@@ -1,0 +1,77 @@
+---
+name: Sonar
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sonar-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  sonar:
+    name: SonarQube scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    # Neither a fork's pull request nor a Dependabot run can read SONAR_TOKEN
+    # or CODECOV_TOKEN, so the scan runs for same-repo human branches and
+    # pushes to main only.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]')
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # Full history improves blame-based new-code attribution.
+          fetch-depth: 0
+
+      - name: Cache cargo downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: dl-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            dl-${{ runner.os }}-
+
+      - name: Install nightly with LLVM coverage
+        run: |
+          rustup toolchain install nightly \
+            --profile minimal \
+            --component llvm-tools-preview
+
+      - name: Install cargo-llvm-cov
+        run: cargo install cargo-llvm-cov --locked
+
+      - name: Test coverage
+        run: cargo +nightly llvm-cov --lcov --output-path lcov.info
+
+      - name: Upload to Codecov
+        uses: codecov/codecov-action@v7
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: lcov.info
+          fail_ci_if_error: true
+
+      - name: Install stable clippy
+        run: |
+          rustup toolchain install stable \
+            --profile minimal \
+            --component clippy
+
+      - name: SonarQube scan
+        uses: SonarSource/sonarqube-scan-action@v8
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}

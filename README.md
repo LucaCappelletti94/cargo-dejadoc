@@ -1,6 +1,8 @@
 # cargo-dejadoc
 
 ![CI](https://github.com/LucaCappelletti94/cargo-dejadoc/actions/workflows/ci.yml/badge.svg)
+![codecov](https://codecov.io/github/LucaCappelletti94/cargo-dejadoc/graph/badge.svg)
+![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=LucaCappelletti94_cargo-dejadoc&metric=alert_status)
 
 Whoa, deja vu. Find duplicated Rust doctests across a workspace.
 

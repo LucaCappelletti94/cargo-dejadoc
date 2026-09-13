@@ -1,0 +1,5 @@
+---
+name: dejadoc CodeQL configuration
+
+queries:
+  - uses: security-extended
