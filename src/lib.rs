@@ -36,8 +36,6 @@ pub struct Dejadoc {
     all_targets: bool,
     threshold: Option<usize>,
     min_tokens: Option<usize>,
-    #[cfg(feature = "std")]
-    config: Option<PathBuf>,
 }
 
 impl Dejadoc {
@@ -69,12 +67,19 @@ impl Dejadoc {
         self
     }
 
-    /// Read parameters from an explicit `.dejadoc.toml` location.
+    /// Read parameters from a `.dejadoc.toml` file at `path`. The values
+    /// fill parameters that are not set yet. Under `run` the workspace
+    /// root `.dejadoc.toml` still applies as a fallback.
+    ///
+    /// # Errors
+    ///
+    /// Fails when the file cannot be read or is not valid TOML.
     #[cfg(feature = "std")]
-    #[must_use]
-    pub fn config(mut self, path: impl Into<PathBuf>) -> Self {
-        self.config = Some(path.into());
-        self
+    pub fn config(mut self, path: impl Into<PathBuf>) -> Result<Self> {
+        let file = config::load(&path.into())?;
+        self.threshold = self.threshold.or(file.threshold);
+        self.min_tokens = self.min_tokens.or(file.min_tokens);
+        Ok(self)
     }
 
     /// Scan `root` (any directory inside the workspace) and report
@@ -92,11 +97,9 @@ impl Dejadoc {
             all_targets,
             threshold,
             min_tokens,
-            config,
         } = self;
         let workspace = discover::workspace(root.as_ref(), package.as_deref(), all_targets)?;
-        let config_path = config.unwrap_or_else(|| workspace.root.join(".dejadoc.toml"));
-        let cfg = config::load(&config_path)?;
+        let cfg = config::load(&workspace.root.join(".dejadoc.toml"))?;
         let root_str = workspace.root.to_string_lossy().into_owned();
         let read = |file: &str, p: &str| -> Option<(String, String)> {
             let dir = Path::new(file).parent()?;
@@ -137,7 +140,8 @@ impl Dejadoc {
     /// so it works under `no_std`. `root` is stripped from site paths and
     /// `read` resolves an `include_str!` doc splice, given the file that
     /// contains it and the path as written, to the resolved path and text.
-    /// `package` filters the passed targets by name.
+    /// `package` filters the passed targets by name. Values loaded
+    /// through `config` apply here too.
     #[must_use]
     pub fn run_targets(self, root: &str, targets: &[TargetScan], read: &IncludeRead<'_>) -> Report {
         let Self {
@@ -383,6 +387,46 @@ mod tests {
             .run("/nonexistent-dejadoc-root")
             .unwrap_err();
         assert!(matches!(err, Error::Workspace(_)));
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn config_loads_values_immediately() {
+        let dir = std::env::temp_dir().join("dejadoc-config-immediate");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("config.toml");
+        std::fs::write(&file, "threshold = 10\n").unwrap();
+        let targets = vec![
+            scan_target("alpha", "src/lib.rs", &[], "one"),
+            scan_target("beta", "src/lib.rs", &[], "two"),
+        ];
+        // The file value applies through the infallible entry point.
+        let report =
+            Dejadoc::default()
+                .config(&file)
+                .unwrap()
+                .run_targets("", &targets, &|_f, _i| None);
+        assert_eq!(report.groups, Vec::new());
+        // Builder values set after config still win.
+        let report = Dejadoc::default()
+            .config(&file)
+            .unwrap()
+            .threshold(2)
+            .run_targets("", &targets, &|_f, _i| None);
+        assert_eq!(report.groups.len(), 1);
+        std::fs::remove_file(&file).unwrap();
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn config_bad_toml_fails_at_build() {
+        let dir = std::env::temp_dir().join("dejadoc-config-immediate");
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("bad.toml");
+        std::fs::write(&file, "threshold = \"high\"\n").unwrap();
+        let err = Dejadoc::default().config(&file).unwrap_err();
+        assert!(matches!(err, Error::Config(_)));
+        std::fs::remove_file(&file).unwrap();
     }
 
     fn scan_target(name: &str, path: &str, segments: &[&str], item: &str) -> TargetScan {

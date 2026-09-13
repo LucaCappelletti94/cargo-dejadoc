@@ -48,7 +48,13 @@ fn main() -> ExitCode {
         args.remove(1);
     }
     let args = Args::parse_from(args);
-    let scan = build(&args);
+    let scan = match build(&args) {
+        Ok(scan) => scan,
+        Err(err) => {
+            eprintln!("dejadoc: {err}");
+            return ExitCode::from(2);
+        }
+    };
     match scan.run(Path::new(".")) {
         Ok(report) => {
             let out = if args.json {
@@ -66,7 +72,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn build(args: &Args) -> dejadoc::Dejadoc {
+fn build(args: &Args) -> dejadoc::Result<dejadoc::Dejadoc> {
     let mut scan = dejadoc::Dejadoc::default();
     if let Some(package) = &args.package {
         scan = scan.package(package);
@@ -81,7 +87,7 @@ fn build(args: &Args) -> dejadoc::Dejadoc {
         scan = scan.min_tokens(min_tokens);
     }
     if let Some(config) = &args.config {
-        scan = scan.config(config);
+        scan = scan.config(config)?;
     }
-    scan
+    Ok(scan)
 }

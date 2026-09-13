@@ -60,13 +60,27 @@ fn allowed_sites_are_not_grouped() {
 #[test]
 fn config_threshold_suppresses_groups() {
     let strict = Path::new(FIXTURE).join(".dejadoc-strict.toml");
-    let report = Dejadoc::default().config(&strict).run(FIXTURE).unwrap();
+    let report = Dejadoc::default()
+        .config(&strict)
+        .unwrap()
+        .run(FIXTURE)
+        .unwrap();
     assert_eq!(report.groups, Vec::new());
 
     // API threshold overrides the config file.
     let report = Dejadoc::default()
         .threshold(2)
         .config(&strict)
+        .unwrap()
+        .run(FIXTURE)
+        .unwrap();
+    assert_eq!(report.groups.len(), 3);
+
+    // The API threshold still wins when set after the config file.
+    let report = Dejadoc::default()
+        .config(&strict)
+        .unwrap()
+        .threshold(2)
         .run(FIXTURE)
         .unwrap();
     assert_eq!(report.groups.len(), 3);
