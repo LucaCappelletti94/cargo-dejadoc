@@ -8,19 +8,19 @@ use alloc::vec::Vec;
 use quote::ToTokens;
 /// Canonical form of a doctest body.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Canonical {
+pub(crate) struct Canonical {
     /// Canonical text, a deterministic token-stream string, or the
     /// collapsed text fallback.
-    pub text: String,
+    pub(crate) text: String,
     /// True when no `syn` parse succeeded and the text fallback was used.
-    pub unparsed: bool,
+    pub(crate) unparsed: bool,
     /// Token count for `min-tokens` filtering.
-    pub tokens: usize,
+    pub(crate) tokens: usize,
 }
 
 /// Compute the canonical form of a doctest body.
 #[must_use]
-pub fn canonicalize(code: &str) -> Canonical {
+pub(crate) fn canonicalize(code: &str) -> Canonical {
     // rustdoc drops any line whose first non-whitespace character is `#`.
     let body: String = code
         .lines()

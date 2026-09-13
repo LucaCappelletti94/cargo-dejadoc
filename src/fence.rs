@@ -5,19 +5,19 @@ use alloc::vec::Vec;
 
 /// A fenced code block found in doc text.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Fence {
+pub(crate) struct Fence {
     /// Info string between the backticks and the line end.
-    pub info: String,
+    pub(crate) info: String,
     /// 0-based index of the opening fence line within the doc text.
-    pub line: usize,
+    pub(crate) line: usize,
     /// Body lines joined by `'\n'`.
-    pub code: String,
+    pub(crate) code: String,
 }
 
 /// Scan `text` for fenced code blocks. An unterminated block at EOF is
 /// emitted, matching rustdoc.
 #[must_use]
-pub fn scan(text: &str) -> Vec<Fence> {
+pub(crate) fn scan(text: &str) -> Vec<Fence> {
     let mut out = Vec::new();
     let mut open: Option<(String, usize, Vec<String>)> = None;
     for (i, line) in text.lines().enumerate() {

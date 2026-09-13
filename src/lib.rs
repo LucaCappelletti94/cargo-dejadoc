@@ -18,11 +18,11 @@ use std::path::{Path, PathBuf};
 
 mod config;
 #[cfg(feature = "std")]
-pub mod discover;
+mod discover;
 pub mod extract;
-pub mod fence;
-pub mod normalize;
-pub mod report;
+mod fence;
+mod normalize;
+mod report;
 
 pub use report::{human, json};
 

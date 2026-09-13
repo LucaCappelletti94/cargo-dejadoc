@@ -10,33 +10,20 @@ use std::path::PathBuf;
 
 /// One compilable target to scan.
 #[derive(Debug, Clone)]
-pub struct Target {
+pub(crate) struct Target {
     /// Crate name used as the item-path root.
-    pub name: String,
-    /// Target kind.
-    pub kind: TargetKind,
+    pub(crate) name: String,
     /// Absolute path of the target's source root file.
-    pub src: PathBuf,
-}
-
-/// Kind of target, matching what `cargo test --doc` runs.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TargetKind {
-    /// A library (or proc-macro) target.
-    Lib,
-    /// A binary target.
-    Bin,
-    /// An example target.
-    Example,
+    pub(crate) src: PathBuf,
 }
 
 /// A resolved workspace root and the targets to scan.
 #[derive(Debug, Clone)]
-pub struct Workspace {
+pub(crate) struct Workspace {
     /// Workspace root directory.
-    pub root: PathBuf,
+    pub(crate) root: PathBuf,
     /// Targets to scan, in metadata order.
-    pub targets: Vec<Target>,
+    pub(crate) targets: Vec<Target>,
 }
 
 /// Resolve the workspace containing `root` and the targets to scan.
@@ -44,7 +31,7 @@ pub struct Workspace {
 /// # Errors
 ///
 /// Fails when `cargo metadata` cannot be run for `root`.
-pub fn workspace(
+pub(crate) fn workspace(
     root: &std::path::Path,
     package: Option<&str>,
     all_targets: bool,
@@ -60,10 +47,9 @@ pub fn workspace(
         .filter(|p| package.is_none_or(|want| p.name == want))
     {
         for target in &package.targets {
-            if let Some(kind) = scan_kind(&target.kind, all_targets) {
+            if scan_target(&target.kind, all_targets) {
                 targets.push(Target {
                     name: target.name.clone(),
-                    kind,
                     src: target.src_path.clone().into(),
                 });
             }
@@ -75,26 +61,20 @@ pub fn workspace(
     })
 }
 
-/// Scan kind of a cargo target from its kind list.
-fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<TargetKind> {
+/// Whether a cargo target is scanned, from its kind list.
+fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool {
     use cargo_metadata::TargetKind as CargoTargetKind;
 
     if kinds
         .iter()
         .any(|k| matches!(k, CargoTargetKind::Lib | CargoTargetKind::ProcMacro))
     {
-        return Some(TargetKind::Lib);
+        return true;
     }
-    if !all_targets {
-        return None;
-    }
-    if kinds.iter().any(|k| matches!(k, CargoTargetKind::Bin)) {
-        return Some(TargetKind::Bin);
-    }
-    if kinds.iter().any(|k| matches!(k, CargoTargetKind::Example)) {
-        return Some(TargetKind::Example);
-    }
-    None
+    all_targets
+        && kinds
+            .iter()
+            .any(|k| matches!(k, CargoTargetKind::Bin | CargoTargetKind::Example))
 }
 
 /// Parse the target's module tree, each file with its parsed contents and
@@ -104,7 +84,9 @@ fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<
 ///
 /// Fails when a module file cannot be canonicalized. Unreadable or
 /// unparseable files are skipped with a warning.
-pub fn module_tree(target: &Target) -> crate::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
+pub(crate) fn module_tree(
+    target: &Target,
+) -> crate::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
     let mut visited = BTreeSet::new();
     collect(&target.src, &[], &mut out, &mut visited)?;
@@ -262,7 +244,6 @@ mod tests {
     fn target(src: &std::path::Path) -> Target {
         Target {
             name: "mycrate".into(),
-            kind: TargetKind::Lib,
             src: src.to_path_buf(),
         }
     }

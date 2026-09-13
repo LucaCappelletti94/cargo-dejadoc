@@ -59,6 +59,6 @@ let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 3);
 ```
 
-The core (`fence`, `normalize`, `extract`, `group`) is `#![no_std]` and
-`alloc`-only. The `std` feature (defaulted) enables `Dejadoc`, `Error`,
-`exit_code`, and the `cargo-dejadoc` binary.
+The `extract` and `group` core API is `#![no_std]` and `alloc`-only. The
+`std` feature (defaulted) enables `Dejadoc`, `Error`, `exit_code`, and the
+`cargo-dejadoc` binary.
