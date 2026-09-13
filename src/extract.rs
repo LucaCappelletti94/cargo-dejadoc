@@ -16,6 +16,7 @@ use syn::{
 };
 
 use crate::DocTest;
+use crate::IncludeRead;
 use crate::fence;
 
 /// A run of doc text with per-line source positions. One source spans the
@@ -32,14 +33,15 @@ struct DocSource {
 /// Extract doctest blocks from one parsed source file, under the item path
 /// `prefix` (the target name for the root file, with module segments for
 /// submodules). Site paths drop the `root` prefix. `read_include` resolves
-/// an `include_str!` doc splice to `(path, text)`.
+/// an `include_str!` doc splice, relative to the containing file, to
+/// `(path, text)`.
 #[must_use]
 pub fn extract(
     prefix: &str,
     file: &str,
     parsed: &syn::File,
     root: &str,
-    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+    read_include: &IncludeRead<'_>,
 ) -> Vec<DocTest> {
     let mut out = Vec::new();
     // File-level `//!` docs: inner doc attributes only.
@@ -84,7 +86,7 @@ fn walk_item(
     prefix: &str,
     file: &str,
     root: &str,
-    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+    read_include: &IncludeRead<'_>,
     out: &mut Vec<DocTest>,
 ) {
     match item {
@@ -231,7 +233,7 @@ fn push_doc(
     item: &str,
     file: &str,
     root: &str,
-    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+    read_include: &IncludeRead<'_>,
     out: &mut Vec<DocTest>,
 ) {
     for src in doc_sources(attrs, file, read_include) {
@@ -245,7 +247,7 @@ fn push_doc(
 fn doc_sources(
     attrs: &[syn::Attribute],
     file: &str,
-    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+    read_include: &IncludeRead<'_>,
 ) -> Vec<DocSource> {
     let mut parts: Vec<(String, u32, String)> = Vec::new();
     for attr in attrs.iter().filter(|a| a.path().is_ident("doc")) {
@@ -259,7 +261,7 @@ fn doc_sources(
             }) => parts.push((strip_doc_spaces(&s.value()), line, file.to_string())),
             Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
                 if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
-                    push_include(&mut parts, read_include, &s.value());
+                    push_include(&mut parts, file, read_include, &s.value());
                 }
             }
             Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("concat") => {
@@ -270,7 +272,7 @@ fn doc_sources(
                                 parts.push((strip_doc_spaces(&s.value()), line, file.to_string()));
                             }
                             ConcatPart::Include(s) => {
-                                push_include(&mut parts, read_include, &s.value());
+                                push_include(&mut parts, file, read_include, &s.value());
                             }
                         }
                     }
@@ -284,10 +286,11 @@ fn doc_sources(
 
 fn push_include(
     parts: &mut Vec<(String, u32, String)>,
-    read: &dyn Fn(&str) -> Option<(String, String)>,
+    file: &str,
+    read: &IncludeRead<'_>,
     p: &str,
 ) {
-    if let Some((path, text)) = read(p) {
+    if let Some((path, text)) = read(file, p) {
         parts.push((text, 1, path));
     }
 }
@@ -513,7 +516,7 @@ mod tests {
             "/root/src/lib.rs",
             &parsed,
             "/root",
-            &|_p: &str| None,
+            &|_f: &str, _p: &str| None,
         )
     }
 
@@ -737,8 +740,8 @@ mod tests {
         );
     }
 
-    fn fs_read(src: &std::path::Path) -> impl Fn(&str) -> Option<(String, String)> {
-        move |p: &str| {
+    fn fs_read(src: &std::path::Path) -> impl Fn(&str, &str) -> Option<(String, String)> {
+        move |_file: &str, p: &str| {
             let path = src.join(p);
             match std::fs::read_to_string(&path) {
                 Ok(text) => Some((path.to_string_lossy().into_owned(), text)),
@@ -941,7 +944,7 @@ pub fn raw() {}
             &src.join("lib.rs").to_string_lossy(),
             &parsed,
             &dir.path().to_string_lossy(),
-            &|_p: &str| None,
+            &|_f: &str, _p: &str| None,
         );
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
@@ -965,7 +968,7 @@ pub fn raw() {}
             &src.join("lib.rs").to_string_lossy(),
             &parsed,
             &dir.path().to_string_lossy(),
-            &|_p: &str| None,
+            &|_f: &str, _p: &str| None,
         );
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }

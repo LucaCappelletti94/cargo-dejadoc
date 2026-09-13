@@ -6,13 +6,12 @@ extern crate alloc;
 extern crate std;
 
 use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
 #[cfg(feature = "std")]
 use std::eprintln;
-#[cfg(feature = "std")]
-use std::format;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
@@ -24,21 +23,23 @@ mod fence;
 mod normalize;
 mod report;
 
+/// Reader for an `include_str!` doc splice, given the containing file and
+/// the path as written. Yields the resolved path and text.
+type IncludeRead<'a> = dyn Fn(&str, &str) -> Option<(String, String)> + 'a;
 pub use report::{human, json};
 
-/// Scan parameters. Unset values fall back to `.dejadoc.toml`, then to
-/// defaults.
-#[cfg(feature = "std")]
+/// Scan parameters. In `run`, unset values fall back to `.dejadoc.toml`,
+/// then to defaults.
 #[derive(Debug, Clone, Default)]
 pub struct Dejadoc {
     package: Option<String>,
     all_targets: bool,
     threshold: Option<usize>,
     min_tokens: Option<usize>,
+    #[cfg(feature = "std")]
     config: Option<PathBuf>,
 }
 
-#[cfg(feature = "std")]
 impl Dejadoc {
     /// Restrict the scan to one workspace member by name.
     #[must_use]
@@ -47,7 +48,7 @@ impl Dejadoc {
         self
     }
 
-    /// Also scan bin and example targets.
+    /// Also scan bin and example targets. Applies to `run` only.
     #[must_use]
     pub fn all_targets(mut self) -> Self {
         self.all_targets = true;
@@ -69,6 +70,7 @@ impl Dejadoc {
     }
 
     /// Read parameters from an explicit `.dejadoc.toml` location.
+    #[cfg(feature = "std")]
     #[must_use]
     pub fn config(mut self, path: impl Into<PathBuf>) -> Self {
         self.config = Some(path.into());
@@ -83,6 +85,7 @@ impl Dejadoc {
     /// Fails when `cargo metadata` cannot resolve the workspace, when the
     /// config cannot be read or parsed, or when a module file cannot be
     /// canonicalized.
+    #[cfg(feature = "std")]
     pub fn run(self, root: impl AsRef<Path>) -> Result<Report> {
         let Self {
             package,
@@ -94,40 +97,124 @@ impl Dejadoc {
         let workspace = discover::workspace(root.as_ref(), package.as_deref(), all_targets)?;
         let config_path = config.unwrap_or_else(|| workspace.root.join(".dejadoc.toml"));
         let cfg = config::load(&config_path)?;
-        let threshold = threshold.or(cfg.threshold).unwrap_or(2);
-        let min_tokens = min_tokens.or(cfg.min_tokens).unwrap_or(0);
-
-        let mut blocks = Vec::new();
-        for target in &workspace.targets {
-            for (path, file, segments) in discover::module_tree(target)? {
-                let prefix = match segments.first() {
-                    Some(_) => format!("{}::{}", target.name, segments.join("::")),
-                    None => target.name.clone(),
-                };
-                let file_str = path.to_string_lossy().into_owned();
-                let root_str = workspace.root.to_string_lossy().into_owned();
-                let read_include = move |p: &str| {
-                    let dir = path.parent()?;
-                    let inc = dir.join(p);
-                    match std::fs::read_to_string(&inc) {
-                        Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
-                        Err(err) => {
-                            eprintln!("dejadoc: cannot read doc include {}: {err}", inc.display());
-                            None
-                        }
-                    }
-                };
-                blocks.extend(extract::extract(
-                    &prefix,
-                    &file_str,
-                    &file,
-                    &root_str,
-                    &read_include,
-                ));
+        let root_str = workspace.root.to_string_lossy().into_owned();
+        let read = |file: &str, p: &str| -> Option<(String, String)> {
+            let dir = Path::new(file).parent()?;
+            let inc = dir.join(p);
+            match std::fs::read_to_string(&inc) {
+                Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
+                Err(err) => {
+                    eprintln!("dejadoc: cannot read doc include {}: {err}", inc.display());
+                    None
+                }
             }
+        };
+        let mut targets = Vec::new();
+        for target in &workspace.targets {
+            let mut files = Vec::new();
+            for (path, file, segments) in discover::module_tree(target)? {
+                files.push(SourceFile {
+                    path: path.to_string_lossy().into_owned(),
+                    segments,
+                    parsed: file,
+                });
+            }
+            targets.push(TargetScan {
+                name: target.name.clone(),
+                files,
+            });
         }
-        Ok(group(&blocks, threshold, min_tokens))
+        Ok(scan(
+            &targets,
+            &root_str,
+            threshold.or(cfg.threshold).unwrap_or(2),
+            min_tokens.or(cfg.min_tokens).unwrap_or(0),
+            &read,
+        ))
     }
+
+    /// Scan resolved targets. Runs no `cargo metadata` and reads no files,
+    /// so it works under `no_std`. `root` is stripped from site paths and
+    /// `read` resolves an `include_str!` doc splice, given the file that
+    /// contains it and the path as written, to the resolved path and text.
+    /// `package` filters the passed targets by name.
+    #[must_use]
+    pub fn run_targets(self, root: &str, targets: &[TargetScan], read: &IncludeRead<'_>) -> Report {
+        let Self {
+            package,
+            all_targets: _,
+            threshold,
+            min_tokens,
+            ..
+        } = self;
+        let filtered: Vec<TargetScan> = targets
+            .iter()
+            .filter(|t| package.as_deref() != Some(t.name.as_str()))
+            .cloned()
+            .collect();
+        scan(
+            &filtered,
+            root,
+            threshold.unwrap_or(2),
+            min_tokens.unwrap_or(0),
+            read,
+        )
+    }
+}
+
+/// One resolved target.
+#[derive(Debug, Clone)]
+pub struct TargetScan {
+    /// The target name, used as the item-path prefix.
+    pub name: String,
+    /// The target's files.
+    pub files: Vec<SourceFile>,
+}
+
+/// One file of a target.
+#[derive(Clone)]
+pub struct SourceFile {
+    /// Site path, stripped of the `root` prefix.
+    pub path: String,
+    /// Module-path segments from the target root, empty for the root file.
+    pub segments: Vec<String>,
+    /// The parsed file.
+    pub parsed: syn::File,
+}
+
+impl core::fmt::Debug for SourceFile {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.debug_struct("SourceFile")
+            .field("path", &self.path)
+            .field("segments", &self.segments)
+            .finish_non_exhaustive()
+    }
+}
+
+fn scan(
+    targets: &[TargetScan],
+    root: &str,
+    threshold: usize,
+    min_tokens: usize,
+    read: &IncludeRead<'_>,
+) -> Report {
+    let mut blocks = Vec::new();
+    for target in targets {
+        for file in &target.files {
+            let prefix = match file.segments.first() {
+                Some(_) => format!("{}::{}", target.name, file.segments.join("::")),
+                None => target.name.clone(),
+            };
+            blocks.extend(extract::extract(
+                &prefix,
+                &file.path,
+                &file.parsed,
+                root,
+                read,
+            ));
+        }
+    }
+    group(&blocks, threshold, min_tokens)
 }
 
 /// Failure of a scan.
@@ -223,7 +310,7 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     if report.groups.is_empty() || no_fail {
         ExitCode::SUCCESS
     } else {
-        ExitCode::from(1)
+        ExitCode::FAILURE
     }
 }
 
@@ -296,6 +383,66 @@ mod tests {
             .run("/nonexistent-dejadoc-root")
             .unwrap_err();
         assert!(matches!(err, Error::Workspace(_)));
+    }
+
+    fn scan_target(name: &str, path: &str, segments: &[&str], item: &str) -> TargetScan {
+        let src =
+            format!("/// Doc.\n///\n/// ```\n/// fn dup() {{}}\n/// ```\npub fn {item}() {{}}\n");
+        TargetScan {
+            name: name.to_string(),
+            files: vec![SourceFile {
+                path: path.to_string(),
+                segments: segments.iter().map(ToString::to_string).collect(),
+                parsed: match syn::parse_str(&src) {
+                    Ok(parsed) => parsed,
+                    Err(err) => panic!("parse fixture: {err}"),
+                },
+            }],
+        }
+    }
+
+    #[test]
+    fn run_targets_groups_duplicate_doctests_in_memory() {
+        let targets = vec![
+            scan_target("alpha", "src/lib.rs", &[], "one"),
+            scan_target("beta", "src/parser.rs", &["parser"], "two"),
+        ];
+        let report = Dejadoc::default().run_targets("", &targets, &|_file, _inc| None);
+        assert_eq!(report.total, 2);
+        assert_eq!(report.unique, 1);
+        assert_eq!(report.groups.len(), 1);
+        let sites = &report.groups[0].sites;
+        assert_eq!(sites[0].file, "src/lib.rs");
+        assert_eq!(sites[0].item, "alpha::one");
+        assert_eq!(sites[1].file, "src/parser.rs");
+        assert_eq!(sites[1].item, "beta::parser::two");
+    }
+
+    #[test]
+    fn source_file_debug_shows_identity() {
+        let target = scan_target("alpha", "src/lib.rs", &[], "one");
+        let dbg = format!("{:?}", target.files[0]);
+        assert!(dbg.contains("SourceFile"));
+        assert!(dbg.contains("path: \"src/lib.rs\""));
+        assert!(dbg.contains("segments: []"));
+    }
+
+    #[test]
+    fn run_targets_applies_threshold_and_package() {
+        let targets = vec![
+            scan_target("alpha", "src/lib.rs", &[], "one"),
+            scan_target("beta", "src/lib.rs", &[], "two"),
+        ];
+        let narrow = Dejadoc::default()
+            .threshold(3)
+            .run_targets("", &targets, &|_f, _i| None);
+        assert_eq!(narrow.total, 2);
+        assert_eq!(narrow.groups, Vec::new());
+        let filtered = Dejadoc::default()
+            .package("beta")
+            .run_targets("", &targets, &|_f, _i| None);
+        assert_eq!(filtered.total, 1);
+        assert_eq!(filtered.groups, Vec::new());
     }
 
     #[test]

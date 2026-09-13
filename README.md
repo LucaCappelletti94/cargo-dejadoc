@@ -59,6 +59,9 @@ let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 3);
 ```
 
-The `extract` and `group` core API is `#![no_std]` and `alloc`-only. The
-`std` feature (defaulted) enables `Dejadoc`, `Error`, `exit_code`, and the
-`cargo-dejadoc` binary.
+`run_targets` scans caller-resolved targets in memory and is the `no_std`
+entry point.
+
+The builder `Dejadoc` is `#![no_std]` and `alloc`-only. The `std` feature
+(defaulted) additionally enables `run`, `.config`, `Error`, `exit_code`,
+and the `cargo-dejadoc` binary.
