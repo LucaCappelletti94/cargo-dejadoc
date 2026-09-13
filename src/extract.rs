@@ -1,6 +1,10 @@
 //! Doc comment walking and doctest block extraction.
 
-use std::path::{Path, PathBuf};
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec;
+use alloc::vec::Vec;
 
 use quote::ToTokens;
 use syn::{
@@ -22,14 +26,21 @@ struct DocSource {
     /// 1-based source line of each text line; one entry per text line.
     lines: Vec<u32>,
     /// File of each text line; one entry per text line.
-    files: Vec<PathBuf>,
+    files: Vec<String>,
 }
 
 /// Extract doctest blocks from one parsed source file, under the item path
 /// `prefix` (the target name for the root file, with module segments for
-/// submodules).
+/// submodules). Site paths drop the `root` prefix; `read_include` resolves an
+/// `include_str!` doc splice to `(path, text)`.
 #[must_use]
-pub fn extract(prefix: &str, file: &Path, parsed: &syn::File, root: &Path) -> Vec<DocTest> {
+pub fn extract(
+    prefix: &str,
+    file: &str,
+    parsed: &syn::File,
+    root: &str,
+    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+) -> Vec<DocTest> {
     let mut out = Vec::new();
     // File-level `//!` docs: inner doc attributes only.
     let inner: Vec<syn::Attribute> = parsed
@@ -38,11 +49,11 @@ pub fn extract(prefix: &str, file: &Path, parsed: &syn::File, root: &Path) -> Ve
         .filter(|a| matches!(a.style, AttrStyle::Inner { .. }))
         .cloned()
         .collect();
-    for src in doc_sources(&inner, file) {
+    for src in doc_sources(&inner, file, read_include) {
         out.extend(blocks(&src, prefix, root));
     }
     for item in &parsed.items {
-        walk_item(item, prefix, file, root, &mut out);
+        walk_item(item, prefix, file, root, read_include, &mut out);
     }
     out
 }
@@ -68,21 +79,28 @@ fn item_attrs(item: &Item) -> &[syn::Attribute] {
     }
 }
 
-fn walk_item(item: &Item, prefix: &str, file: &Path, root: &Path, out: &mut Vec<DocTest>) {
+fn walk_item(
+    item: &Item,
+    prefix: &str,
+    file: &str,
+    root: &str,
+    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+    out: &mut Vec<DocTest>,
+) {
     match item {
         Item::Mod(m) => {
             let sub = format!("{prefix}::{}", m.ident);
             // `m.attrs` also holds the mod body's inner `//!` docs.
-            push_doc(item_attrs(item), &sub, file, root, out);
+            push_doc(item_attrs(item), &sub, file, root, read_include, out);
             if let Some((_, items)) = &m.content {
                 for child in items {
-                    walk_item(child, &sub, file, root, out);
+                    walk_item(child, &sub, file, root, read_include, out);
                 }
             }
         }
         Item::Impl(i) => {
             let sub = format!("{prefix}::{}", type_name(&i.self_ty));
-            push_doc(item_attrs(item), &sub, file, root, out);
+            push_doc(item_attrs(item), &sub, file, root, read_include, out);
             for assoc in &i.items {
                 if let Some(name) = impl_assoc_name(assoc) {
                     push_doc(
@@ -90,6 +108,7 @@ fn walk_item(item: &Item, prefix: &str, file: &Path, root: &Path, out: &mut Vec<
                         &format!("{sub}::{name}"),
                         file,
                         root,
+                        read_include,
                         out,
                     );
                 }
@@ -97,7 +116,7 @@ fn walk_item(item: &Item, prefix: &str, file: &Path, root: &Path, out: &mut Vec<
         }
         Item::Trait(t) => {
             let sub = format!("{prefix}::{}", t.ident);
-            push_doc(item_attrs(item), &sub, file, root, out);
+            push_doc(item_attrs(item), &sub, file, root, read_include, out);
             for assoc in &t.items {
                 if let Some(name) = trait_assoc_name(assoc) {
                     push_doc(
@@ -105,13 +124,14 @@ fn walk_item(item: &Item, prefix: &str, file: &Path, root: &Path, out: &mut Vec<
                         &format!("{sub}::{name}"),
                         file,
                         root,
+                        read_include,
                         out,
                     );
                 }
             }
         }
         Item::ForeignMod(f) => {
-            push_doc(item_attrs(item), prefix, file, root, out);
+            push_doc(item_attrs(item), prefix, file, root, read_include, out);
             for foreign in &f.items {
                 if let Some(name) = foreign_name(foreign) {
                     push_doc(
@@ -119,6 +139,7 @@ fn walk_item(item: &Item, prefix: &str, file: &Path, root: &Path, out: &mut Vec<
                         &format!("{prefix}::{name}"),
                         file,
                         root,
+                        read_include,
                         out,
                     );
                 }
@@ -131,6 +152,7 @@ fn walk_item(item: &Item, prefix: &str, file: &Path, root: &Path, out: &mut Vec<
                     &format!("{prefix}::{name}"),
                     file,
                     root,
+                    read_include,
                     out,
                 );
             }
@@ -207,11 +229,12 @@ fn line_of(span: proc_macro2::Span) -> u32 {
 fn push_doc(
     attrs: &[syn::Attribute],
     item: &str,
-    file: &Path,
-    root: &Path,
+    file: &str,
+    root: &str,
+    read_include: &dyn Fn(&str) -> Option<(String, String)>,
     out: &mut Vec<DocTest>,
 ) {
-    for src in doc_sources(attrs, file) {
+    for src in doc_sources(attrs, file, read_include) {
         out.extend(blocks(&src, item, root));
     }
 }
@@ -219,8 +242,12 @@ fn push_doc(
 /// Doc text from an item's attributes: `#[doc = "…"]` literals,
 /// `include_str!` files, and `concat!` mixes, assembled into one doc
 /// stream as rustdoc does, so fences may straddle include boundaries.
-fn doc_sources(attrs: &[syn::Attribute], file: &Path) -> Vec<DocSource> {
-    let mut parts: Vec<(String, u32, PathBuf)> = Vec::new();
+fn doc_sources(
+    attrs: &[syn::Attribute],
+    file: &str,
+    read_include: &dyn Fn(&str) -> Option<(String, String)>,
+) -> Vec<DocSource> {
+    let mut parts: Vec<(String, u32, String)> = Vec::new();
     for attr in attrs.iter().filter(|a| a.path().is_ident("doc")) {
         let line = line_of(attr.pound_token.span);
         let Meta::NameValue(nv) = &attr.meta else {
@@ -229,10 +256,10 @@ fn doc_sources(attrs: &[syn::Attribute], file: &Path) -> Vec<DocSource> {
         match &nv.value {
             Expr::Lit(ExprLit {
                 lit: Lit::Str(s), ..
-            }) => parts.push((strip_doc_spaces(&s.value()), line, file.to_path_buf())),
+            }) => parts.push((strip_doc_spaces(&s.value()), line, file.to_string())),
             Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
                 if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
-                    push_include(&mut parts, file, &s.value());
+                    push_include(&mut parts, read_include, &s.value());
                 }
             }
             Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("concat") => {
@@ -240,13 +267,11 @@ fn doc_sources(attrs: &[syn::Attribute], file: &Path) -> Vec<DocSource> {
                     for part in concat.0 {
                         match part {
                             ConcatPart::Lit(s) => {
-                                parts.push((
-                                    strip_doc_spaces(&s.value()),
-                                    line,
-                                    file.to_path_buf(),
-                                ));
+                                parts.push((strip_doc_spaces(&s.value()), line, file.to_string()));
                             }
-                            ConcatPart::Include(s) => push_include(&mut parts, file, &s.value()),
+                            ConcatPart::Include(s) => {
+                                push_include(&mut parts, read_include, &s.value());
+                            }
                         }
                     }
                 }
@@ -257,27 +282,21 @@ fn doc_sources(attrs: &[syn::Attribute], file: &Path) -> Vec<DocSource> {
     merge_parts(parts)
 }
 
-fn push_include(parts: &mut Vec<(String, u32, PathBuf)>, file: &Path, p: &str) {
-    let path = match file.parent() {
-        Some(parent) => parent.join(p),
-        None => PathBuf::from(p),
-    };
-    match std::fs::read_to_string(&path) {
-        Ok(text) => parts.push((text, 1, path)),
-        Err(err) => {
-            eprintln!(
-                "dejadoc: warning: cannot read doc include {}: {err}",
-                path.display()
-            );
-        }
+fn push_include(
+    parts: &mut Vec<(String, u32, String)>,
+    read: &dyn Fn(&str) -> Option<(String, String)>,
+    p: &str,
+) {
+    if let Some((path, text)) = read(p) {
+        parts.push((text, 1, path));
     }
 }
 
 /// Merge all parts of one item's doc stream into a single source: rustdoc
 /// assembles the stream regardless of where each line comes from.
-fn merge_parts(parts: Vec<(String, u32, PathBuf)>) -> Vec<DocSource> {
+fn merge_parts(parts: Vec<(String, u32, String)>) -> Vec<DocSource> {
     let mut out: Vec<DocSource> = Vec::new();
-    let mut prev: Option<(u32, PathBuf)> = None;
+    let mut prev: Option<(u32, String)> = None;
     for (text, line, file) in parts {
         let lines = line_range(&text, line);
         let files = vec![file.clone(); lines.len()];
@@ -364,7 +383,7 @@ impl Parse for ConcatParts {
 }
 
 /// Fence blocks of one doc source, classified and positioned.
-fn blocks(src: &DocSource, item: &str, root: &Path) -> Vec<DocTest> {
+fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
     let mut out = Vec::new();
     for f in fence::scan(&src.text) {
         let (counted, info, allow) = classify(&f.info);
@@ -373,10 +392,10 @@ fn blocks(src: &DocSource, item: &str, root: &Path) -> Vec<DocTest> {
         }
         let file = src.files[f.line]
             .strip_prefix(root)
-            .unwrap_or(&src.files[f.line])
-            .to_path_buf();
+            .and_then(|f| f.strip_prefix('/'))
+            .unwrap_or(&src.files[f.line]);
         out.push(DocTest {
-            file,
+            file: file.to_string(),
             line: src.lines[f.line],
             item: item.to_string(),
             info,
@@ -486,21 +505,22 @@ fn use_name(tree: &UseTree) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
+    use alloc::vec;
 
     fn run(src: &str) -> Vec<DocTest> {
         let parsed = syn::parse_file(src).unwrap();
         extract(
             "mycrate",
-            Path::new("/root/src/lib.rs"),
+            "/root/src/lib.rs",
             &parsed,
-            Path::new("/root"),
+            "/root",
+            &|_p: &str| None,
         )
     }
 
     fn dt(file: &str, line: u32, item: &str, info: &[&str], code: &str, allow: bool) -> DocTest {
         DocTest {
-            file: PathBuf::from(file),
+            file: file.to_string(),
             line,
             item: item.into(),
             info: info.iter().map(ToString::to_string).collect(),
@@ -718,6 +738,22 @@ mod tests {
         );
     }
 
+    fn fs_read(src: &std::path::Path) -> impl Fn(&str) -> Option<(String, String)> {
+        move |p: &str| {
+            let path = src.join(p);
+            match std::fs::read_to_string(&path) {
+                Ok(text) => Some((path.to_string_lossy().into_owned(), text)),
+                Err(err) => {
+                    std::eprintln!(
+                        "dejadoc: warning: cannot read doc include {}: {err}",
+                        path.display()
+                    );
+                    None
+                }
+            }
+        }
+    }
+
     #[test]
     fn include_str_doc() {
         let dir = tempfile::tempdir().unwrap();
@@ -735,7 +771,13 @@ mod tests {
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &fs_read(&src),
+        );
         assert_eq!(
             dts,
             vec![dt(
@@ -762,7 +804,13 @@ mod tests {
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &fs_read(&src),
+        );
         assert_eq!(
             dts,
             vec![dt(
@@ -857,7 +905,13 @@ pub fn raw() {}
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &fs_read(&src),
+        );
         assert_eq!(
             dts,
             vec![dt(
@@ -886,7 +940,13 @@ pub fn raw() {}
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &|_p: &str| None,
+        );
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
 
@@ -904,7 +964,13 @@ pub fn raw() {}
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &|_p: &str| None,
+        );
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
 

@@ -1,8 +1,23 @@
+#![no_std]
 #![doc = include_str!("../README.md")]
-use std::collections::{BTreeMap, BTreeSet};
+
+extern crate alloc;
+#[cfg(any(test, feature = "std"))]
+extern crate std;
+
+use alloc::collections::{BTreeMap, BTreeSet};
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+#[cfg(feature = "std")]
+use std::eprintln;
+#[cfg(feature = "std")]
+use std::format;
+#[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
 pub mod config;
+#[cfg(feature = "std")]
 pub mod discover;
 pub mod extract;
 pub mod fence;
@@ -13,6 +28,7 @@ pub use report::{human, json};
 
 /// Options for a scan. CLI values win over `.dejadoc.toml` values, which win
 /// over defaults.
+#[cfg(feature = "std")]
 #[derive(Debug, Clone, Default)]
 pub struct Options {
     /// Restrict to one workspace member by name.
@@ -31,7 +47,7 @@ pub struct Options {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DocTest {
     /// File the block's text lives in, workspace-relative.
-    pub file: PathBuf,
+    pub file: String,
     /// Line of the opening fence, 1-based.
     pub line: u32,
     /// Item path, e.g. `mycrate::parser::parse`.
@@ -72,6 +88,7 @@ pub struct Report {
     pub groups: Vec<Group>,
 }
 
+#[cfg(feature = "std")]
 /// Exit status for a finished scan.
 #[must_use]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
@@ -83,6 +100,7 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     }
 }
 
+#[cfg(feature = "std")]
 /// Scan `root` (any directory inside the workspace) and report duplicated
 /// doctests.
 ///
@@ -108,7 +126,29 @@ pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
                 Some(_) => format!("{}::{}", target.name, segments.join("::")),
                 None => target.name.clone(),
             };
-            blocks.extend(extract::extract(&prefix, &path, &file, &workspace.root));
+            let file_str = path.to_string_lossy().into_owned();
+            let root_str = workspace.root.to_string_lossy().into_owned();
+            let read_include = move |p: &str| {
+                let dir = path.parent()?;
+                let inc = dir.join(p);
+                match std::fs::read_to_string(&inc) {
+                    Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
+                    Err(err) => {
+                        eprintln!(
+                            "dejadoc: warning: cannot read doc include {}: {err}",
+                            inc.display()
+                        );
+                        None
+                    }
+                }
+            };
+            blocks.extend(extract::extract(
+                &prefix,
+                &file_str,
+                &file,
+                &root_str,
+                &read_include,
+            ));
         }
     }
     Ok(group(&blocks, threshold, min_tokens))
@@ -116,7 +156,8 @@ pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
 
 /// Group doctests by canonical form, dropping allowed sites, blocks under
 /// `min_tokens`, and groups under `threshold`.
-fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
+#[must_use]
+pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     let total = blocks.len();
     let mut unique: BTreeSet<String> = BTreeSet::new();
     let mut by_hash: BTreeMap<String, (bool, usize, Vec<DocTest>)> = BTreeMap::new();
@@ -125,7 +166,10 @@ fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
             continue;
         }
         let canonical = normalize::canonicalize(&block.code);
-        let hash = blake3::hash(canonical.text.as_bytes()).to_hex().to_string();
+        let hash = blake3::hash(canonical.text.as_bytes())
+            .to_hex()
+            .as_str()
+            .to_string();
         unique.insert(hash.clone());
         if canonical.tokens >= min_tokens {
             by_hash
@@ -139,7 +183,7 @@ fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
         .into_iter()
         .filter(|(_, (_, _, sites))| sites.len() >= threshold)
         .map(|(hash, (unparsed, tokens, mut sites))| {
-            sites.sort_by(|a, b| (a.file.as_os_str(), a.line).cmp(&(b.file.as_os_str(), b.line)));
+            sites.sort_by(|a, b| (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line)));
             Group {
                 id: hash[..8].to_string(),
                 hash,
@@ -159,10 +203,11 @@ fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn dt(file: &str, line: u32, item: &str, code: &str, allow: bool) -> DocTest {
         DocTest {
-            file: PathBuf::from(file),
+            file: file.to_string(),
             line,
             item: item.to_string(),
             info: Vec::new(),
@@ -215,10 +260,7 @@ mod tests {
         ];
         let report = group(&blocks, 2, 0);
         let sites = &report.groups[0].sites;
-        let pos: Vec<(String, u32)> = sites
-            .iter()
-            .map(|s| (s.file.to_string_lossy().into_owned(), s.line))
-            .collect();
+        let pos: Vec<(String, u32)> = sites.iter().map(|s| (s.file.clone(), s.line)).collect();
         assert_eq!(
             pos,
             vec![

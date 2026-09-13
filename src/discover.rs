@@ -1,6 +1,11 @@
 //! Workspace and module-tree discovery.
 
-use std::collections::HashSet;
+use alloc::collections::BTreeSet;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+use std::eprintln;
+use std::format;
 use std::path::PathBuf;
 
 /// One compilable target to scan.
@@ -101,7 +106,7 @@ fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<
 /// unparseable files are skipped with a warning.
 pub fn module_tree(target: &Target) -> anyhow::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
-    let mut visited = HashSet::new();
+    let mut visited = BTreeSet::new();
     collect(&target.src, &[], &mut out, &mut visited)?;
     Ok(out)
 }
@@ -110,7 +115,7 @@ fn collect(
     file: &std::path::Path,
     prefix: &[String],
     out: &mut Vec<(PathBuf, syn::File, Vec<String>)>,
-    visited: &mut HashSet<PathBuf>,
+    visited: &mut BTreeSet<PathBuf>,
 ) -> anyhow::Result<()> {
     let canonical = std::fs::canonicalize(file)?;
     if !visited.insert(canonical) {
@@ -251,6 +256,7 @@ fn cfg_attr_paths(tokens: &proc_macro2::TokenStream) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn target(src: &std::path::Path) -> Target {
         Target {

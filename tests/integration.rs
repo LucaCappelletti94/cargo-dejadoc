@@ -1,5 +1,7 @@
 //! End-to-end tests of the scan through the real workspace fixtures.
 
+#![cfg(feature = "std")]
+
 use dejadoc::{Options, Report, run};
 use std::path::Path;
 use std::process::Command;
@@ -27,11 +29,7 @@ fn shared_group_spans_crates_and_variants() {
         items,
         vec!["alpha::alpha_fn", "alpha::alpha_variant", "beta::beta_fn"]
     );
-    let files: Vec<&str> = shared
-        .sites
-        .iter()
-        .map(|s| s.file.to_str().unwrap())
-        .collect();
+    let files: Vec<&str> = shared.sites.iter().map(|s| s.file.as_str()).collect();
     assert_eq!(
         files,
         vec!["alpha/src/lib.rs", "alpha/src/lib.rs", "beta/src/lib.rs"]

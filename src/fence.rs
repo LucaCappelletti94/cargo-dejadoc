@@ -1,4 +1,7 @@
 //! Fenced code block extraction from doc text.
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
 
 /// A fenced code block found in doc text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -52,6 +55,7 @@ pub fn scan(text: &str) -> Vec<Fence> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn fence(info: &str, line: usize, code: &str) -> Fence {
         Fence {

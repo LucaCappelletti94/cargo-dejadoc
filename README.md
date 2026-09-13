@@ -58,3 +58,7 @@ let report = dejadoc::run(
 .unwrap();
 assert_eq!(report.groups.len(), 3);
 ```
+
+The core (`fence`, `normalize`, `extract`, `group`) is `#![no_std]` and
+`alloc`-only; the `std` feature (defaulted) enables the CLI-facing API
+(`run`, `Options`, `exit_code`) and the `cargo-dejadoc` binary.

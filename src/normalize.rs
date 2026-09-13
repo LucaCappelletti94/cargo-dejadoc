@@ -1,5 +1,10 @@
 //! Canonical form of a doctest body.
 
+use alloc::format;
+use alloc::string::String;
+use alloc::string::ToString;
+use alloc::vec::Vec;
+
 use quote::ToTokens;
 /// Canonical form of a doctest body.
 #[derive(Debug, Clone, PartialEq, Eq)]

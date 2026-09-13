@@ -2,7 +2,9 @@
 
 use crate::Report;
 
-use std::fmt::Write;
+use alloc::format;
+use alloc::string::String;
+use core::fmt::Write;
 
 /// Render the report for humans.
 #[must_use]
@@ -36,7 +38,7 @@ pub fn human(report: &Report, verbose: bool) -> String {
             let _ = writeln!(
                 &mut out,
                 "  {}:{}  {}{}",
-                site.file.display(),
+                site.file.as_str(),
                 site.line,
                 site.item,
                 info
@@ -69,10 +71,13 @@ pub fn json(report: &Report) -> String {
 mod tests {
     use super::*;
     use crate::{DocTest, Group};
+    use alloc::string::ToString;
+    use alloc::vec;
+    use alloc::vec::Vec;
 
     fn site(file: &str, line: u32, item: &str, code: &str, info: &[&str]) -> DocTest {
         DocTest {
-            file: std::path::PathBuf::from(file),
+            file: file.to_string(),
             line,
             item: item.to_string(),
             info: info.iter().map(ToString::to_string).collect(),
