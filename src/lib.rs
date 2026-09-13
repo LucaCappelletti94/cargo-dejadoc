@@ -15,6 +15,7 @@ use std::eprintln;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
+mod alpha;
 mod config;
 #[cfg(feature = "std")]
 mod discover;
@@ -460,6 +461,33 @@ mod tests {
         assert_eq!(sites[0].item, "alpha::one");
         assert_eq!(sites[1].file, "src/parser.rs");
         assert_eq!(sites[1].item, "beta::parser::two");
+    }
+
+    #[test]
+    fn run_targets_groups_alpha_equivalent_doctests() {
+        let mk = |name: &str, body: &str| {
+            let src = format!("/// ```\n/// {body}\n/// ```\npub fn f() {{}}\n");
+            TargetScan {
+                name: name.to_string(),
+                files: vec![SourceFile {
+                    path: "src/lib.rs".to_string(),
+                    segments: Vec::new(),
+                    parsed: match syn::parse_str(&src) {
+                        Ok(parsed) => parsed,
+                        Err(err) => panic!("parse fixture: {err}"),
+                    },
+                }],
+            }
+        };
+        let targets = vec![
+            mk("alpha", "let pino = 1; pino + 1"),
+            mk("beta", "let abete = 1; abete + 1"),
+        ];
+        let report = Dejadoc::default().run_targets("", &targets, &|_file, _inc| None);
+        assert_eq!(report.total, 2);
+        assert_eq!(report.unique, 1);
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].sites.len(), 2);
     }
 
     #[test]

@@ -8,7 +8,9 @@ Deja vu. Find duplicated Rust doctests across a workspace.
 
 `cargo dejadoc` scans every doctest your workspace's rustdoc would run,
 canonicalizes each body through `syn`, and reports the groups that share a
-canonical form. Comment and whitespace drift collapse. `#`-hidden lines are
+canonical form. Comment and whitespace drift collapse, and local names are
+alpha-renamed positionally, so bodies that differ only in how they name
+their variables or functions group together. `#`-hidden lines are
 dropped, as rustdoc does. Doctest attributes such as `no_run` are listed
 per site and never affect the grouping.
 
@@ -56,12 +58,12 @@ min-tokens = 0
 
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
-assert_eq!(report.groups.len(), 3);
+assert_eq!(report.groups.len(), 2);
 ```
 
 `run_targets` scans caller-resolved targets in memory and is the `no_std`
 entry point.
 
-The builder `Dejadoc` is `#![no_std]` and `alloc`-only. The `std` feature
+The `Dejadoc` builder is `no_std` and `alloc`-only. The `std` feature
 (defaulted) additionally enables `run`, `.config`, `Error`, `exit_code`,
 and the `cargo-dejadoc` binary.

@@ -16,23 +16,35 @@ fn scan() -> Report {
 fn shared_group_spans_crates_and_variants() {
     let report = scan();
     assert_eq!(report.total, 9);
-    assert_eq!(report.unique, 4);
-    assert_eq!(report.groups.len(), 3);
+    assert_eq!(report.unique, 3);
+    assert_eq!(report.groups.len(), 2);
     let shared = report
         .groups
         .iter()
         .find(|g| g.sites.iter().any(|s| s.item == "alpha::alpha_fn"))
         .expect("shared group present");
-    assert_eq!(shared.sites.len(), 3);
+    assert_eq!(shared.sites.len(), 5);
     let items: Vec<&str> = shared.sites.iter().map(|s| s.item.as_str()).collect();
     assert_eq!(
         items,
-        vec!["alpha::alpha_fn", "alpha::alpha_variant", "beta::beta_fn"]
+        vec![
+            "alpha::alpha_fn",
+            "alpha::alpha_variant",
+            "alpha::util::helper",
+            "beta::beta_fn",
+            "beta::util::helper"
+        ]
     );
     let files: Vec<&str> = shared.sites.iter().map(|s| s.file.as_str()).collect();
     assert_eq!(
         files,
-        vec!["alpha/src/lib.rs", "alpha/src/lib.rs", "beta/src/lib.rs"]
+        vec![
+            "alpha/src/lib.rs",
+            "alpha/src/lib.rs",
+            "alpha/src/util.rs",
+            "beta/src/lib.rs",
+            "beta/src/util.rs"
+        ]
     );
 }
 
@@ -74,7 +86,7 @@ fn config_threshold_suppresses_groups() {
         .unwrap()
         .run(FIXTURE)
         .unwrap();
-    assert_eq!(report.groups.len(), 3);
+    assert_eq!(report.groups.len(), 2);
 
     // The API threshold still wins when set after the config file.
     let report = Dejadoc::default()
@@ -83,23 +95,24 @@ fn config_threshold_suppresses_groups() {
         .threshold(2)
         .run(FIXTURE)
         .unwrap();
-    assert_eq!(report.groups.len(), 3);
+    assert_eq!(report.groups.len(), 2);
 }
 
 #[test]
 fn all_targets_builder_scans_bin_targets() {
     // The fixture's bin target (alpha/src/bin/dupbin.rs) is scanned only
-    // with all_targets: one more doctest site, still no new group.
+    // with all_targets: one more doctest site, which alpha-renaming
+    // joins into the function group.
     let report = Dejadoc::default().all_targets().run(FIXTURE).unwrap();
     assert_eq!(report.total, 10);
-    assert_eq!(report.unique, 5);
-    assert_eq!(report.groups.len(), 3);
+    assert_eq!(report.unique, 3);
+    assert_eq!(report.groups.len(), 2);
 }
 
 #[test]
 fn min_tokens_builder_filters_blocks() {
-    // min-tokens 3 drops the two 2-site groups' small blocks; only the
-    // 3-site group survives.
+    // min-tokens 3 drops the 2-token function group; only the
+    // 3-token unparsed group survives.
     let report = Dejadoc::default().min_tokens(3).run(FIXTURE).unwrap();
     assert_eq!(report.total, 9);
     assert_eq!(report.groups.len(), 1);
@@ -129,7 +142,7 @@ fn binary_runs_end_to_end() {
     assert_eq!(out.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
     assert_eq!(value["total"], 9);
-    assert_eq!(value["groups"].as_array().unwrap().len(), 3);
+    assert_eq!(value["groups"].as_array().unwrap().len(), 2);
 }
 
 #[test]
@@ -165,15 +178,19 @@ fn file_module_items_carry_module_prefix() {
         .iter()
         .find(|g| g.sites.iter().any(|s| s.item.contains("helper")))
         .expect("helper group present");
-    assert_eq!(helper.sites.len(), 2);
-    let items: Vec<&str> = helper.sites.iter().map(|s| s.item.as_str()).collect();
+    let items: Vec<&str> = helper
+        .sites
+        .iter()
+        .map(|s| s.item.as_str())
+        .filter(|item| item.contains("helper"))
+        .collect();
     assert_eq!(items, vec!["alpha::util::helper", "beta::util::helper"]);
 }
 
 #[test]
 fn threshold_builder_narrows_groups() {
-    // Dupws has one 3-site group and two 2-site groups: raising the
-    // threshold through the builder keeps only the 3-site group.
+    // Dupws has one 5-site group and one 2-site group: raising the
+    // threshold through the builder keeps only the 5-site group.
     let report = dejadoc::Dejadoc::default()
         .threshold(3)
         .run(FIXTURE)

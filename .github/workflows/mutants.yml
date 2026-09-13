@@ -22,8 +22,10 @@ jobs:
     name: Mutation testing
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    # The --exclude-re flags drop the nine documented equivalent mutants (plans/dejadoc.md),
+    # The --exclude-re flags drop the documented equivalent mutants (plans/dejadoc.md),
     # because cargo-mutants exits 2 on any missed mutant and would otherwise be red forever.
+    # The single_segment operator: syn QSelf paths always carry two or more segments, so
+    # the qself guard never changes the outcome and the operator swap is unobservable.
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
@@ -52,4 +54,5 @@ jobs:
           cargo mutants --cap-lints true --timeout 60
           -E 'delete match arm (syn::)?(ImplItem|TraitItem|ForeignItem)::Macro\(m\) in (impl_assoc_name|trait_assoc_name|foreign_name|assoc_attrs|trait_assoc_attrs|foreign_attrs)'
           -E 'replace match guard mac\.path\.is_ident\("concat"\) with true'
+          -E 'replace \|\| with && in single_segment_type_name'
           -E 'replace \+ with [-*] in merge_parts'
