@@ -1,5 +1,6 @@
 //! Workspace, target, and module-tree discovery.
 
+use std::collections::HashSet;
 use std::path::PathBuf;
 
 /// One compilable target to scan.
@@ -36,15 +37,306 @@ pub fn workspace(
     package: Option<&str>,
     all_targets: bool,
 ) -> anyhow::Result<Workspace> {
-    // Implemented in the discover phase.
-    let _ = (root, package, all_targets);
-    anyhow::bail!("discover not implemented yet")
+    let metadata = cargo_metadata::MetadataCommand::new()
+        .current_dir(root)
+        .no_deps()
+        .exec()?;
+    let mut targets = Vec::new();
+    for package in metadata
+        .packages
+        .iter()
+        .filter(|p| package.is_none_or(|want| p.name == want))
+    {
+        for target in package.targets.iter() {
+            if let Some(kind) = scan_kind(&target.kind, all_targets) {
+                targets.push(Target {
+                    name: target.name.clone(),
+                    kind,
+                    src: target.src_path.clone().into(),
+                });
+            }
+        }
+    }
+    Ok(Workspace {
+        root: metadata.workspace_root.clone().into(),
+        targets,
+    })
+}
+
+/// Scan kind of a cargo target from its kind list.
+fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<TargetKind> {
+    use cargo_metadata::TargetKind as CargoTargetKind;
+
+    if kinds
+        .iter()
+        .any(|k| matches!(k, CargoTargetKind::Lib | CargoTargetKind::ProcMacro))
+    {
+        return Some(TargetKind::Lib);
+    }
+    if !all_targets {
+        return None;
+    }
+    if kinds.iter().any(|k| matches!(k, CargoTargetKind::Bin)) {
+        return Some(TargetKind::Bin);
+    }
+    if kinds.iter().any(|k| matches!(k, CargoTargetKind::Example)) {
+        return Some(TargetKind::Example);
+    }
+    None
 }
 
 /// Walk the module tree from a target root: the root file plus every
 /// `mod`-declared file, with `syn` parse results.
 pub fn module_tree(target: &Target) -> anyhow::Result<Vec<(PathBuf, syn::File)>> {
-    // Implemented in the discover phase.
-    let _ = target;
-    anyhow::bail!("discover not implemented yet")
+    let mut out = Vec::new();
+    let mut visited = HashSet::new();
+    collect(&target.src, &mut out, &mut visited)?;
+    Ok(out)
+}
+
+fn collect(
+    file: &std::path::Path,
+    out: &mut Vec<(PathBuf, syn::File)>,
+    visited: &mut HashSet<PathBuf>,
+) -> anyhow::Result<()> {
+    let canonical = std::fs::canonicalize(file)?;
+    if !visited.insert(canonical) {
+        return Ok(());
+    }
+    let text = match std::fs::read_to_string(file) {
+        Ok(text) => text,
+        Err(err) => {
+            eprintln!("dejadoc: warning: cannot read {file:?}: {err}");
+            return Ok(());
+        }
+    };
+    let parsed = match syn::parse_file(&text) {
+        Ok(parsed) => parsed,
+        Err(err) => {
+            eprintln!("dejadoc: warning: cannot parse {file:?}: {err}");
+            return Ok(());
+        }
+    };
+    let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
+    let mut children = Vec::new();
+    mod_decls(&parsed.items, dir, &mut children);
+    out.push((file.to_path_buf(), parsed));
+    for child in children {
+        collect(&child, out, visited)?;
+    }
+    Ok(())
+}
+
+/// Collect the files of `mod name;` declarations, at every nesting depth.
+/// Inline mods share the defining file's directory, as rustc does.
+fn mod_decls(items: &[syn::Item], dir: &std::path::Path, out: &mut Vec<PathBuf>) {
+    use syn::Item;
+
+    for item in items {
+        if let Item::Mod(moditem) = item {
+            if let Some((_, children)) = &moditem.content {
+                mod_decls(children, dir, out);
+                continue;
+            }
+            match resolve_mod_path(dir, &moditem.ident, &moditem.attrs) {
+                Some(path) if path.exists() => out.push(path),
+                Some(path) => eprintln!("dejadoc: warning: missing module file {path:?}"),
+                None => {}
+            }
+        }
+    }
+}
+
+/// File for `mod name;` in `dir`, honouring a `#[path = "…"]` override.
+fn resolve_mod_path(
+    dir: &std::path::Path,
+    name: &syn::Ident,
+    attrs: &[syn::Attribute],
+) -> Option<PathBuf> {
+    use syn::{Expr, ExprLit, Lit, Meta};
+
+    if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("path")) {
+        let Meta::NameValue(nv) = &attr.meta else {
+            return None;
+        };
+        let Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) = &nv.value
+        else {
+            return None;
+        };
+        return Some(dir.join(s.value()));
+    }
+    let plain = dir.join(format!("{name}.rs"));
+    if plain.exists() {
+        return Some(plain);
+    }
+    Some(dir.join(name.to_string()).join("mod.rs"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn target(src: &std::path::Path) -> Target {
+        Target {
+            name: "mycrate".into(),
+            kind: TargetKind::Lib,
+            src: src.to_path_buf(),
+        }
+    }
+
+    fn files(result: Vec<(PathBuf, syn::File)>) -> Vec<PathBuf> {
+        result.into_iter().map(|(p, _)| p).collect()
+    }
+
+    #[test]
+    fn walks_declared_mod_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a;\npub fn f() {}\n").unwrap();
+        std::fs::write(dir.path().join("a.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let got: Vec<String> = files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got, vec!["lib.rs", "a.rs"]);
+    }
+
+    #[test]
+    fn resolves_mod_dir_form() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a;\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("mod.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 2);
+    }
+
+    #[test]
+    fn path_attribute_overrides_name() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "#[path = \"other.rs\"]\npub mod renamed;\n").unwrap();
+        std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let got: Vec<String> = files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(got, vec!["lib.rs", "other.rs"]);
+    }
+
+    #[test]
+    fn missing_mod_is_skipped_without_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod missing;\npub fn f() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 1);
+    }
+
+    #[test]
+    fn mod_decl_inside_inline_mod_uses_outer_dir() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a { pub mod c; }\n").unwrap();
+        std::fs::write(dir.path().join("c.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 2);
+    }
+
+    #[test]
+    fn module_cycles_terminate() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a;\n").unwrap();
+        std::fs::write(
+            dir.path().join("a.rs"),
+            "#[path = \"lib.rs\"]\npub mod back;\n",
+        )
+        .unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 2);
+    }
+
+    #[test]
+    fn unparseable_file_is_skipped_without_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "@@@ not rust @@ @\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert!(result.is_empty());
+    }
+
+    fn cargo_package(dir: &std::path::Path, name: &str, extra: &str) {
+        let src = dir.join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            dir.join("Cargo.toml"),
+            format!(
+                "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2021\"\n{extra}"
+            ),
+        )
+        .unwrap();
+        std::fs::write(src.join("lib.rs"), "pub fn f() {}\n").unwrap();
+    }
+
+    #[test]
+    fn default_is_lib_targets_only() {
+        let dir = tempfile::tempdir().unwrap();
+        cargo_package(
+            dir.path(),
+            "ws",
+            "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n",
+        );
+        let bin = dir.path().join("src").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("tool.rs"), "fn main() {}\n").unwrap();
+        let ws = workspace(dir.path(), None, false).unwrap();
+        assert_eq!(ws.targets.len(), 1);
+        assert_eq!(ws.targets[0].name, "ws");
+        assert!(ws.targets[0].src.ends_with("src/lib.rs"));
+        assert_eq!(ws.root, dir.path().to_path_buf());
+    }
+
+    #[test]
+    fn all_targets_includes_bins_and_examples() {
+        let dir = tempfile::tempdir().unwrap();
+        cargo_package(
+            dir.path(),
+            "ws",
+            "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n",
+        );
+        let bin = dir.path().join("src").join("bin");
+        std::fs::create_dir_all(&bin).unwrap();
+        std::fs::write(bin.join("tool.rs"), "fn main() {}\n").unwrap();
+        let ex = dir.path().join("examples");
+        std::fs::create_dir_all(&ex).unwrap();
+        std::fs::write(ex.join("demo.rs"), "fn main() {}\n").unwrap();
+        let ws = workspace(dir.path(), None, true).unwrap();
+        let names: Vec<&str> = ws.targets.iter().map(|t| t.name.as_str()).collect();
+        assert!(names.contains(&"ws"));
+        assert!(names.contains(&"tool"));
+        assert!(names.contains(&"demo"));
+    }
+
+    #[test]
+    fn package_filter_selects_one_member() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[workspace]\nmembers = [\"alpha\", \"beta\"]\nresolver = \"2\"\n",
+        )
+        .unwrap();
+        cargo_package(dir.path().join("alpha").as_path(), "alpha", "");
+        cargo_package(dir.path().join("beta").as_path(), "beta", "");
+        let ws = workspace(dir.path(), Some("beta"), false).unwrap();
+        assert_eq!(ws.targets.len(), 1);
+        assert_eq!(ws.targets[0].name, "beta");
+        let ws = workspace(dir.path(), Some("nope"), false).unwrap();
+        assert!(ws.targets.is_empty());
+    }
 }
