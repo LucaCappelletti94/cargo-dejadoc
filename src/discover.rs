@@ -231,21 +231,19 @@ fn resolve_mod_path(
 fn cfg_attr_paths(tokens: &proc_macro2::TokenStream) -> Vec<String> {
     let trees = tokens.clone().into_iter().collect::<Vec<_>>();
     let mut out = Vec::new();
-    let mut i = 0;
-    while i + 2 < trees.len() {
+    for window in trees.windows(3) {
         if matches!(
-            (&trees[i], &trees[i + 1]),
+            (&window[0], &window[1]),
             (
                 proc_macro2::TokenTree::Ident(id),
                 proc_macro2::TokenTree::Punct(eq)
             ) if id == "path" && eq.as_char() == '='
         ) {
-            let text = trees[i + 2].to_string();
+            let text = window[2].to_string();
             if let Ok(s) = syn::parse_str::<syn::LitStr>(&text) {
                 out.push(s.value());
             }
         }
-        i += 1;
     }
     out
 }
@@ -322,6 +320,24 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["lib.rs", "present.rs"]);
+    }
+
+    #[test]
+    fn cfg_attr_multi_token_predicate_resolves_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(
+            &root,
+            "#[cfg_attr(all(a, b), path = \"other.rs\")]\npub mod renamed;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let names: Vec<String> = files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["lib.rs", "other.rs"]);
     }
 
     #[test]

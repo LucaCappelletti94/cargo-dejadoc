@@ -907,4 +907,124 @@ pub fn raw() {}
         let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
+
+    #[test]
+    fn impl_associated_items_carry_doctests() {
+        let src = "struct S;\nimpl S {\n    /// ```\n    /// fn main() {}\n    /// ```\n    const C: i32 = 1;\n    /// ```\n    /// fn main() { let a = 1; }\n    /// ```\n    type T = i32;\n}\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt("src/lib.rs", 3, "mycrate::S::C", &[], "fn main() {}", false),
+                dt(
+                    "src/lib.rs",
+                    7,
+                    "mycrate::S::T",
+                    &[],
+                    "fn main() { let a = 1; }",
+                    false
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn trait_associated_items_carry_doctests() {
+        let src = "trait T {\n    /// ```\n    /// fn main() {}\n    /// ```\n    const C: i32;\n    /// ```\n    /// fn main() { let a = 1; }\n    /// ```\n    type Out;\n}\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt("src/lib.rs", 2, "mycrate::T::C", &[], "fn main() {}", false),
+                dt(
+                    "src/lib.rs",
+                    6,
+                    "mycrate::T::Out",
+                    &[],
+                    "fn main() { let a = 1; }",
+                    false
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn extern_associated_items_carry_doctests() {
+        let src = "extern \"C\" {\n    /// ```\n    /// fn main() {}\n    /// ```\n    static S: i32;\n    /// ```\n    /// fn main() { let a = 1; }\n    /// ```\n    type T;\n}\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt("src/lib.rs", 2, "mycrate::S", &[], "fn main() {}", false),
+                dt(
+                    "src/lib.rs",
+                    6,
+                    "mycrate::T",
+                    &[],
+                    "fn main() { let a = 1; }",
+                    false
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn mod_declaration_carries_its_docs() {
+        let src = "/// ```\n/// fn main() {}\n/// ```\npub mod m {\n    pub fn f() {}\n}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::m",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn impl_declaration_carries_its_docs() {
+        let src = "struct S;\n/// ```\n/// fn main() {}\n/// ```\nimpl S {\n    pub fn f() {}\n}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                2,
+                "mycrate::S",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn trait_declaration_carries_its_docs() {
+        let src = "/// ```\n/// fn main() {}\n/// ```\ntrait T {\n    fn m(&self);\n}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::T",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn extern_block_carries_its_docs() {
+        let src = "/// ```\n/// fn main() {}\n/// ```\nextern \"C\" {\n    fn f();\n}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate", &[], "fn main() {}", false)]
+        );
+    }
+
+    #[test]
+    fn rust_ignore_fence_is_not_scanned() {
+        let src = "/// ```rust,ignore\n/// fn main() {}\n/// ```\npub fn f() {}\n";
+        assert_eq!(run(src), Vec::new());
+    }
 }

@@ -150,4 +150,35 @@ mod tests {
         assert_eq!(first["item"], "m::a");
         assert_eq!(first["info"][0], "no_run");
     }
+
+    #[test]
+    fn human_multiple_groups_separated_by_blank_line() {
+        let report = Report {
+            total: 4,
+            unique: 2,
+            groups: vec![
+                Group {
+                    id: "ab12cd34".into(),
+                    hash: "ab12cd34".into(),
+                    unparsed: false,
+                    tokens: 5,
+                    sites: vec![
+                        site("src/a.rs", 14, "m::a", "fn f() {}", &[]),
+                        site("src/b.rs", 97, "m::b", "fn f() {}", &[]),
+                    ],
+                },
+                Group {
+                    id: "ef56gh78".into(),
+                    hash: "ef56gh78".into(),
+                    unparsed: false,
+                    tokens: 3,
+                    sites: vec![site("src/c.rs", 5, "n::c", "fn g() {}", &[])],
+                },
+            ],
+        };
+        assert_eq!(
+            human(&report, false),
+            "4 doctests, 2 unique, 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n"
+        );
+    }
 }

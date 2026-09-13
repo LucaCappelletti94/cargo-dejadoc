@@ -1,0 +1,52 @@
+---
+name: Mutants
+
+"on":
+  pull_request:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mutants-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  mutants:
+    name: Mutation testing
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    # The run is report-only: nine documented equivalent mutants (unreachable
+    # syn-only match arms and values no code path reads) cap the raw score at
+    # ~94%, so a --fail-under gate would be red on every run.
+    if: >-
+      github.event_name == 'push' ||
+      (github.event.pull_request.head.repo.full_name == github.repository &&
+      github.event.pull_request.user.login != 'dependabot[bot]')
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo downloads
+        uses: actions/cache@v6
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: dl-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            dl-${{ runner.os }}-
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - name: Install cargo-mutants
+        run: cargo install cargo-mutants --locked
+
+      - name: Run mutants
+        run: cargo mutants --cap-lints true --timeout 60
