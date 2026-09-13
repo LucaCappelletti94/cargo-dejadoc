@@ -48,7 +48,7 @@ pub fn workspace(
     root: &std::path::Path,
     package: Option<&str>,
     all_targets: bool,
-) -> anyhow::Result<Workspace> {
+) -> crate::Result<Workspace> {
     let metadata = cargo_metadata::MetadataCommand::new()
         .current_dir(root)
         .no_deps()
@@ -104,7 +104,7 @@ fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<
 ///
 /// Fails when a module file cannot be canonicalized; unreadable or
 /// unparseable files are skipped with a warning.
-pub fn module_tree(target: &Target) -> anyhow::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
+pub fn module_tree(target: &Target) -> crate::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
     let mut visited = BTreeSet::new();
     collect(&target.src, &[], &mut out, &mut visited)?;
@@ -116,7 +116,7 @@ fn collect(
     prefix: &[String],
     out: &mut Vec<(PathBuf, syn::File, Vec<String>)>,
     visited: &mut BTreeSet<PathBuf>,
-) -> anyhow::Result<()> {
+) -> crate::Result<()> {
     let canonical = std::fs::canonicalize(file)?;
     if !visited.insert(canonical) {
         return Ok(());

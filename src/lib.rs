@@ -26,21 +26,151 @@ pub mod report;
 
 pub use report::{human, json};
 
-/// Options for a scan. CLI values win over `.dejadoc.toml` values, which win
-/// over defaults.
+/// Scan parameters. Values left unset fall back to `.dejadoc.toml`, then
+/// to defaults (threshold 2, min-tokens 0).
 #[cfg(feature = "std")]
 #[derive(Debug, Clone, Default)]
-pub struct Options {
-    /// Restrict to one workspace member by name.
-    pub package: Option<String>,
-    /// Scan bin and example targets in addition to lib targets.
-    pub all_targets: bool,
-    /// Report groups with at least this many sites.
-    pub threshold: Option<usize>,
-    /// Skip blocks with fewer tokens than this.
-    pub min_tokens: Option<usize>,
-    /// Explicit `.dejadoc.toml` location.
-    pub config: Option<PathBuf>,
+pub struct Dejadoc {
+    package: Option<String>,
+    all_targets: bool,
+    threshold: Option<usize>,
+    min_tokens: Option<usize>,
+    config: Option<PathBuf>,
+}
+
+#[cfg(feature = "std")]
+impl Dejadoc {
+    /// Restrict the scan to one workspace member by name.
+    #[must_use]
+    pub fn package(mut self, name: impl Into<String>) -> Self {
+        self.package = Some(name.into());
+        self
+    }
+
+    /// Also scan bin and example targets.
+    #[must_use]
+    pub fn all_targets(mut self) -> Self {
+        self.all_targets = true;
+        self
+    }
+
+    /// Report only groups with at least this many sites.
+    #[must_use]
+    pub fn threshold(mut self, n: usize) -> Self {
+        self.threshold = Some(n);
+        self
+    }
+
+    /// Ignore blocks with fewer tokens than this.
+    #[must_use]
+    pub fn min_tokens(mut self, n: usize) -> Self {
+        self.min_tokens = Some(n);
+        self
+    }
+
+    /// Read parameters from an explicit `.dejadoc.toml` location.
+    #[must_use]
+    pub fn config(mut self, path: impl Into<PathBuf>) -> Self {
+        self.config = Some(path.into());
+        self
+    }
+
+    /// Scan `root` (any directory inside the workspace) and report
+    /// duplicated doctests.
+    ///
+    /// # Errors
+    ///
+    /// Fails when `cargo metadata` cannot resolve the workspace, when the
+    /// config file cannot be read or is not valid TOML, or when a module
+    /// file cannot be canonicalized.
+    pub fn run(self, root: impl AsRef<Path>) -> Result<Report> {
+        let Self {
+            package,
+            all_targets,
+            threshold,
+            min_tokens,
+            config,
+        } = self;
+        let workspace = discover::workspace(root.as_ref(), package.as_deref(), all_targets)?;
+        let config_path = config.unwrap_or_else(|| workspace.root.join(".dejadoc.toml"));
+        let cfg = config::load(&config_path)?;
+        let threshold = threshold.or(cfg.threshold).unwrap_or(2);
+        let min_tokens = min_tokens.or(cfg.min_tokens).unwrap_or(0);
+
+        let mut blocks = Vec::new();
+        for target in &workspace.targets {
+            for (path, file, segments) in discover::module_tree(target)? {
+                let prefix = match segments.first() {
+                    Some(_) => format!("{}::{}", target.name, segments.join("::")),
+                    None => target.name.clone(),
+                };
+                let file_str = path.to_string_lossy().into_owned();
+                let root_str = workspace.root.to_string_lossy().into_owned();
+                let read_include = move |p: &str| {
+                    let dir = path.parent()?;
+                    let inc = dir.join(p);
+                    match std::fs::read_to_string(&inc) {
+                        Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
+                        Err(err) => {
+                            eprintln!(
+                                "dejadoc: warning: cannot read doc include {}: {err}",
+                                inc.display()
+                            );
+                            None
+                        }
+                    }
+                };
+                blocks.extend(extract::extract(
+                    &prefix,
+                    &file_str,
+                    &file,
+                    &root_str,
+                    &read_include,
+                ));
+            }
+        }
+        Ok(group(&blocks, threshold, min_tokens))
+    }
+}
+
+/// Failure of a scan.
+#[cfg(feature = "std")]
+#[derive(Debug, thiserror::Error)]
+pub enum Error {
+    /// `cargo metadata` could not resolve the workspace.
+    #[error("workspace: {0}")]
+    Workspace(#[source] cargo_metadata::Error),
+    /// A file could not be read.
+    #[error("I/O: {0}")]
+    Io(#[source] std::io::Error),
+    /// The config file cannot be read or is not valid TOML.
+    #[error("config: {0}")]
+    Config(#[source] toml::de::Error),
+}
+
+/// A `Result` with [`Error`] as its default error type.
+#[cfg(feature = "std")]
+pub type Result<T, E = Error> = std::result::Result<T, E>;
+
+#[cfg(feature = "std")]
+impl From<std::io::Error> for Error {
+    fn from(err: std::io::Error) -> Self {
+        Error::Io(err)
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<cargo_metadata::Error> for Error {
+    fn from(err: cargo_metadata::Error) -> Self {
+        Error::Workspace(err)
+    }
+}
+
+#[cfg(feature = "std")]
+impl From<toml::de::Error> for Error {
+    fn from(err: toml::de::Error) -> Self {
+        Error::Config(err)
+    }
 }
 
 /// A doctest block as found in one doc site.
@@ -98,60 +228,6 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     } else {
         ExitCode::from(1)
     }
-}
-
-#[cfg(feature = "std")]
-/// Scan `root` (any directory inside the workspace) and report duplicated
-/// doctests.
-///
-/// # Errors
-///
-/// Fails when `cargo metadata` cannot resolve the workspace, when the config
-/// file cannot be read or is not valid TOML, or when a module file cannot be
-/// canonicalized.
-pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
-    let workspace = discover::workspace(root, opts.package.as_deref(), opts.all_targets)?;
-    let config_path = opts
-        .config
-        .clone()
-        .unwrap_or_else(|| workspace.root.join(".dejadoc.toml"));
-    let cfg = config::load(&config_path)?;
-    let threshold = opts.threshold.or(cfg.threshold).unwrap_or(2);
-    let min_tokens = opts.min_tokens.or(cfg.min_tokens).unwrap_or(0);
-
-    let mut blocks = Vec::new();
-    for target in &workspace.targets {
-        for (path, file, segments) in discover::module_tree(target)? {
-            let prefix = match segments.first() {
-                Some(_) => format!("{}::{}", target.name, segments.join("::")),
-                None => target.name.clone(),
-            };
-            let file_str = path.to_string_lossy().into_owned();
-            let root_str = workspace.root.to_string_lossy().into_owned();
-            let read_include = move |p: &str| {
-                let dir = path.parent()?;
-                let inc = dir.join(p);
-                match std::fs::read_to_string(&inc) {
-                    Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
-                    Err(err) => {
-                        eprintln!(
-                            "dejadoc: warning: cannot read doc include {}: {err}",
-                            inc.display()
-                        );
-                        None
-                    }
-                }
-            };
-            blocks.extend(extract::extract(
-                &prefix,
-                &file_str,
-                &file,
-                &root_str,
-                &read_include,
-            ));
-        }
-    }
-    Ok(group(&blocks, threshold, min_tokens))
 }
 
 /// Group doctests by canonical form, dropping allowed sites, blocks under
@@ -214,6 +290,15 @@ mod tests {
             code: code.to_string(),
             allow,
         }
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn run_outside_a_workspace_is_a_workspace_error() {
+        let err = Dejadoc::default()
+            .run("/nonexistent-dejadoc-root")
+            .unwrap_err();
+        assert!(matches!(err, Error::Workspace(_)));
     }
 
     #[test]

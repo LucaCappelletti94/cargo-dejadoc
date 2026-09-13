@@ -20,7 +20,7 @@ pub struct Config {
 /// # Errors
 ///
 /// Fails when the file exists but cannot be read or is not valid TOML.
-pub fn load(path: &Path) -> anyhow::Result<Config> {
+pub fn load(path: &Path) -> crate::Result<Config> {
     if !path.exists() {
         return Ok(Config::default());
     }

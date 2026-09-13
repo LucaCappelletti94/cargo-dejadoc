@@ -2,14 +2,14 @@
 
 #![cfg(feature = "std")]
 
-use dejadoc::{Options, Report, run};
+use dejadoc::{Dejadoc, Report};
 use std::path::Path;
 use std::process::Command;
 
 const FIXTURE: &str = "tests/fixtures/dupws";
 
 fn scan() -> Report {
-    run(Path::new(FIXTURE), &Options::default()).unwrap()
+    dejadoc::Dejadoc::default().run(FIXTURE).unwrap()
 }
 
 #[test]
@@ -60,21 +60,35 @@ fn allowed_sites_are_not_grouped() {
 #[test]
 fn config_threshold_suppresses_groups() {
     let strict = Path::new(FIXTURE).join(".dejadoc-strict.toml");
-    let opts = Options {
-        config: Some(strict.clone()),
-        ..Options::default()
-    };
-    let report = run(Path::new(FIXTURE), &opts).unwrap();
+    let report = Dejadoc::default().config(&strict).run(FIXTURE).unwrap();
     assert_eq!(report.groups, Vec::new());
 
-    // CLI threshold overrides the config file.
-    let opts = Options {
-        threshold: Some(2),
-        config: Some(strict),
-        ..Options::default()
-    };
-    let report = run(Path::new(FIXTURE), &opts).unwrap();
+    // API threshold overrides the config file.
+    let report = Dejadoc::default()
+        .threshold(2)
+        .config(&strict)
+        .run(FIXTURE)
+        .unwrap();
     assert_eq!(report.groups.len(), 3);
+}
+
+#[test]
+fn all_targets_builder_scans_bin_targets() {
+    // The fixture's bin target (alpha/src/bin/dupbin.rs) is scanned only
+    // with all_targets: one more doctest site, still no new group.
+    let report = Dejadoc::default().all_targets().run(FIXTURE).unwrap();
+    assert_eq!(report.total, 10);
+    assert_eq!(report.unique, 5);
+    assert_eq!(report.groups.len(), 3);
+}
+
+#[test]
+fn min_tokens_builder_filters_blocks() {
+    // min-tokens 3 drops the two 2-site groups' small blocks; only the
+    // 3-site group survives.
+    let report = Dejadoc::default().min_tokens(3).run(FIXTURE).unwrap();
+    assert_eq!(report.total, 9);
+    assert_eq!(report.groups.len(), 1);
 }
 
 #[test]
@@ -140,4 +154,16 @@ fn file_module_items_carry_module_prefix() {
     assert_eq!(helper.sites.len(), 2);
     let items: Vec<&str> = helper.sites.iter().map(|s| s.item.as_str()).collect();
     assert_eq!(items, vec!["alpha::util::helper", "beta::util::helper"]);
+}
+
+#[test]
+fn threshold_builder_narrows_groups() {
+    // Dupws has one 3-site group and two 2-site groups: raising the
+    // threshold through the builder keeps only the 3-site group.
+    let report = dejadoc::Dejadoc::default()
+        .threshold(3)
+        .run(FIXTURE)
+        .unwrap();
+    assert_eq!(report.total, 9);
+    assert_eq!(report.groups.len(), 1);
 }

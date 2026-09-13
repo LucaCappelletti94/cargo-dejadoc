@@ -48,14 +48,8 @@ fn main() -> ExitCode {
         args.remove(1);
     }
     let args = Args::parse_from(args);
-    let opts = dejadoc::Options {
-        package: args.package,
-        all_targets: args.all_targets,
-        threshold: args.threshold,
-        min_tokens: args.min_tokens,
-        config: args.config,
-    };
-    match dejadoc::run(Path::new("."), &opts) {
+    let scan = build(&args);
+    match scan.run(Path::new(".")) {
         Ok(report) => {
             let out = if args.json {
                 dejadoc::json(&report)
@@ -66,8 +60,28 @@ fn main() -> ExitCode {
             dejadoc::exit_code(&report, args.no_fail)
         }
         Err(err) => {
-            eprintln!("dejadoc: {err:#}");
+            eprintln!("dejadoc: {err}");
             ExitCode::from(2)
         }
     }
+}
+
+fn build(args: &Args) -> dejadoc::Dejadoc {
+    let mut scan = dejadoc::Dejadoc::default();
+    if let Some(package) = &args.package {
+        scan = scan.package(package);
+    }
+    if args.all_targets {
+        scan = scan.all_targets();
+    }
+    if let Some(threshold) = args.threshold {
+        scan = scan.threshold(threshold);
+    }
+    if let Some(min_tokens) = args.min_tokens {
+        scan = scan.min_tokens(min_tokens);
+    }
+    if let Some(config) = &args.config {
+        scan = scan.config(config);
+    }
+    scan
 }
