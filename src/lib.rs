@@ -53,6 +53,9 @@ pub struct Group {
     pub hash: String,
     /// True when the canonical form came from the text fallback.
     pub unparsed: bool,
+    /// Token count of the canonical form.
+    #[serde(skip)]
+    pub tokens: usize,
     /// All sites, ordered by file and line.
     pub sites: Vec<DocTest>,
 }
@@ -104,7 +107,7 @@ pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
 fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     let total = blocks.len();
     let mut unique: BTreeSet<String> = BTreeSet::new();
-    let mut by_hash: BTreeMap<String, (bool, Vec<DocTest>)> = BTreeMap::new();
+    let mut by_hash: BTreeMap<String, (bool, usize, Vec<DocTest>)> = BTreeMap::new();
     for block in blocks {
         if block.allow {
             continue;
@@ -115,20 +118,21 @@ fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
         if canonical.tokens >= min_tokens {
             by_hash
                 .entry(hash)
-                .or_insert_with(|| (canonical.unparsed, Vec::new()))
-                .1
+                .or_insert_with(|| (canonical.unparsed, canonical.tokens, Vec::new()))
+                .2
                 .push(block.clone());
         }
     }
     let groups = by_hash
         .into_iter()
-        .filter(|(_, (_, sites))| sites.len() >= threshold)
-        .map(|(hash, (unparsed, mut sites))| {
+        .filter(|(_, (_, _, sites))| sites.len() >= threshold)
+        .map(|(hash, (unparsed, tokens, mut sites))| {
             sites.sort_by(|a, b| (a.file.as_os_str(), a.line).cmp(&(b.file.as_os_str(), b.line)));
             Group {
                 id: hash[..8].to_string(),
                 hash,
                 unparsed,
+                tokens,
                 sites,
             }
         })

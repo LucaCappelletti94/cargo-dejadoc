@@ -13,7 +13,6 @@ anyhow = "1.0.104"
 blake3 = "1.8.7"
 cargo_metadata = "0.23.1"
 clap = { version = "4.6.6", features = ["derive"] }
-owo-colors = "4.4.0"
 proc-macro2 = { version = "1.0.107", features = ["span-locations"] }
 quote = "1.0.47"
 serde = { version = "1.0.229", features = ["derive"] }
