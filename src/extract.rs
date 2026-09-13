@@ -380,7 +380,6 @@ fn classify(info: &str) -> (bool, Vec<String>, bool) {
                 | "no_run"
                 | "should_panic"
                 | "compile_fail"
-                | "ignore"
                 | "edition2015"
                 | "edition2018"
                 | "edition2021"
@@ -767,6 +766,72 @@ mod tests {
                 "fn main() {}",
                 false
             )]
+        );
+    }
+
+    #[test]
+    fn doc_attribute_literal_form() {
+        // rustdoc numbers a `#[doc = "…"]` literal's lines from the
+        // attribute's line, so a fence at doc line 2 reports line +1.
+        let src = r#"#[doc = "intro\n```rust\nfn main() { }\n```\ntail"]
+pub fn escaped() {}
+"#;
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                2,
+                "mycrate::escaped",
+                &[],
+                "fn main() { }",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn doc_attribute_raw_string() {
+        let src = r##"#[doc = r#"raw
+intro
+```rust
+fn main() { }
+```"#]
+pub fn raw() {}
+"##;
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                3,
+                "mycrate::raw",
+                &[],
+                "fn main() { }",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn data_item_sites() {
+        let src = "\
+/// ```\n/// fn a() {}\n/// ```\npub const C: i32 = 1;\n\
+/// ```\n/// fn b() {}\n/// ```\npub static S: i32 = 1;\n\
+/// ```\n/// fn c() {}\n/// ```\npub enum E { X }\n\
+/// ```\n/// fn d() {}\n/// ```\npub struct St;\n\
+/// ```\n/// fn e() {}\n/// ```\npub union U { f: i32 }\n\
+/// ```\n/// fn f() {}\n/// ```\npub type Ty = i32;\n\
+/// ```\n/// fn g() {}\n/// ```\npub trait Tr = i32;\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt("src/lib.rs", 1, "mycrate::C", &[], "fn a() {}", false),
+                dt("src/lib.rs", 5, "mycrate::S", &[], "fn b() {}", false),
+                dt("src/lib.rs", 9, "mycrate::E", &[], "fn c() {}", false),
+                dt("src/lib.rs", 13, "mycrate::St", &[], "fn d() {}", false),
+                dt("src/lib.rs", 17, "mycrate::U", &[], "fn e() {}", false),
+                dt("src/lib.rs", 21, "mycrate::Ty", &[], "fn f() {}", false),
+                dt("src/lib.rs", 25, "mycrate::Tr", &[], "fn g() {}", false),
+            ]
         );
     }
 }

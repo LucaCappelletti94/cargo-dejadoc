@@ -40,6 +40,7 @@ pub struct DocTest {
     /// Raw block body.
     pub code: String,
     /// The block carries the `dejadoc` allow token.
+    #[serde(skip)]
     pub allow: bool,
 }
 

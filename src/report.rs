@@ -121,10 +121,19 @@ mod tests {
         assert_eq!(value["total"], 34);
         assert_eq!(value["unique"], 12);
         let group = &value["groups"][0];
+        // serde_json values order keys alphabetically; pin the exact sets.
+        assert_eq!(
+            group.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["hash", "id", "sites", "unparsed"]
+        );
         assert_eq!(group["id"], "ab12cd34");
         assert_eq!(group["unparsed"], false);
         assert_eq!(group["sites"].as_array().unwrap().len(), 2);
         let first = &group["sites"][0];
+        assert_eq!(
+            first.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["code", "file", "info", "item", "line"]
+        );
         assert_eq!(first["file"], "src/a.rs");
         assert_eq!(first["line"], 14);
         assert_eq!(first["item"], "m::a");
