@@ -1,5 +1,6 @@
 //! Find duplicated Rust doctests across a workspace.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 pub mod config;
@@ -100,11 +101,159 @@ pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
 
 /// Group doctests by canonical form, dropping allowed sites, blocks under
 /// `min_tokens`, and groups under `threshold`.
-fn group(blocks: &[DocTest], _threshold: usize, _min_tokens: usize) -> Report {
-    // Implemented in the normalize + group phase.
+fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
+    let total = blocks.len();
+    let mut unique: BTreeSet<String> = BTreeSet::new();
+    let mut by_hash: BTreeMap<String, (bool, Vec<DocTest>)> = BTreeMap::new();
+    for block in blocks {
+        if block.allow {
+            continue;
+        }
+        let canonical = normalize::canonicalize(&block.code);
+        let hash = blake3::hash(canonical.text.as_bytes()).to_hex().to_string();
+        unique.insert(hash.clone());
+        if canonical.tokens >= min_tokens {
+            by_hash
+                .entry(hash)
+                .or_insert_with(|| (canonical.unparsed, Vec::new()))
+                .1
+                .push(block.clone());
+        }
+    }
+    let groups = by_hash
+        .into_iter()
+        .filter(|(_, (_, sites))| sites.len() >= threshold)
+        .map(|(hash, (unparsed, mut sites))| {
+            sites.sort_by(|a, b| (a.file.as_os_str(), a.line).cmp(&(b.file.as_os_str(), b.line)));
+            Group {
+                id: hash[..8].to_string(),
+                hash,
+                unparsed,
+                sites,
+            }
+        })
+        .collect();
     Report {
-        total: blocks.len(),
-        unique: 0,
-        groups: Vec::new(),
+        total,
+        unique: unique.len(),
+        groups,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dt(file: &str, line: u32, item: &str, code: &str, allow: bool) -> DocTest {
+        DocTest {
+            file: PathBuf::from(file),
+            line,
+            item: item.to_string(),
+            info: Vec::new(),
+            code: code.to_string(),
+            allow,
+        }
+    }
+
+    #[test]
+    fn allowed_sites_excluded_from_groups() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let x = 1;", true),
+            dt("c.rs", 3, "m::c", "let x = 1;", false),
+        ];
+        let report = group(&blocks, 2, 0);
+        assert_eq!(report.total, 3);
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].sites.len(), 2);
+    }
+
+    #[test]
+    fn threshold_filters_groups() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let x = 1;", false),
+        ];
+        let report = group(&blocks, 3, 0);
+        assert!(report.groups.is_empty());
+        assert_eq!(report.unique, 1);
+    }
+
+    #[test]
+    fn min_tokens_excludes_from_groups_but_counts_unique() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let x = 1;", false),
+        ];
+        let report = group(&blocks, 2, 100);
+        assert!(report.groups.is_empty());
+        assert_eq!(report.unique, 1);
+    }
+
+    #[test]
+    fn sites_sorted_by_file_and_line() {
+        let blocks = vec![
+            dt("b.rs", 9, "m::b", "let x = 1;", false),
+            dt("a.rs", 4, "m::a", "let x = 1;", false),
+            dt("a.rs", 2, "m::a", "let x = 1;", false),
+        ];
+        let report = group(&blocks, 2, 0);
+        let sites = &report.groups[0].sites;
+        let pos: Vec<(String, u32)> = sites
+            .iter()
+            .map(|s| (s.file.to_string_lossy().into_owned(), s.line))
+            .collect();
+        assert_eq!(
+            pos,
+            vec![
+                ("a.rs".to_string(), 2),
+                ("a.rs".to_string(), 4),
+                ("b.rs".to_string(), 9)
+            ]
+        );
+    }
+
+    #[test]
+    fn id_is_hash_prefix() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let x = 1;", false),
+        ];
+        let report = group(&blocks, 2, 0);
+        let g = &report.groups[0];
+        assert_eq!(g.id, &g.hash[..8]);
+        assert_eq!(g.hash.len(), 64);
+    }
+
+    #[test]
+    fn unparsed_propagates() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "@ nope", false),
+            dt("b.rs", 2, "m::b", "@ nope", false),
+        ];
+        let report = group(&blocks, 2, 0);
+        assert!(report.groups[0].unparsed);
+    }
+
+    #[test]
+    fn attributes_do_not_split_groups() {
+        let mut a = dt("a.rs", 1, "m::a", "let x = 1;", false);
+        a.info = vec!["no_run".to_string()];
+        let b = dt("b.rs", 2, "m::b", "let x = 1;", false);
+        let report = group(&[a, b], 2, 0);
+        assert_eq!(report.groups.len(), 1);
+        assert_eq!(report.groups[0].sites[0].info, vec!["no_run".to_string()]);
+    }
+
+    #[test]
+    fn no_duplicates_is_clean() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let y = 2;", false),
+        ];
+        let report = group(&blocks, 2, 0);
+        assert!(report.groups.is_empty());
+        assert_eq!(report.unique, 2);
+        assert_eq!(report.total, 2);
     }
 }
