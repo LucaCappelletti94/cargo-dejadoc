@@ -12,7 +12,6 @@ use syn::{
 };
 
 use crate::DocTest;
-use crate::discover::Target;
 use crate::fence;
 
 /// A run of doc text with per-line source positions. One source spans the
@@ -26,8 +25,10 @@ struct DocSource {
     files: Vec<PathBuf>,
 }
 
-/// Extract doctest blocks from one parsed source file.
-pub fn extract(target: &Target, file: &Path, parsed: &syn::File, root: &Path) -> Vec<DocTest> {
+/// Extract doctest blocks from one parsed source file, under the item path
+/// `prefix` (the target name for the root file, with module segments for
+/// submodules).
+pub fn extract(prefix: &str, file: &Path, parsed: &syn::File, root: &Path) -> Vec<DocTest> {
     let mut out = Vec::new();
     // File-level `//!` docs: inner doc attributes only.
     let inner: Vec<syn::Attribute> = parsed
@@ -37,10 +38,10 @@ pub fn extract(target: &Target, file: &Path, parsed: &syn::File, root: &Path) ->
         .cloned()
         .collect();
     for src in doc_sources(&inner, file) {
-        out.extend(blocks(&src, &target.name, root));
+        out.extend(blocks(&src, prefix, root));
     }
     for item in &parsed.items {
-        walk_item(item, &target.name, file, root, &mut out);
+        walk_item(item, prefix, file, root, &mut out);
     }
     out
 }
@@ -270,15 +271,23 @@ fn push_include(parts: &mut Vec<(String, u32, PathBuf)>, file: &Path, p: &str) {
 /// assembles the stream regardless of where each line comes from.
 fn merge_parts(parts: Vec<(String, u32, PathBuf)>) -> Vec<DocSource> {
     let mut out: Vec<DocSource> = Vec::new();
+    let mut prev: Option<(u32, PathBuf)> = None;
     for (text, line, file) in parts {
         let lines = line_range(&text, line);
-        let files = vec![file; lines.len()];
+        let files = vec![file.clone(); lines.len()];
         if let Some(last) = out.last_mut() {
-            // The separator after a part ending in a newline adds one
-            // blank line; attribute it to the previous part's file.
-            if last.text.ends_with('\n') {
-                last.lines.push(*last.lines.last().unwrap() + 1);
-                last.files.push(last.files.last().unwrap().clone());
+            // The separator '\n' after a part that ended a line (or is
+            // empty) adds one blank text line; attribute it to the
+            // previous part's file and line.
+            if last.text.is_empty() || last.text.ends_with('\n') {
+                let (pbase, pfile) = prev.unwrap();
+                let line = if last.lines.is_empty() {
+                    pbase
+                } else {
+                    *last.lines.last().unwrap() + 1
+                };
+                last.lines.push(line);
+                last.files.push(pfile);
             }
             last.text.push('\n');
             last.text.push_str(&text);
@@ -287,6 +296,7 @@ fn merge_parts(parts: Vec<(String, u32, PathBuf)>) -> Vec<DocSource> {
         } else {
             out.push(DocSource { text, lines, files });
         }
+        prev = Some((line, file));
     }
     out
 }
@@ -476,13 +486,8 @@ mod tests {
 
     fn run(src: &str) -> Vec<DocTest> {
         let parsed = syn::parse_file(src).unwrap();
-        let target = Target {
-            name: "mycrate".into(),
-            kind: crate::discover::TargetKind::Lib,
-            src: PathBuf::from("/root/src/lib.rs"),
-        };
         extract(
-            &target,
+            "mycrate",
             Path::new("/root/src/lib.rs"),
             &parsed,
             Path::new("/root"),
@@ -726,12 +731,7 @@ mod tests {
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let target = Target {
-            name: "mycrate".into(),
-            kind: crate::discover::TargetKind::Lib,
-            src: src.join("lib.rs"),
-        };
-        let dts = extract(&target, &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
         assert_eq!(
             dts,
             vec![dt(
@@ -758,12 +758,7 @@ mod tests {
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let target = Target {
-            name: "mycrate".into(),
-            kind: crate::discover::TargetKind::Lib,
-            src: src.join("lib.rs"),
-        };
-        let dts = extract(&target, &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
         assert_eq!(
             dts,
             vec![dt(
@@ -858,12 +853,7 @@ pub fn raw() {}
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let target = Target {
-            name: "mycrate".into(),
-            kind: crate::discover::TargetKind::Lib,
-            src: src.join("lib.rs"),
-        };
-        let dts = extract(&target, &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
         assert_eq!(
             dts,
             vec![dt(
@@ -892,12 +882,25 @@ pub fn raw() {}
         .unwrap();
         let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
         let parsed = syn::parse_file(&code).unwrap();
-        let target = Target {
-            name: "mycrate".into(),
-            kind: crate::discover::TargetKind::Lib,
-            src: src.join("lib.rs"),
-        };
-        let dts = extract(&target, &src.join("lib.rs"), &parsed, dir.path());
+        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
+        assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
+    }
+
+    #[test]
+    fn empty_first_doc_part_keeps_line_mapping() {
+        // A bare `///` line is a zero-line doc part; the merge separator
+        // after it still adds one text line, which must stay mapped.
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "///\n/// text\n/// ```rust\npub fn f() {}\n",
+        )
+        .unwrap();
+        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+        let parsed = syn::parse_file(&code).unwrap();
+        let dts = extract("mycrate", &src.join("lib.rs"), &parsed, dir.path());
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
 }

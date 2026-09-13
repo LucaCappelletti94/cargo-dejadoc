@@ -83,18 +83,19 @@ fn scan_kind(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> Option<
     None
 }
 
-/// Walk the module tree from a target root: the root file plus every
-/// `mod`-declared file, with `syn` parse results.
-pub fn module_tree(target: &Target) -> anyhow::Result<Vec<(PathBuf, syn::File)>> {
+/// Parse the target's module tree: each file with its parsed contents and
+/// the module-path segments from the target root (empty for the root file).
+pub fn module_tree(target: &Target) -> anyhow::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
     let mut visited = HashSet::new();
-    collect(&target.src, &mut out, &mut visited)?;
+    collect(&target.src, &[], &mut out, &mut visited)?;
     Ok(out)
 }
 
 fn collect(
     file: &std::path::Path,
-    out: &mut Vec<(PathBuf, syn::File)>,
+    prefix: &[String],
+    out: &mut Vec<(PathBuf, syn::File, Vec<String>)>,
     visited: &mut HashSet<PathBuf>,
 ) -> anyhow::Result<()> {
     let canonical = std::fs::canonicalize(file)?;
@@ -124,22 +125,24 @@ fn collect(
     };
     let mut children = Vec::new();
     mod_decls(&parsed.items, dir, &base, &mut children);
-    out.push((file.to_path_buf(), parsed));
-    for child in children {
-        collect(&child, out, visited)?;
+    out.push((file.to_path_buf(), parsed, prefix.to_vec()));
+    for (child, name) in children {
+        let mut sub = prefix.to_vec();
+        sub.push(name);
+        collect(&child, &sub, out, visited)?;
     }
     Ok(())
 }
 
-/// Collect the files of `mod name;` declarations, at every nesting depth.
-/// `dir` is the directory containing the defining file (explicit `#[path]`
-/// resolves against it); `base` is the implicit child directory (the
-/// companion directory for a file module).
+/// Collect the `mod name;` files and their module names, at every nesting
+/// depth. `dir` is the directory containing the defining file (explicit
+/// `#[path]` resolves against it); `base` is the implicit child directory
+/// (the companion directory for a file module).
 fn mod_decls(
     items: &[syn::Item],
     dir: &std::path::Path,
     base: &std::path::Path,
-    out: &mut Vec<PathBuf>,
+    out: &mut Vec<(PathBuf, String)>,
 ) {
     use syn::Item;
 
@@ -149,8 +152,14 @@ fn mod_decls(
                 mod_decls(children, dir, base, out);
                 continue;
             }
-            match resolve_mod_path(dir, base, &moditem.ident, &moditem.attrs) {
-                Some(path) if path.exists() => out.push(path),
+            // Raw identifiers keep their name in the module path.
+            let name = moditem
+                .ident
+                .to_string()
+                .trim_start_matches("r#")
+                .to_string();
+            match resolve_mod_path(dir, base, &name, &moditem.attrs) {
+                Some(path) if path.exists() => out.push((path, name)),
                 Some(path) => eprintln!("dejadoc: warning: missing module file {path:?}"),
                 None => {}
             }
@@ -165,12 +174,11 @@ fn mod_decls(
 fn resolve_mod_path(
     dir: &std::path::Path,
     base: &std::path::Path,
-    name: &syn::Ident,
+    name: &str,
     attrs: &[syn::Attribute],
 ) -> Option<PathBuf> {
     use syn::{Expr, ExprLit, Lit, Meta};
 
-    let name = name.to_string().trim_start_matches("r#").to_string();
     if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("path")) {
         let Meta::NameValue(nv) = &attr.meta else {
             return None;
@@ -202,7 +210,7 @@ fn resolve_mod_path(
     if plain.exists() {
         return Some(plain);
     }
-    Some(base.join(&name).join("mod.rs"))
+    Some(base.join(name).join("mod.rs"))
 }
 
 /// The `path = "…"` values inside a `cfg_attr` attribute's tokens.
@@ -240,8 +248,8 @@ mod tests {
         }
     }
 
-    fn files(result: Vec<(PathBuf, syn::File)>) -> Vec<PathBuf> {
-        result.into_iter().map(|(p, _)| p).collect()
+    fn files(result: Vec<(PathBuf, syn::File, Vec<String>)>) -> Vec<PathBuf> {
+        result.into_iter().map(|(p, _, _)| p).collect()
     }
 
     #[test]
@@ -361,6 +369,25 @@ mod tests {
             .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
             .collect();
         assert_eq!(names, vec!["lib.rs", "a.rs", "b.rs"]);
+    }
+
+    #[test]
+    fn module_tree_reports_module_path_segments() {
+        // File modules carry their module path, including raw-ident names
+        // and companion-directory nesting.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod r#extern;\npub mod a;\n").unwrap();
+        std::fs::write(dir.path().join("extern.rs"), "pub fn g() {}\n").unwrap();
+        std::fs::write(dir.path().join("a.rs"), "pub mod b;\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("b.rs"), "pub fn h() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let paths: Vec<String> = result
+            .into_iter()
+            .map(|(_, _, seg)| seg.join("::"))
+            .collect();
+        assert_eq!(paths, vec!["", "extern", "a", "a::b"]);
     }
 
     #[test]

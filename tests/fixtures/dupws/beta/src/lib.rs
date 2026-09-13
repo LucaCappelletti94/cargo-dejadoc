@@ -10,3 +10,5 @@ pub fn beta_fn() {}
 /// @ nope nope
 /// ```
 pub fn beta_unparsed() {}
+
+pub mod util;

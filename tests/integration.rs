@@ -11,13 +11,13 @@ fn scan() -> Report {
 #[test]
 fn shared_group_spans_crates_and_variants() {
     let report = scan();
-    assert_eq!(report.total, 8);
+    assert_eq!(report.total, 9);
     assert_eq!(report.unique, 4);
-    assert_eq!(report.groups.len(), 2);
+    assert_eq!(report.groups.len(), 3);
     let shared = report
         .groups
         .iter()
-        .find(|g| !g.unparsed)
+        .find(|g| g.sites.iter().any(|s| s.item == "alpha::alpha_fn"))
         .expect("shared group present");
     assert_eq!(shared.sites.len(), 3);
     let items: Vec<&str> = shared.sites.iter().map(|s| s.item.as_str()).collect();
@@ -74,7 +74,7 @@ fn config_threshold_suppresses_groups() {
         ..Options::default()
     };
     let report = run(Path::new(FIXTURE), &opts).unwrap();
-    assert_eq!(report.groups.len(), 2);
+    assert_eq!(report.groups.len(), 3);
 }
 
 #[test]
@@ -100,8 +100,8 @@ fn binary_runs_end_to_end() {
         .expect("run dejadoc binary");
     assert_eq!(out.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
-    assert_eq!(value["total"], 8);
-    assert_eq!(value["groups"].as_array().unwrap().len(), 2);
+    assert_eq!(value["total"], 9);
+    assert_eq!(value["groups"].as_array().unwrap().len(), 3);
 }
 
 #[test]
@@ -125,4 +125,19 @@ fn package_named_dejadoc_is_not_filtered() {
     );
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
     assert_eq!(value["total"], 0);
+}
+
+#[test]
+fn file_module_items_carry_module_prefix() {
+    // Items in file modules carry their module path, as rustdoc names
+    // them (`util::helper`, not `helper`).
+    let report = scan();
+    let helper = report
+        .groups
+        .iter()
+        .find(|g| g.sites.iter().any(|s| s.item.contains("helper")))
+        .expect("helper group present");
+    assert_eq!(helper.sites.len(), 2);
+    let items: Vec<&str> = helper.sites.iter().map(|s| s.item.as_str()).collect();
+    assert_eq!(items, vec!["alpha::util::helper", "beta::util::helper"]);
 }

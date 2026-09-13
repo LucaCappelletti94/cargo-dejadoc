@@ -54,5 +54,5 @@ let report = dejadoc::run(
     &dejadoc::Options::default(),
 )
 .unwrap();
-assert_eq!(report.groups.len(), 2);
+assert_eq!(report.groups.len(), 3);
 ```

@@ -95,8 +95,12 @@ pub fn run(root: &Path, opts: &Options) -> anyhow::Result<Report> {
 
     let mut blocks = Vec::new();
     for target in &workspace.targets {
-        for (path, file) in discover::module_tree(target)? {
-            blocks.extend(extract::extract(target, &path, &file, &workspace.root));
+        for (path, file, segments) in discover::module_tree(target)? {
+            let prefix = match segments.first() {
+                Some(_) => format!("{}::{}", target.name, segments.join("::")),
+                None => target.name.clone(),
+            };
+            blocks.extend(extract::extract(&prefix, &path, &file, &workspace.root));
         }
     }
     Ok(group(&blocks, threshold, min_tokens))
