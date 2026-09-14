@@ -163,7 +163,7 @@ runs:
           done < "$inline_file"
         fi
 
-        # The review body.
+        # The review body, dry run only. The live review is posted without a body.
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then
           stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report")"
@@ -189,8 +189,6 @@ runs:
             echo
             echo "Run $run_url"
           } > "$body"
-        else
-          echo "Run $run_url" > "$body"
         fi
 
         if [ "$dry" = "true" ]; then
@@ -220,7 +218,7 @@ runs:
           echo "skipped-readonly" > "$status"
           exit 0
         fi
-        if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f event=REQUEST_CHANGES -F "body=@$body" 2>&1)"; then
+        if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f event=REQUEST_CHANGES 2>&1)"; then
           if printf '%s' "$resp" | grep -qE 'HTTP 403|"status": "403"'; then
             readonly_notice
             echo "skipped-readonly" > "$status"
@@ -232,8 +230,7 @@ runs:
           exit 1
         fi
         posted_state="$(printf '%s' "$resp" | jq -r '.state' 2>/dev/null)" || posted_state=''
-        posted_body="$(printf '%s' "$resp" | jq -r '.body' 2>/dev/null)" || posted_body=''
-        if [ "$posted_state" != "CHANGES_REQUESTED" ] || ! printf '%s' "$posted_body" | grep -q "Run $run_url"; then
+        if [ "$posted_state" != "CHANGES_REQUESTED" ]; then
           echo "dejadoc: the review response is unexpected"
           printf '%s\n' "$resp"
           echo "failed" > "$status"
