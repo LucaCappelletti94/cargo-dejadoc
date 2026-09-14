@@ -10,7 +10,6 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 
 `cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, reporting any identified duplicates.
 
-Run `cargo dejadoc` at the workspace root. It exits 0 when clean or with `--no-fail`, 1 when it finds duplicates, and 2 on scan or usage errors.
 The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token count, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
