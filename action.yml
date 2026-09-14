@@ -3,6 +3,14 @@ description: >-
   Install dejadoc from crates.io and fail the job when doctests are duplicated
   across the workspace
 
+metadata:
+  name: "dejadoc"
+  description: >-
+    Scans a Cargo workspace for duplicated doctests and fails the job when
+    groups share a canonical form
+  version: "1"
+  website: "https://crates.io/crates/dejadoc"
+  source-repository: "https://github.com/LucaCappelletti94/cargo-dejadoc"
 inputs:
   threshold:
     description: Report duplicate groups with at least this many sites
