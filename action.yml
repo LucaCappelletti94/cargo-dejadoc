@@ -138,16 +138,16 @@ runs:
           while IFS=$'\t' read -r p line item g c n; do
             [ -n "$p" ] || continue
             if [ "$c" = "1" ]; then
-              note="Duplicated doctest, copy 1 of $n. This is the copy the dejadoc review keeps."
+              note="Duplicated doctest, group $g, copy 1 of $n. This is the copy the dejadoc review keeps."
               post_body="$note"
               fields=(-F "line=$line" -f side=RIGHT)
             else
               close_line="$(awk -v l="$line" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$p" 2>/dev/null)" || close_line=''
               if [ -z "$close_line" ]; then
-                failed_sites="$failed_sites  $p:$line  $item"$'\n'
+                failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
                 continue
               fi
-              note="Duplicated doctest, copy $c of $n. The dejadoc review suggests removing this copy."
+              note="Duplicated doctest, group $g, copy $c of $n. The dejadoc review suggests removing this copy."
               post_body="$(printf '%s\n\n```suggestion\n```' "$note")"
               fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
             fi
@@ -158,56 +158,70 @@ runs:
                 readonly=1
                 break
               fi
-              failed_sites="$failed_sites  $p:$line  $item"$'\n'
+              failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
             fi
           done < "$inline_file"
         fi
 
         # The review body.
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
+        header='Duplicated doctests found by dejadoc'
         if [ "$dry" = "true" ]; then
-          header='dejadoc dry run, the review is not posted'
+          sites=1
+          stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report")"
         else
-          header='Duplicated doctests found by dejadoc'
+          sites=0
+          stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups. Keep one doctest per group, or add the `dejadoc` token to the fence info of a copy that is allowed to stay, as in `rust,dejadoc`."' "$report")"
         fi
-        groups_block="$(jq -r --arg cwd "$cwd" '
+        groups_block="$(jq -r --arg cwd "$cwd" --argjson sites "$sites" '
           def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-          . as $r
-          | "\($r.total) doctests, \($r.unique) unique, \($r.groups | length) duplicated groups\n\n"
-            + ($r.groups | to_entries | map(
-                "Group \(.key + 1), \(.value.sites | length) copies\n\n"
-                + "```\n\(.value.sites[0].code)\n```\n\n"
-                + (.value.sites | to_entries | map(
-                    (if .key == 0 then "first  " else "copy   " end)
-                    + (.value | sp) + ":" + (.value.line | tostring) + "  " + .value.item
-                    + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
-                  ) | join("\n"))
-              ) | join("\n\n"))' "$report")"
+          .groups | to_entries | map(
+              "Group \(.key + 1), \(.value.sites | length) copies\n\n"
+              + "```\n\(.value.sites[0].code)\n```\n\n"
+              + (if $sites == 1 then
+                  (.value.sites | to_entries | map(
+                      (if .key == 0 then "first  " else "copy   " end)
+                      + (.value | sp) + ":" + (.value.line | tostring) + "  " + .value.item
+                      + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
+                    ) | join("\n")) + "\n\n"
+                else "" end)
+            ) | join("")' "$report")"
         skipped_list=''
-        if [ -n "$pr" ]; then
+        if [ -n "$pr" ] && [ "$dry" != "true" ]; then
           skipped_list="$(jq -r --arg cwd "$cwd" --argjson changed "$changed_json" '
             def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-            [ .groups[] | .sites[]
+            [ .groups | to_entries[]
+              | .key as $gi
+              | .value.sites[]
               | (sp) as $p
               | select(($changed | index($p)) == null)
-              | "  " + $p + ":" + (.line | tostring) + "  " + .item ] | join("\n")' "$report")"
+              | "  group \($gi + 1)  " + $p + ":" + (.line | tostring) + "  " + .item ] | join("\n")' "$report")"
         fi
         skipped_all="$skipped_list$failed_sites"
         {
           echo "$header"
-          echo
-          if [ "$dry" != "true" ]; then
-            echo 'To allow a known copy, add the `dejadoc` token to the fence info, as in `rust,dejadoc`.'
+          if [ "$dry" = "true" ]; then
+            echo 'dejadoc dry run, the review is not posted'
             echo
-          fi
-          printf '%s\n' "$groups_block"
-          if [ -n "$skipped_all" ]; then
+            printf '%s\n' "$stats"
             echo
-            echo 'Not inline-commented, their file is not in the pull request diff.'
-            printf '%s' "$skipped_all"
+            printf '%s' "$groups_block"
+            echo
+            echo
+            echo "Run $run_url"
+          else
+            printf '%s\n' "$stats"
+            echo
+            printf '%s' "$groups_block"
+            echo
+            echo
+            if [ -n "$skipped_all" ]; then
+              echo 'Not in the pull request diff, handle these manually.'
+              printf '%s\n' "${skipped_all%$'\n'}"
+              echo
+            fi
+            echo "Run $run_url"
           fi
-          echo
-          echo "Run $run_url"
         } > "$body"
 
         if [ "$dry" = "true" ]; then
