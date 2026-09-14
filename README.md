@@ -56,6 +56,14 @@ threshold = 2
 min-tokens = 0
 ```
 
+## GitHub Action
+
+```yaml
+- uses: LucaCappelletti94/cargo-dejadoc@v1
+  with:
+    threshold: 2
+```
+
 ## Library
 
 ```rust

@@ -1,0 +1,54 @@
+name: Scan for duplicated doctests
+description: >-
+  Install dejadoc from crates.io and fail the job when doctests are duplicated
+  across the workspace
+
+inputs:
+  threshold:
+    description: Report duplicate groups with at least this many sites
+    required: false
+    default: '2'
+  min-tokens:
+    description: Skip doctest bodies with fewer tokens than this
+    required: false
+    default: '0'
+  all-targets:
+    description: Also scan bin and example targets
+    required: false
+    default: 'false'
+  package:
+    description: Restrict the scan to one workspace member by name
+    required: false
+    default: ''
+  version:
+    description: The dejadoc version to install, empty for the latest
+    required: false
+    default: ''
+  cwd:
+    description: The workspace directory to scan
+    required: false
+    default: ''
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Install dejadoc
+      shell: bash
+      run: |
+        if [ -n "${{ inputs.version }}" ]; then
+          cargo install dejadoc --version "${{ inputs.version }}"
+        else
+          cargo install dejadoc
+        fi
+
+    - name: Scan for duplicated doctests
+      shell: bash
+      working-directory: ${{ inputs.cwd }}
+      run: |
+        set --
+        [ "${{ inputs.all-targets }}" = "true" ] && set -- --all-targets "$@"
+        [ -n "${{ inputs.package }}" ] && set -- --package "${{ inputs.package }}" "$@"
+        cargo dejadoc \
+          --threshold "${{ inputs.threshold }}" \
+          --min-tokens "${{ inputs.min-tokens }}" \
+          "$@"
