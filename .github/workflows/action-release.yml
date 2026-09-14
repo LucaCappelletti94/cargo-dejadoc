@@ -4,13 +4,15 @@ on:
   push:
     tags:
       - "v*.*"
+  release:
+    types: [published]
 
 permissions:
   contents: write
 
 jobs:
   release:
-    name: Create the action release
+    name: Maintain the action release
     runs-on: ubuntu-latest
 
     steps:
@@ -31,7 +33,7 @@ jobs:
           fi
 
       - name: Create the release
-        if: steps.check.outputs.action == 'true'
+        if: github.event_name == 'push' && steps.check.outputs.action == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes
