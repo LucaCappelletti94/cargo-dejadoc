@@ -8,22 +8,13 @@
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
-`cargo dejadoc` scans every doctest your workspace's rustdoc would run,
-canonicalizes each body through `syn`, and reports the groups that share a
-canonical form. Comment and whitespace drift collapse, and local names are
-alpha-renamed positionally, so bodies that differ only in how they name
-their variables or functions group together. `#`-hidden lines keep their
-content in the body, as rustdoc's doctest source does. Doctest attributes
-such as `no_run` are listed per site and never affect the grouping.
+`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, reporting any identified duplicates.
 
-Run `cargo dejadoc` at the workspace root. It exits 0 when clean or with
-`--no-fail`, 1 when it finds duplicates, and 2 on scan or usage errors.
-The flags under `cargo dejadoc --help` restrict the package, set the
-threshold and minimum token count, point at a config file, and switch the
-output to JSON. Without flags, parameters come from `.dejadoc.toml` at the
-workspace root. To allow a known copy, add the `dejadoc` token to the
-fence's info list, as in `rust,dejadoc`. rustdoc runs the doctest and
-ignores the unknown token, so nothing else about the site changes.
+Run `cargo dejadoc` at the workspace root. It exits 0 when clean or with `--no-fail`, 1 when it finds duplicates, and 2 on scan or usage errors.
+The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token count, point at a config file, and switch the output to JSON.
+Without flags, parameters come from `.dejadoc.toml` at the workspace root.
+
+To allow a known copy, add the `dejadoc` token to the fence's info list, as in `rust,dejadoc`. rustdoc runs the doctest and ignores the unknown token, so nothing else about the site changes.
 
 In CI, the composite action installs the crate and runs the gate.
 
