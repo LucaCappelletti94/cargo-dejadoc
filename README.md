@@ -4,7 +4,7 @@
 ![codecov](https://codecov.io/github/LucaCappelletti94/cargo-dejadoc/graph/badge.svg)
 ![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=LucaCappelletti94_cargo-dejadoc&metric=alert_status)
 
-Deja vu. Find duplicated Rust doctests across a workspace.
+Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
 `cargo dejadoc` scans every doctest your workspace's rustdoc would run,
 canonicalizes each body through `syn`, and reports the groups that share a
