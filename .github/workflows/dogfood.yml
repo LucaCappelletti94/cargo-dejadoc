@@ -35,10 +35,21 @@ jobs:
               ;;
             posted)
               n="$GITHUB_EVENT_NUMBER"
-              gh api "repos/$repo/pulls/$n/reviews" --jq '.[] | select(.state == "COMMENT") | .body' \
+              api_retry() {
+                local out
+                for _ in 1 2 3; do
+                  if out="$(gh api "$@" 2>/dev/null)"; then
+                    printf '%s\n' "$out"
+                    return 0
+                  fi
+                  sleep 5
+                done
+                return 1
+              }
+              api_retry "repos/$repo/pulls/$n/reviews" --jq '.[] | select(.state == "REQUEST_CHANGES") | .body' \
                 | grep -q 'duplicated groups' || { echo "the dejadoc review is missing on the pull request"; exit 1; }
-              if gh api "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
-                gh api "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
+              if api_retry "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
+                api_retry "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
                   | grep -q '^tests/fixtures/dupws/' || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
               fi
               ;;

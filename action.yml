@@ -113,42 +113,47 @@ runs:
           changed_json='[]'
         fi
 
-        # Split the sites. A site is inline when its file is in the pull request diff.
+        # Inline sites. A site is inline when its file is in the pull request diff.
+        # The copy number is the site position in the group, the first copy is kept.
         jq -r --arg cwd "$cwd" --argjson changed "$changed_json" '
           def spath: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-          .groups[] | .id as $id | (.sites | length) as $n |
-          .sites[] | spath as $p |
-          if ($changed | index($p)) != null then
-            ["inline", $p, (.line | tostring), .item, $id, ($n | tostring)]
-          else
-            ["body", $p, (.line | tostring), .item, (.info | join(",")), ""]
-          end | @tsv' "$report" > "$plan_file"
-        inline_tsv=''
-        skipped_sites=''
-        while IFS=$'\t' read -r kind p line item gid n; do
-          [ -n "$kind" ] || continue
-          if [ "$kind" = "inline" ]; then
-            inline_tsv="$inline_tsv$p"$'\t'"$line"$'\t'"$item"$'\t'"$gid"$'\t'"$n"$'\n'
-          else
-            site_line="  $p:$line  $item"
-            if [ -n "$gid" ]; then
-              site_line="$site_line   ($gid)"
-            fi
-            skipped_sites="$skipped_sites$site_line"$'\n'
-          fi
-        done < "$plan_file"
-        printf '%s' "$inline_tsv" > "$inline_file"
+          . as $r
+          | [ range(0; ($r.groups | length)) as $gi
+              | $r.groups[$gi]
+              | ($gi + 1) as $g
+              | (.sites | length) as $n
+              | .sites | to_entries[]
+              | { g: $g, c: (.key + 1), n: $n, s: .value, p: (.value | spath) }
+          ]
+          | .[]
+          | . as $row
+          | select(($changed | index($row.p)) != null)
+          | [$row.p, ($row.s.line | tostring), $row.s.item, ($row.g | tostring), ($row.c | tostring), ($row.n | tostring)]
+          | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
         readonly=0
         failed_sites=''
         if [ "$dry" != "true" ] && [ -s "$inline_file" ]; then
-          while IFS=$'\t' read -r p line item gid n; do
+          while IFS=$'\t' read -r p line item g c n; do
             [ -n "$p" ] || continue
-            note="This doctest is duplicated in group $gid ($n sites), see the dejadoc review for the full list"
+            if [ "$c" = "1" ]; then
+              note="Duplicated doctest, copy 1 of $n. This is the copy the dejadoc review keeps."
+              post_body="$note"
+              fields=(-F "line=$line" -f side=RIGHT)
+            else
+              close_line="$(awk -v l="$line" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$p" 2>/dev/null)" || close_line=''
+              if [ -z "$close_line" ]; then
+                failed_sites="$failed_sites  $p:$line  $item"$'\n'
+                continue
+              fi
+              note="Duplicated doctest, copy $c of $n. The dejadoc review suggests removing this copy."
+              post_body="$(printf '%s\n\n```suggestion\n```' "$note")"
+              fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
+            fi
             if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
-              -f commit_id="$head_sha" -f path="$p" -F line="$line" \
-              -f side=RIGHT -f body="$note" 2>&1)"; then
+              -f "commit_id=$head_sha" -f "path=$p" "${fields[@]}" \
+              -f "body=$post_body" 2>&1)"; then
               if printf '%s' "$err" | grep -q ': 403'; then
                 readonly=1
                 break
@@ -157,7 +162,6 @@ runs:
             fi
           done < "$inline_file"
         fi
-        skipped_all="$skipped_sites$failed_sites"
 
         # The review body.
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
@@ -167,15 +171,28 @@ runs:
           header='Duplicated doctests found by dejadoc'
         fi
         groups_block="$(jq -r --arg cwd "$cwd" '
-          def site:
-            (if $cwd == "" then .file else "\($cwd)/\(.file)" end) + ":" + (.line | tostring) + "  " + .item +
-            (if (.info | length) > 0 then "   (" + (.info | join(", ")) + ")" else "" end);
-          "\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups\n\n" +
-          (.groups | map(
-            "[" + .id + "] " + (.sites | length | tostring) + " sites" +
-            (if .tokens then ", " + (.tokens | tostring) + " tokens" else "" end) +
-            "\n" + (.sites | map("  " + site) | join("\n"))
-          ) | join("\n\n"))' "$report")"
+          def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+          . as $r
+          | "\($r.total) doctests, \($r.unique) unique, \($r.groups | length) duplicated groups\n\n"
+            + ($r.groups | to_entries | map(
+                "Group \(.key + 1), \(.value.sites | length) copies\n\n"
+                + "```\n\(.value.sites[0].code)\n```\n\n"
+                + (.value.sites | to_entries | map(
+                    (if .key == 0 then "first  " else "copy   " end)
+                    + (.value | sp) + ":" + (.value.line | tostring) + "  " + .value.item
+                    + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
+                  ) | join("\n"))
+              ) | join("\n\n"))' "$report")"
+        skipped_list=''
+        if [ -n "$pr" ]; then
+          skipped_list="$(jq -r --arg cwd "$cwd" --argjson changed "$changed_json" '
+            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+            [ .groups[] | .sites[]
+              | (sp) as $p
+              | select(($changed | index($p)) == null)
+              | "  " + $p + ":" + (.line | tostring) + "  " + .item ] | join("\n")' "$report")"
+        fi
+        skipped_all="$skipped_list$failed_sites"
         {
           echo "$header"
           echo
@@ -184,9 +201,9 @@ runs:
             echo
           fi
           printf '%s\n' "$groups_block"
-          if [ -n "$pr" ] && [ -n "$skipped_all" ]; then
+          if [ -n "$skipped_all" ]; then
             echo
-            echo 'Not inline-commented, their file or line is not in the pull request diff.'
+            echo 'Not inline-commented, their file is not in the pull request diff.'
             printf '%s' "$skipped_all"
           fi
           echo
@@ -211,7 +228,7 @@ runs:
           echo "skipped-readonly" > "$status"
           exit 0
         fi
-        if ! out="$(gh pr review "$pr" --comment -F "$body" 2>&1)"; then
+        if ! out="$(gh pr review "$pr" --request-changes -F "$body" 2>&1)"; then
           if printf '%s' "$out" | grep -q ': 403'; then
             readonly_notice
             cat "$body"
