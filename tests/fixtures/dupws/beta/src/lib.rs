@@ -1,6 +1,6 @@
-/// Beta copy of the shared doctest, with a hidden line.
+/// Beta copy of the shared doctest, with a hidden line kept in the body.
 /// ```
-/// # hidden setup
+/// # let _h = 1;
 /// fn shared() { }
 /// ```
 pub fn beta_fn() {}

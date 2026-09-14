@@ -258,7 +258,7 @@ fn doc_sources(
         match &nv.value {
             Expr::Lit(ExprLit {
                 lit: Lit::Str(s), ..
-            }) => parts.push((strip_doc_spaces(&s.value()), line, file.to_string())),
+            }) => parts.push((doc_value(&s.value()), line, file.to_string())),
             Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
                 if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
                     push_include(&mut parts, file, read_include, &s.value());
@@ -269,7 +269,7 @@ fn doc_sources(
                     for part in concat.0 {
                         match part {
                             ConcatPart::Lit(s) => {
-                                parts.push((strip_doc_spaces(&s.value()), line, file.to_string()));
+                                parts.push((doc_value(&s.value()), line, file.to_string()));
                             }
                             ConcatPart::Include(s) => {
                                 push_include(&mut parts, file, read_include, &s.value());
@@ -336,6 +336,107 @@ fn strip_doc_spaces(text: &str) -> String {
         .collect::<Vec<_>>()
         .join("\n")
 }
+
+/// A `#[doc]` literal value as rustdoc sees it: the conventional space
+/// is dropped per line, then a block doc's star prefix is stripped.
+/// Include files skip both, matching rustdoc's raw fragment kind.
+fn doc_value(v: &str) -> String {
+    block_star_strip(&strip_doc_spaces(v))
+}
+
+/// rustdoc's unindent: drop the smallest leading space or tab count of
+/// the non-blank lines, one char per tab. Blank lines keep their
+/// whitespace and do not lower the minimum.
+fn unindent(text: &str) -> String {
+    let min = text
+        .lines()
+        .filter(|l| !l.trim().is_empty())
+        .map(|l| l.chars().take_while(|c| *c == ' ' || *c == '\t').count())
+        .min()
+        .unwrap_or(0);
+    if min == 0 {
+        return text.to_string();
+    }
+    text.split('\n')
+        .map(|l| if l.trim().is_empty() { l } else { &l[min..] })
+        .collect::<Vec<_>>()
+        .join("\n")
+}
+
+/// Strip the star prefix of a `/** */` block doc, mirroring rustdoc's
+/// `beautify_doc_string`. The fragment kind is unrecoverable from the
+/// token stream, so the strip runs only when the value is multiline
+/// and every line between the first and last non-blank lines carries
+/// its star at one column after spaces or tabs. An all-star first or
+/// last line becomes a blank line; the line count is preserved so
+/// per-line source attribution holds.
+fn block_star_strip(text: &str) -> String {
+    if !text.contains('\n') {
+        return text.to_string();
+    }
+    let mut lines: Vec<String> = text.lines().map(str::to_string).collect();
+    let len = lines.len();
+    // Vertical trim: an all-star first line and an all-star last line
+    // become blank lines.
+    let mut changed = false;
+    if lines.first().is_some_and(|l| l.chars().all(|c| c == '*')) {
+        lines[0].clear();
+        changed = true;
+    }
+    if len > 1 && !lines[len - 1].is_empty() && lines[len - 1].chars().all(|c| c == '*') {
+        lines[len - 1].clear();
+        changed = true;
+    }
+    // Horizontal range: the lines between the first and last non-blank.
+    let from = lines
+        .iter()
+        .position(|l| !l.trim().is_empty())
+        .unwrap_or(len);
+    let to = lines
+        .iter()
+        .rposition(|l| !l.trim().is_empty())
+        .map_or(from, |p| p + 1);
+    let mut star_col: Option<usize> = None;
+    for line in &lines[from..to] {
+        let mut found = false;
+        for (idx, c) in line.char_indices() {
+            match c {
+                '*' => {
+                    match star_col {
+                        None => star_col = Some(idx),
+                        Some(s) if s == idx => {}
+                        _ => return text.to_string(),
+                    }
+                    found = true;
+                    break;
+                }
+                ' ' | '\t' => {}
+                _ => return text.to_string(),
+            }
+        }
+        if !found {
+            return text.to_string();
+        }
+    }
+    let Some(col) = star_col else {
+        return if changed {
+            lines.join("\n")
+        } else {
+            text.to_string()
+        };
+    };
+    let prefix = lines[from][..col].to_string();
+    for line in &mut lines {
+        if let Some(tmp) = line.strip_prefix(&prefix) {
+            *line = tmp.to_string();
+            if line == "*" || line.starts_with("* ") || line.starts_with("**") {
+                line.drain(..1);
+            }
+        }
+    }
+    lines.join("\n")
+}
+
 /// 1-based source lines occupied by `text` starting at `line`.
 fn line_range(text: &str, line: u32) -> Vec<u32> {
     let n = u32::try_from(text.lines().count()).unwrap_or(u32::MAX);
@@ -384,10 +485,11 @@ impl Parse for ConcatParts {
     }
 }
 
-/// Fence blocks of one doc source, classified and positioned.
+/// Code blocks of one doc source, unindented, classified and positioned.
 fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
     let mut out = Vec::new();
-    for f in fence::scan(&src.text) {
+    let text = unindent(&src.text);
+    for f in fence::scan(&text) {
         let (counted, info, allow) = classify(&f.info);
         if !counted {
             continue;
@@ -686,6 +788,202 @@ mod tests {
     }
 
     #[test]
+    fn uniformly_indented_fence_unindents() {
+        let src = "///      ```rust\n///      fn main() {}\n///      ```\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn shallow_line_pins_unindent() {
+        let src = "/// intro\n///      ```\n///      fn main() {}\n///      ```\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn blank_lines_do_not_lower_unindent() {
+        let src =
+            "///      x\n///\n///      ```\n///      fn main() {}\n///      ```\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                3,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn block_doc_fence_is_doctest() {
+        let src =
+            "/**\n * Use f:\n *\n * ```\n * fn main() { let x = 1; }\n * ```\n */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                4,
+                "mycrate::f",
+                &[],
+                "fn main() { let x = 1; }",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn block_doc_indented_fence_is_doctest() {
+        let src = "/**\n  * A.\n  *\n  * ```\n  * fn main() {}\n  * ```\n  */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                4,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn block_doc_inconsistent_star_column_is_kept() {
+        let src = "/**\n * A.\n** B.\n */\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn block_doc_blank_inner_line_is_kept() {
+        let src = "/**\n * A.\n\n * ```\n * fn main() {}\n * ```\n */\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn raw_multiline_doc_stars_are_stripped() {
+        let src = "#[doc = \" * ```\\n * fn main() {}\\n * ```\"]\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn raw_doc_non_star_last_line_is_kept() {
+        let src = "#[doc = \" * ```\\n * fn main() {}\\n * last\"]\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::f",
+                &[],
+                "fn main() {}\nlast",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn raw_doc_all_star_last_line_is_trimmed() {
+        let src = "#[doc = \" * ```\\n ***\"]\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate::f", &[], "", false)]
+        );
+    }
+
+    #[test]
+    fn single_line_star_fence_is_not_stripped() {
+        let src = "/// * ```\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn raw_doc_non_star_tail_line_aborts_strip() {
+        let src = "/// * ```\n/// * x\n///  y\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn block_doc_leading_blank_line_still_strips() {
+        let src = "/**\n *\n * ```\n * fn main() {}\n * ```\n */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                3,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn block_doc_last_line_star_mismatch_aborts_strip() {
+        let src = "/**\n * ```\n * fn main() {}\n  * x\n */\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn block_doc_misaligned_star_fence_is_not_stripped() {
+        let src = "#[doc = \"   * ```\\n * fn main() {}\"]\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn whitespace_only_line_is_not_stripped() {
+        let src = "///      x\n///   \n///      ```\n///      fn main() {}\n///      ```\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                3,
+                "mycrate::f",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn indented_code_after_blank_line_is_doctest() {
+        let src = "/// intro\n///\n///     let x = 1;\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 3, "mycrate::f", &[], "let x = 1;", false)]
+        );
+    }
+
+    #[test]
+    fn indented_code_uniformly_indented_is_not_doctest() {
+        let src = "///     let x = 1;\n///     let y = 2;\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
     fn ignore_is_skipped() {
         let src = "/// ```ignore\n/// fn main() {}\n/// ```\npub fn f() {}\n";
         assert_eq!(run(src), vec![]);
@@ -837,6 +1135,32 @@ mod tests {
                 false
             )]
         );
+    }
+
+    #[test]
+    fn include_file_stars_are_kept() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("doc.md"), " * ```\n * fn main() {}\n * ```\n").unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "#[doc = include_str!(\"doc.md\")]\npub fn f() {}\n",
+        )
+        .unwrap();
+        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+        let parsed = syn::parse_file(&code).unwrap();
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &fs_read(&src),
+        );
+        // rustdoc keeps the stars in include files (raw fragment kind);
+        // the resulting list-item fences are a residual divergence, as
+        // the scanner has no list context.
+        assert_eq!(dts, vec![]);
     }
 
     #[test]

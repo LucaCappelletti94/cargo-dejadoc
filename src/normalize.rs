@@ -21,12 +21,7 @@ pub(crate) struct Canonical {
 /// Compute the canonical form of a doctest body.
 #[must_use]
 pub(crate) fn canonicalize(code: &str) -> Canonical {
-    // rustdoc drops any line whose first non-whitespace character is `#`.
-    let body: String = code
-        .lines()
-        .filter(|line| !line.trim_start().starts_with('#'))
-        .collect::<Vec<_>>()
-        .join("\n");
+    let body: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
     if let Ok(mut file) = syn::parse_str::<syn::File>(&body) {
         crate::alpha::normalize_file(&mut file);
         return from_stream(file.to_token_stream());
@@ -45,6 +40,23 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
         text: text.clone(),
         unparsed: true,
         tokens: text.split_whitespace().count(),
+    }
+}
+
+/// rustdoc's hidden-line rule per body line. A `##` line shows as a `#`
+/// line. A `# ` prefix (space required) hides the line but keeps its
+/// trimmed remainder. A bare `#` hides to an empty line. Everything
+/// else, including `#text` without the space, is kept verbatim.
+fn map_line(line: &str) -> String {
+    let trimmed = line.trim();
+    if trimmed.starts_with("##") {
+        line.replacen("##", "#", 1)
+    } else if let Some(stripped) = trimmed.strip_prefix("# ") {
+        stripped.to_string()
+    } else if trimmed == "#" {
+        String::new()
+    } else {
+        line.to_string()
     }
 }
 
@@ -103,18 +115,40 @@ mod tests {
     }
 
     #[test]
-    fn hidden_lines_stripped() {
-        let a = canonicalize("# hidden setup\nlet x = 1;\n");
-        let b = canonicalize("let x = 1;\n");
+    fn hidden_line_keeps_its_content() {
+        let a = canonicalize("# use foo::bar;\nbar();\n");
+        let b = canonicalize("use foo::bar;\nbar();\n");
         assert_eq!(a.text, b.text);
         assert!(!a.unparsed);
     }
 
     #[test]
-    fn indented_hidden_lines_stripped() {
-        let a = canonicalize("   # indented\nlet x = 1;\n");
+    fn indented_hidden_line_is_trimmed() {
+        let a = canonicalize("   # let x = 1;\n   x\n");
+        let b = canonicalize("let x = 1;\nx\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn hash_without_space_is_kept() {
+        let a = canonicalize("#let x = 1;\nx\n");
+        assert!(a.text.contains("#let"));
+        let b = canonicalize("# let x = 1;\nx\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn double_hash_shows_as_single_hash() {
+        let a = canonicalize("## setup\nx\n");
+        assert!(a.text.contains("# setup"));
+    }
+
+    #[test]
+    fn bare_hash_line_becomes_empty() {
+        let a = canonicalize("#\nlet x = 1;\n");
         let b = canonicalize("let x = 1;\n");
         assert_eq!(a.text, b.text);
+        assert!(!a.unparsed);
     }
 
     #[test]
@@ -407,8 +441,8 @@ mod tests {
 
     #[test]
     fn alpha_attribute_value_locals_renamed() {
-        // A leading `#[...]` line is dropped as a rustdoc hidden line, so
-        // the attribute sits inline to reach the parser.
+        // A leading `#[...]` line is kept, so the attribute sits inline
+        // to reach the parser.
         let a = canonicalize("let pino = 1; #[attr = pino] fn f() {}");
         let b = canonicalize("let abete = 1; #[attr = abete] fn f() {}");
         assert_eq!(a.text, b.text);

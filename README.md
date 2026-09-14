@@ -10,9 +10,9 @@ Deja vu. Find duplicated Rust doctests across a workspace.
 canonicalizes each body through `syn`, and reports the groups that share a
 canonical form. Comment and whitespace drift collapse, and local names are
 alpha-renamed positionally, so bodies that differ only in how they name
-their variables or functions group together. `#`-hidden lines are
-dropped, as rustdoc does. Doctest attributes such as `no_run` are listed
-per site and never affect the grouping.
+their variables or functions group together. `#`-hidden lines keep their
+content in the body, as rustdoc's doctest source does. Doctest attributes
+such as `no_run` are listed per site and never affect the grouping.
 
 ## Usage
 
