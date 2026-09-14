@@ -1,4 +1,4 @@
-name: Scan for duplicated doctests
+name: dejadoc
 description: >-
   Install dejadoc from crates.io and fail the job when doctests are duplicated
   across the workspace

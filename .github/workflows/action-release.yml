@@ -1,0 +1,52 @@
+name: Action Release
+
+on:
+  push:
+    tags:
+      - "v*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create the action release
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Check the tag is an action release
+        id: check
+        # Crate version tags are owned by the Release workflow.
+        run: |
+          manifest="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$tag" = "$manifest" ]; then
+            echo "tag $GITHUB_REF_NAME is the crate version $manifest; the Release workflow owns it"
+            echo "action=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "action=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create the release
+        if: steps.check.outputs.action == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "${GITHUB_REF_NAME}" --verify-tag --generate-notes
+
+      - name: Move the major tag
+        # The major tag (v1) always points at the current release of its series.
+        if: steps.check.outputs.action == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          major="${GITHUB_REF_NAME#v}"
+          major="${major%%.*}"
+          ref="refs/tags/v$major"
+          if gh api "repos/${GITHUB_REPOSITORY}/git/refs/${ref}" >/dev/null 2>&1; then
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/${ref}" -X PATCH -f "sha=${GITHUB_SHA}"
+          else
+            gh api "repos/${GITHUB_REPOSITORY}/git/refs/${ref}" -X POST -f "ref=${ref}" -f "sha=${GITHUB_SHA}"
+          fi
