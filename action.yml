@@ -1,7 +1,7 @@
 name: dejadoc
 description: >-
-  Install dejadoc from crates.io and fail the job when doctests are duplicated
-  across the workspace
+  Install dejadoc from crates.io, fail the job when doctests are duplicated
+  across the workspace, or post the findings as a pull request review
 
 branding:
   icon: 'copy'
@@ -31,6 +31,14 @@ inputs:
     description: The workspace directory to scan
     required: false
     default: ''
+  pr-number:
+    description: Post the findings as a pull request review on this PR instead of failing the job
+    required: false
+    default: ''
+  dry-run:
+    description: Render the review instead of posting it
+    required: false
+    default: 'false'
 
 runs:
   using: 'composite'
@@ -45,13 +53,176 @@ runs:
         fi
 
     - name: Scan for duplicated doctests
+      id: scan
       shell: bash
       working-directory: ${{ inputs.cwd }}
       run: |
         set --
         [ "${{ inputs.all-targets }}" = "true" ] && set -- --all-targets "$@"
         [ -n "${{ inputs.package }}" ] && set -- --package "${{ inputs.package }}" "$@"
-        cargo dejadoc \
-          --threshold "${{ inputs.threshold }}" \
-          --min-tokens "${{ inputs.min-tokens }}" \
-          "$@"
+        if [ -n "${{ inputs.pr-number }}" ] || [ "${{ inputs.dry-run }}" = "true" ]; then
+          report="$RUNNER_TEMP/dejadoc-report.json"
+          cargo dejadoc \
+            --threshold "${{ inputs.threshold }}" \
+            --min-tokens "${{ inputs.min-tokens }}" \
+            --no-fail --json "$@" > "$report"
+          jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.groups | length) duplicated groups"' "$report"
+          if [ "$(jq '.groups | length' "$report")" -gt 0 ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          fi
+        else
+          cargo dejadoc \
+            --threshold "${{ inputs.threshold }}" \
+            --min-tokens "${{ inputs.min-tokens }}" \
+            "$@"
+        fi
+
+    - name: Post the findings as a pull request review
+      if: ${{ steps.scan.outputs.found == 'true' && (inputs.pr-number != '' || inputs.dry-run == 'true') }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        pr="${{ inputs.pr-number }}"
+        dry="${{ inputs.dry-run }}"
+        cwd="${{ inputs.cwd }}"
+        repo="$GITHUB_REPOSITORY"
+        report="$RUNNER_TEMP/dejadoc-report.json"
+        body="$RUNNER_TEMP/dejadoc-review.md"
+        status="$RUNNER_TEMP/dejadoc-post-status"
+        plan_file="$RUNNER_TEMP/dejadoc-plan.tsv"
+        inline_file="$RUNNER_TEMP/dejadoc-inline.tsv"
+
+        # The head SHA and changed file list, empty when there is no pull request.
+        head_sha=''
+        changed_files=''
+        if [ -n "$pr" ]; then
+          head_sha="$(gh api "repos/$repo/pulls/$pr" --jq '.head.sha' 2>/dev/null)" || head_sha=''
+          if [ -n "$head_sha" ]; then
+            changed_files="$(gh api "repos/$repo/pulls/$pr/files" --paginate --jq '.[].filename' 2>/dev/null)" || changed_files=''
+          fi
+        fi
+        if [ -n "$pr" ] && [ -z "$head_sha" ] && [ "$dry" != "true" ]; then
+          echo "dejadoc: cannot read pull request $pr, the review is not posted"
+          echo "failed" > "$status"
+          exit 1
+        fi
+        if [ -n "$pr" ] && [ -n "$head_sha" ] && [ -n "$changed_files" ]; then
+          changed_json="$(printf '%s\n' "$changed_files" | jq -R . | jq -s .)"
+        else
+          changed_json='[]'
+        fi
+
+        # Split the sites. A site is inline when its file is in the pull request diff.
+        jq -r --arg cwd "$cwd" --argjson changed "$changed_json" '
+          def spath: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+          .groups[] | .id as $id | (.sites | length) as $n |
+          .sites[] | spath as $p |
+          if ($changed | index($p)) != null then
+            ["inline", $p, (.line | tostring), .item, $id, ($n | tostring)]
+          else
+            ["body", $p, (.line | tostring), .item, (.info | join(",")), ""]
+          end | @tsv' "$report" > "$plan_file"
+        inline_tsv=''
+        skipped_sites=''
+        while IFS=$'\t' read -r kind p line item gid n; do
+          [ -n "$kind" ] || continue
+          if [ "$kind" = "inline" ]; then
+            inline_tsv="$inline_tsv$p"$'\t'"$line"$'\t'"$item"$'\t'"$gid"$'\t'"$n"$'\n'
+          else
+            site_line="  $p:$line  $item"
+            if [ -n "$gid" ]; then
+              site_line="$site_line   ($gid)"
+            fi
+            skipped_sites="$skipped_sites$site_line"$'\n'
+          fi
+        done < "$plan_file"
+        printf '%s' "$inline_tsv" > "$inline_file"
+
+        # The inline posts, live mode only. The first post is the permission probe.
+        readonly=0
+        failed_sites=''
+        if [ "$dry" != "true" ] && [ -s "$inline_file" ]; then
+          while IFS=$'\t' read -r p line item gid n; do
+            [ -n "$p" ] || continue
+            note="This doctest is duplicated in group $gid ($n sites), see the dejadoc review for the full list"
+            if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
+              -f commit_id="$head_sha" -f path="$p" -F line="$line" \
+              -f side=RIGHT -f body="$note" 2>&1)"; then
+              if printf '%s' "$err" | grep -q ': 403'; then
+                readonly=1
+                break
+              fi
+              failed_sites="$failed_sites  $p:$line  $item"$'\n'
+            fi
+          done < "$inline_file"
+        fi
+        skipped_all="$skipped_sites$failed_sites"
+
+        # The review body.
+        run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
+        if [ "$dry" = "true" ]; then
+          header='dejadoc dry run, the review is not posted'
+        else
+          header='Duplicated doctests found by dejadoc'
+        fi
+        groups_block="$(jq -r --arg cwd "$cwd" '
+          def site:
+            (if $cwd == "" then .file else "\($cwd)/\(.file)" end) + ":" + (.line | tostring) + "  " + .item +
+            (if (.info | length) > 0 then "   (" + (.info | join(", ")) + ")" else "" end);
+          "\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups\n\n" +
+          (.groups | map(
+            "[" + .id + "] " + (.sites | length | tostring) + " sites" +
+            (if .tokens then ", " + (.tokens | tostring) + " tokens" else "" end) +
+            "\n" + (.sites | map("  " + site) | join("\n"))
+          ) | join("\n\n"))' "$report")"
+        {
+          echo "$header"
+          echo
+          if [ "$dry" != "true" ]; then
+            echo 'To allow a known copy, add the `dejadoc` token to the fence info, as in `rust,dejadoc`.'
+            echo
+          fi
+          printf '%s\n' "$groups_block"
+          if [ -n "$pr" ] && [ -n "$skipped_all" ]; then
+            echo
+            echo 'Not inline-commented, their file or line is not in the pull request diff.'
+            printf '%s' "$skipped_all"
+          fi
+          echo
+          echo "Run $run_url"
+        } > "$body"
+
+        if [ "$dry" = "true" ]; then
+          { echo; cat "$body"; } >> "$GITHUB_STEP_SUMMARY"
+          echo "dejadoc dry run, the review is not posted"
+          cat "$body"
+          echo "dry-run" > "$status"
+          exit 0
+        fi
+
+        readonly_notice() {
+          echo "dejadoc: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
+          echo "dejadoc: for pull requests from forks, enable the repository setting 'Send write tokens to workflows from pull requests', run the workflow with pull_request_target (see the security guidance), or supply a write token"
+        }
+        if [ "$readonly" = "1" ]; then
+          readonly_notice
+          cat "$body"
+          echo "skipped-readonly" > "$status"
+          exit 0
+        fi
+        if ! out="$(gh pr review "$pr" --comment -F "$body" 2>&1)"; then
+          if printf '%s' "$out" | grep -q ': 403'; then
+            readonly_notice
+            cat "$body"
+            echo "skipped-readonly" > "$status"
+            exit 0
+          fi
+          echo "dejadoc: posting the review failed"
+          printf '%s\n' "$out"
+          cat "$body"
+          echo "failed" > "$status"
+          exit 1
+        fi
+        echo "dejadoc: posted the review on pull request $pr"
+        echo "posted" > "$status"

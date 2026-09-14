@@ -140,9 +140,10 @@ mod tests {
         // serde_json values order keys alphabetically; pin the exact sets.
         assert_eq!(
             group.as_object().unwrap().keys().collect::<Vec<_>>(),
-            vec!["hash", "id", "sites", "unparsed"]
+            vec!["hash", "id", "sites", "tokens", "unparsed"]
         );
         assert_eq!(group["id"], "ab12cd34");
+        assert_eq!(group["tokens"], 5);
         assert_eq!(group["unparsed"], false);
         assert_eq!(group["sites"].as_array().unwrap().len(), 2);
         let first = &group["sites"][0];

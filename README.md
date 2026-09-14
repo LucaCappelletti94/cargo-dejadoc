@@ -23,6 +23,32 @@ In CI, the composite action installs the crate and runs the gate.
     threshold: 2
 ```
 
+In a pull request, the action posts the findings as a review instead of
+failing the job.
+
+```yaml
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+```
+
+The review lists every duplicated group, and each site gets an inline comment
+when its file is part of the pull request diff. Sites that cannot be commented
+inline are listed in the review body. Pull requests from forks run with a
+read-only `GITHUB_TOKEN`, so the action skips the review with a warning. To
+post on fork pull requests, enable the repository setting **Send write tokens
+to workflows from pull requests**, use `pull_request_target`, or supply a
+write token.
+
 The library builds the same report in memory.
 
 ```rust

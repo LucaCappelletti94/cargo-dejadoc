@@ -290,7 +290,6 @@ pub struct Group {
     /// True when the canonical form came from the text fallback.
     pub unparsed: bool,
     /// Token count of the canonical form.
-    #[serde(skip)]
     pub tokens: usize,
     /// All sites, ordered by file and line.
     pub sites: Vec<DocTest>,

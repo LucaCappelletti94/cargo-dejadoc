@@ -1,0 +1,52 @@
+name: Dogfood
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  pull-requests: write
+
+jobs:
+  dogfood:
+    name: Dogfood the action on the dupws fixture
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./
+        with:
+          cwd: tests/fixtures/dupws
+          pr-number: ${{ github.event.pull_request.number }}
+          dry-run: ${{ github.event_name == 'push' }}
+      - name: Check the posting behavior
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          status="$(cat "$RUNNER_TEMP/dejadoc-post-status" 2>/dev/null || echo missing)"
+          body="$RUNNER_TEMP/dejadoc-review.md"
+          repo="$GITHUB_REPOSITORY"
+          case "$status" in
+            dry-run)
+              [ -f "$body" ] || { echo "the review body is missing"; exit 1; }
+              grep -q 'duplicated groups' "$body" || { echo "the summary line is missing"; exit 1; }
+              grep -q 'tests/fixtures/dupws/alpha/src/util.rs' "$body" || { echo "the fixture sites are missing"; exit 1; }
+              ;;
+            posted)
+              n="$GITHUB_EVENT_NUMBER"
+              gh api "repos/$repo/pulls/$n/reviews" --jq '.[] | select(.state == "COMMENT") | .body' \
+                | grep -q 'duplicated groups' || { echo "the dejadoc review is missing on the pull request"; exit 1; }
+              if gh api "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
+                gh api "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
+                  | grep -q '^tests/fixtures/dupws/' || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
+              fi
+              ;;
+            skipped-readonly)
+              echo "read-only token, the review was skipped as expected for a fork pull request"
+              ;;
+            *)
+              echo "unexpected post status: $status"
+              exit 1
+              ;;
+          esac
