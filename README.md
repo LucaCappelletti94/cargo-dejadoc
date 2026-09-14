@@ -3,6 +3,8 @@
 ![CI](https://github.com/LucaCappelletti94/cargo-dejadoc/actions/workflows/ci.yml/badge.svg)
 ![codecov](https://codecov.io/github/LucaCappelletti94/cargo-dejadoc/graph/badge.svg)
 ![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=LucaCappelletti94_cargo-dejadoc&metric=alert_status)
+![crates.io](https://img.shields.io/crates/v/dejadoc.svg)
+![docs.rs](https://docs.rs/dejadoc/badge.svg)
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
