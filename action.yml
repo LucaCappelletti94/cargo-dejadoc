@@ -154,7 +154,7 @@ runs:
             if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
               -f "commit_id=$head_sha" -f "path=$p" "${fields[@]}" \
               -f "body=$post_body" 2>&1)"; then
-              if printf '%s' "$err" | grep -q ': 403'; then
+              if printf '%s' "$err" | grep -qE 'HTTP 403|"status": "403"'; then
                 readonly=1
                 break
               fi
@@ -165,42 +165,21 @@ runs:
 
         # The review body.
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
-        header='Duplicated doctests found by dejadoc'
         if [ "$dry" = "true" ]; then
-          sites=1
           stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report")"
-        else
-          sites=0
-          stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups. Keep one doctest per group, or add the `dejadoc` token to the fence info of a copy that is allowed to stay, as in `rust,dejadoc`."' "$report")"
-        fi
-        groups_block="$(jq -r --arg cwd "$cwd" --argjson sites "$sites" '
-          def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-          .groups | to_entries | map(
-              "Group \(.key + 1), \(.value.sites | length) copies\n\n"
-              + "```\n\(.value.sites[0].code)\n```\n\n"
-              + (if $sites == 1 then
-                  (.value.sites | to_entries | map(
-                      (if .key == 0 then "first  " else "copy   " end)
-                      + (.value | sp) + ":" + (.value.line | tostring) + "  " + .value.item
-                      + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
-                    ) | join("\n")) + "\n\n"
-                else "" end)
-            ) | join("")' "$report")"
-        skipped_list=''
-        if [ -n "$pr" ] && [ "$dry" != "true" ]; then
-          skipped_list="$(jq -r --arg cwd "$cwd" --argjson changed "$changed_json" '
+          groups_block="$(jq -r --arg cwd "$cwd" '
             def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-            [ .groups | to_entries[]
-              | .key as $gi
-              | .value.sites[]
-              | (sp) as $p
-              | select(($changed | index($p)) == null)
-              | "  group \($gi + 1)  " + $p + ":" + (.line | tostring) + "  " + .item ] | join("\n")' "$report")"
-        fi
-        skipped_all="$skipped_list$failed_sites"
-        {
-          echo "$header"
-          if [ "$dry" = "true" ]; then
+            .groups | to_entries | map(
+                "Group \(.key + 1), \(.value.sites | length) copies\n\n"
+                + "```\n\(.value.sites[0].code)\n```\n\n"
+                + (.value.sites | to_entries | map(
+                    (if .key == 0 then "first  " else "copy   " end)
+                    + (.value | sp) + ":" + (.value.line | tostring) + "  " + .value.item
+                    + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
+                  ) | join("\n")) + "\n\n"
+            ) | join("")' "$report")"
+          {
+            echo 'Duplicated doctests found by dejadoc'
             echo 'dejadoc dry run, the review is not posted'
             echo
             printf '%s\n' "$stats"
@@ -209,21 +188,10 @@ runs:
             echo
             echo
             echo "Run $run_url"
-          else
-            echo
-            printf '%s\n' "$stats"
-            echo
-            printf '%s' "$groups_block"
-            echo
-            echo
-            if [ -n "$skipped_all" ]; then
-              echo 'Not in the pull request diff, handle these manually.'
-              printf '%s\n' "${skipped_all%$'\n'}"
-              echo
-            fi
-            echo "Run $run_url"
-          fi
-        } > "$body"
+          } > "$body"
+        else
+          echo "Run $run_url" > "$body"
+        fi
 
         if [ "$dry" = "true" ]; then
           { echo; cat "$body"; } >> "$GITHUB_STEP_SUMMARY"
@@ -233,36 +201,47 @@ runs:
           exit 0
         fi
 
+        if [ ! -s "$inline_file" ]; then
+          echo "dejadoc: no duplicated doctest is in the pull request diff, the review is not posted"
+          if [ -n "$failed_sites" ]; then
+            echo "dejadoc: the inline comments failed for the following sites"
+            printf '%s' "$failed_sites"
+          fi
+          echo "skipped-nodiff" > "$status"
+          exit 0
+        fi
+
         readonly_notice() {
           echo "dejadoc: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
           echo "dejadoc: for pull requests from forks, enable the repository setting 'Send write tokens to workflows from pull requests', run the workflow with pull_request_target (see the security guidance), or supply a write token"
         }
         if [ "$readonly" = "1" ]; then
           readonly_notice
-          cat "$body"
           echo "skipped-readonly" > "$status"
           exit 0
         fi
         if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f event=REQUEST_CHANGES -F "body=@$body" 2>&1)"; then
-          if printf '%s' "$resp" | grep -q ': 403'; then
+          if printf '%s' "$resp" | grep -qE 'HTTP 403|"status": "403"'; then
             readonly_notice
-            cat "$body"
             echo "skipped-readonly" > "$status"
             exit 0
           fi
           echo "dejadoc: posting the review failed"
           printf '%s\n' "$resp"
-          cat "$body"
           echo "failed" > "$status"
           exit 1
         fi
         posted_state="$(printf '%s' "$resp" | jq -r '.state' 2>/dev/null)" || posted_state=''
         posted_body="$(printf '%s' "$resp" | jq -r '.body' 2>/dev/null)" || posted_body=''
-        if [ "$posted_state" != "CHANGES_REQUESTED" ] || ! printf '%s' "$posted_body" | grep -q 'duplicated groups'; then
+        if [ "$posted_state" != "CHANGES_REQUESTED" ] || ! printf '%s' "$posted_body" | grep -q "Run $run_url"; then
           echo "dejadoc: the review response is unexpected"
           printf '%s\n' "$resp"
           echo "failed" > "$status"
           exit 1
+        fi
+        if [ -n "$failed_sites" ]; then
+          echo "dejadoc: the inline comments failed for the following sites"
+          printf '%s' "$failed_sites"
         fi
         echo "dejadoc: posted the review on pull request $pr"
         echo "posted" > "$status"
