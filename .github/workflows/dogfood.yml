@@ -46,7 +46,7 @@ jobs:
                 done
                 return 1
               }
-              api_retry "repos/$repo/pulls/$n/reviews" --jq '.[] | select(.state == "REQUEST_CHANGES") | .body' \
+              api_retry "repos/$repo/pulls/$n/reviews" --jq '.[] | select(.state == "CHANGES_REQUESTED") | .body' \
                 | grep -q 'duplicated groups' || { echo "the dejadoc review is missing on the pull request"; exit 1; }
               if api_retry "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
                 api_retry "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
