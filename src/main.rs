@@ -12,6 +12,7 @@ use std::process::ExitCode;
 )]
 #[command(
     name = "dejadoc",
+    bin_name = "cargo dejadoc",
     version,
     about = "Find duplicated Rust doctests across a workspace"
 )]

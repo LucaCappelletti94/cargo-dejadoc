@@ -17,7 +17,7 @@ such as `no_run` are listed per site and never affect the grouping.
 ## Usage
 
 ```text
-Usage: cargo-dejadoc [OPTIONS]
+Usage: cargo dejadoc [OPTIONS]
 
 Options:
   -p, --package <PACKAGE>  Restrict to one workspace member by name
