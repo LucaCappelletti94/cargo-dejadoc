@@ -16,47 +16,16 @@ their variables or functions group together. `#`-hidden lines keep their
 content in the body, as rustdoc's doctest source does. Doctest attributes
 such as `no_run` are listed per site and never affect the grouping.
 
-## Usage
+Run `cargo dejadoc` at the workspace root. It exits 0 when clean or with
+`--no-fail`, 1 when it finds duplicates, and 2 on scan or usage errors.
+The flags under `cargo dejadoc --help` restrict the package, set the
+threshold and minimum token count, point at a config file, and switch the
+output to JSON. Without flags, parameters come from `.dejadoc.toml` at the
+workspace root. To allow a known copy, add the `dejadoc` token to the
+fence's info list, as in `rust,dejadoc`. rustdoc runs the doctest and
+ignores the unknown token, so nothing else about the site changes.
 
-```text
-Usage: cargo dejadoc [OPTIONS]
-
-Options:
-  -p, --package <PACKAGE>  Restrict to one workspace member by name
-      --all-targets        Scan bin and example targets in addition to lib targets
-      --json               Machine-readable output
-  -t, --threshold <N>      Report groups with at least this many sites (default 2)
-      --min-tokens <N>     Skip blocks with fewer tokens than this (default 0)
-      --config <PATH>      Explicit `.dejadoc.toml` location
-      --no-fail            Exit 0 even when duplicates are found
-  -v, --verbose            Print each group's code
-  -h, --help               Print help
-  -V, --version            Print version
-```
-
-Exit codes. 0 clean or `--no-fail`, 1 duplicates found, 2 scan or usage error.
-
-## Allowing a site
-
-Add the `dejadoc` token to the fence's info list. rustdoc runs the doctest
-and ignores the unknown token, so nothing else about the site changes.
-
-```text
-/// ```rust,dejadoc
-/// fn deliberate_copy() { }
-/// ```
-```
-
-## Configuration
-
-Parameters live in `.dejadoc.toml` at the workspace root. CLI flags win.
-
-```text
-threshold = 2
-min-tokens = 0
-```
-
-## GitHub Action
+In CI, the composite action installs the crate and runs the gate.
 
 ```yaml
 - uses: LucaCappelletti94/cargo-dejadoc@v1
@@ -64,16 +33,9 @@ min-tokens = 0
     threshold: 2
 ```
 
-## Library
+The library builds the same report in memory.
 
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 2);
 ```
-
-`run_targets` scans caller-resolved targets in memory and is the `no_std`
-entry point.
-
-The `Dejadoc` builder is `no_std` and `alloc`-only. The `std` feature
-(defaulted) additionally enables `run`, `.config`, `Error`, `exit_code`,
-and the `cargo-dejadoc` binary.
