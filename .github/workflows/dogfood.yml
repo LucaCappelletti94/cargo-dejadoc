@@ -47,10 +47,9 @@ jobs:
                 done
                 return 1
               }
-              api_retry 12 15 "repos/$repo/pulls/$n/reviews" --jq '.[] | select(.state == "CHANGES_REQUESTED") | .body' \
-                | grep -q 'duplicated groups' || { echo "the dejadoc review is missing on the pull request"; exit 1; }
+              grep -q 'duplicated groups' "$body" || { echo "the summary line is missing from the posted body"; exit 1; }
               if api_retry 3 5 "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
-                api_retry 3 5 "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
+                api_retry 6 10 "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
                   | grep -q '^tests/fixtures/dupws/' || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
               fi
               ;;

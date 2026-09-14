@@ -243,16 +243,24 @@ runs:
           echo "skipped-readonly" > "$status"
           exit 0
         fi
-        if ! out="$(gh pr review "$pr" --request-changes -F "$body" 2>&1)"; then
-          if printf '%s' "$out" | grep -q ': 403'; then
+        if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f event=REQUEST_CHANGES -F "body=@$body" 2>&1)"; then
+          if printf '%s' "$resp" | grep -q ': 403'; then
             readonly_notice
             cat "$body"
             echo "skipped-readonly" > "$status"
             exit 0
           fi
           echo "dejadoc: posting the review failed"
-          printf '%s\n' "$out"
+          printf '%s\n' "$resp"
           cat "$body"
+          echo "failed" > "$status"
+          exit 1
+        fi
+        posted_state="$(printf '%s' "$resp" | jq -r '.state' 2>/dev/null)" || posted_state=''
+        posted_body="$(printf '%s' "$resp" | jq -r '.body' 2>/dev/null)" || posted_body=''
+        if [ "$posted_state" != "CHANGES_REQUESTED" ] || ! printf '%s' "$posted_body" | grep -q 'duplicated groups'; then
+          echo "dejadoc: the review response is unexpected"
+          printf '%s\n' "$resp"
           echo "failed" > "$status"
           exit 1
         fi
