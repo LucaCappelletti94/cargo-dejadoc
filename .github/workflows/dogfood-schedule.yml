@@ -1,0 +1,82 @@
+name: Dogfood the action on a scheduled pull request
+
+on:
+  schedule:
+    - cron: '6 6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+  actions: read
+
+concurrency:
+  group: dogfood-schedule
+  cancel-in-progress: true
+
+jobs:
+  api-check:
+    name: Exercise the pull request review surface
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A failed run leaves its pull request open; this step keeps the repository free of them.
+      - name: Close the previous check pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh pr list --state open --json number,title \
+            | jq -r '.[] | select(.title | startswith("dejadoc API check")) | .number' \
+            | while read -r n; do
+                gh pr close "$n"
+              done
+
+      - name: Open the check pull request
+        id: open
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          branch="dogfood-api-check-$GITHUB_RUN_ID"
+          git checkout -b "$branch"
+          sed -i '1s/Helper with a doctest/A helper with a doctest/' tests/fixtures/dupws/alpha/src/util.rs
+          if git diff --quiet; then
+            echo "the fixture touch produced no change, the fixture line may have moved"
+            exit 1
+          fi
+          git add tests/fixtures/dupws/alpha/src/util.rs
+          git commit -m "Touch the fixture for the API check"
+          git push origin "$branch"
+          n="$(gh pr create --head "$branch" --title "dejadoc API check, $(date -u +%F)" --body 'Opened by the scheduled dogfood to exercise the pull request review surface against the GitHub API. It closes itself when the check passes.' --json number --jq .number)"
+          echo "number=$n" >> "$GITHUB_OUTPUT"
+
+      # The pull request run of the dogfood workflow posts the review and asserts it; the wait correlates on the head sha and workflow path.
+      - name: Wait for the dogfood run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          sha="$(git rev-parse HEAD)"
+          for i in $(seq 1 20); do
+            run_json="$(gh api "repos/$GITHUB_REPOSITORY/actions/runs?head_sha=$sha&per_page=50" --jq '[.workflow_runs[] | select(.path == ".github/workflows/dogfood.yml")] | first // empty' 2>/dev/null)"
+            if [ -n "$run_json" ]; then
+              status="$(printf '%s' "$run_json" | jq -r '.status')"
+              conclusion="$(printf '%s' "$run_json" | jq -r '.conclusion // empty')"
+              if [ "$status" = "completed" ]; then
+                if [ "$conclusion" = "success" ]; then
+                  echo "the dogfood run succeeded"
+                  exit 0
+                fi
+                echo "the dogfood run finished with $conclusion, the check pull request stays open for inspection"
+                exit 1
+              fi
+            fi
+            [ "$i" -lt 20 ] && sleep 90
+          done
+          echo "the dogfood run did not finish within the 30 minute window, the check pull request stays open for inspection"
+          exit 1
+
+      - name: Close the check pull request
+        if: success()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh pr close "${{ steps.open.outputs.number }}"
