@@ -210,6 +210,7 @@ runs:
             echo
             echo "Run $run_url"
           else
+            echo
             printf '%s\n' "$stats"
             echo
             printf '%s' "$groups_block"
