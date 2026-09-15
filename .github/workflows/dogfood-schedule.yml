@@ -38,6 +38,8 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           branch="dogfood-api-check-$GITHUB_RUN_ID"
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
           sed -i '1s/Helper with a doctest/A helper with a doctest/' tests/fixtures/dupws/alpha/src/util.rs
           if git diff --quiet; then
