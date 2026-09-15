@@ -49,8 +49,8 @@ jobs:
           git add tests/fixtures/dupws/alpha/src/util.rs
           git commit -m "Touch the fixture for the API check"
           git push origin "$branch"
-          n="$(gh pr create --head "$branch" --title "dejadoc API check, $(date -u +%F)" --body 'Opened by the scheduled dogfood to exercise the pull request review surface against the GitHub API. It closes itself when the check passes.' --json number --jq .number)"
-          echo "number=$n" >> "$GITHUB_OUTPUT"
+          url="$(gh pr create --head "$branch" --title "dejadoc API check, $(date -u +%F)" --body 'Opened by the scheduled dogfood to exercise the pull request review surface against the GitHub API. It closes itself when the check passes.')"
+          echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
 
       # The pull request run of the dogfood workflow posts the review and asserts it; the wait correlates on the head sha and workflow path.
       - name: Wait for the dogfood run
