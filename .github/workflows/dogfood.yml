@@ -36,6 +36,7 @@ jobs:
               ;;
             posted)
               n="$PR_NUMBER"
+              [ -n "$n" ] || { echo "the pull request number is empty"; exit 1; }
               api_retry() {
                 local tries="$1" pause="$2" out i
                 shift 2
@@ -51,6 +52,9 @@ jobs:
               if api_retry 3 5 "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
                 api_retry 6 10 "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
                   | grep -q '^tests/fixtures/dupws/' || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
+                echo "verified inline dejadoc comments on the fixture files of pull request $n"
+              else
+                echo "the fixture files are not in pull request $n, skipping the inline comment check"
               fi
               ;;
             skipped-nodiff)
