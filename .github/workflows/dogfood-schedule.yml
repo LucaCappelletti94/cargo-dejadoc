@@ -21,6 +21,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Mint an app token to open the check pull request
+        id: app-token
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ secrets.DOGFOOD_APP_ID }}
+          private-key: ${{ secrets.DOGFOOD_APP_PRIVATE_KEY }}
+
       # A failed run leaves its pull request open; this step keeps the repository free of them.
       - name: Close the previous check pull request
         env:
@@ -35,7 +42,7 @@ jobs:
       - name: Open the check pull request
         id: open
         env:
-          GH_TOKEN: ${{ github.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           branch="dogfood-api-check-$GITHUB_RUN_ID"
           git config user.name "github-actions[bot]"
