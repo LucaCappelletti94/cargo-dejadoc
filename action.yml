@@ -47,10 +47,13 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
         repo="LucaCappelletti94/cargo-dejadoc"
-        version="${{ inputs.version }}"
+        tag=''
+        [ -n "$VERSION" ] && tag="v$VERSION"
+
         case "$RUNNER_OS/$RUNNER_ARCH" in
           Linux/X64)   target=x86_64-unknown-linux-gnu ;;
           Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
@@ -59,30 +62,28 @@ runs:
           Windows/X64) target=x86_64-pc-windows-msvc ;;
           *)           target='' ;;
         esac
-        installed=0
+
         if [ -n "$target" ]; then
-          if [ -n "$version" ]; then tag="v$version"; else tag=''; fi
           asset="cargo-dejadoc-$target.tar.gz"
           dest="$RUNNER_TEMP/dejadoc-bin"
           mkdir -p "$dest"
-          if gh release download ${tag:+"$tag"} --repo "$repo" --pattern "$asset" --dir "$dest" --clobber 2>/dev/null; then
-            tar -xzf "$dest/$asset" -C "$dest"
+          args=(--repo "$repo" --pattern "$asset" --dir "$dest" --clobber)
+          [ -n "$tag" ] && args=("$tag" "${args[@]}")
+          if gh release download "${args[@]}" 2>/dev/null; then
             bin=cargo-dejadoc
-            [ "$RUNNER_OS" = "Windows" ] && bin=cargo-dejadoc.exe
+            [ "$RUNNER_OS" = Windows ] && bin=cargo-dejadoc.exe
+            tar -xzf "$dest/$asset" -C "$dest"
             chmod +x "$dest/$bin" 2>/dev/null || true
             echo "$dest" >> "$GITHUB_PATH"
-            installed=1
             echo "dejadoc: installed the prebuilt $asset from ${tag:-the latest release}"
+            exit 0
           fi
         fi
-        if [ "$installed" = "0" ]; then
-          echo "dejadoc: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, building from source"
-          if [ -n "$version" ]; then
-            cargo install dejadoc --version "$version"
-          else
-            cargo install dejadoc
-          fi
-        fi
+
+        echo "dejadoc: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, building from source"
+        install=(dejadoc)
+        [ -n "$tag" ] && install+=(--version "$VERSION")
+        cargo install "${install[@]}"
 
     - name: Scan for duplicated doctests
       id: scan
