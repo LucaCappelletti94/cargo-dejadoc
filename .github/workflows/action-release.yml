@@ -48,7 +48,7 @@ jobs:
           major="${major%%.*}"
           url="repos/${GITHUB_REPOSITORY}/git/refs/tags/v${major}"
           if gh api "$url" >/dev/null 2>&1; then
-            gh api "$url" -X PATCH -f "sha=${GITHUB_SHA}"
+            gh api "$url" -X PATCH -f "sha=${GITHUB_SHA}" -F "force=true"
           else
             gh api "repos/${GITHUB_REPOSITORY}/git/refs" -X POST -f "ref=refs/tags/v${major}" -f "sha=${GITHUB_SHA}"
           fi
