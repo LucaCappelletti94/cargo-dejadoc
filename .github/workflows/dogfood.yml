@@ -23,6 +23,7 @@ jobs:
       - name: Check the posting behavior
         env:
           GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
         run: |
           status="$(cat "$RUNNER_TEMP/dejadoc-post-status" 2>/dev/null || echo missing)"
           body="$RUNNER_TEMP/dejadoc-review.md"
@@ -34,7 +35,7 @@ jobs:
               grep -q 'tests/fixtures/dupws/alpha/src/util.rs' "$body" || { echo "the fixture sites are missing"; exit 1; }
               ;;
             posted)
-              n="$GITHUB_EVENT_NUMBER"
+              n="$PR_NUMBER"
               api_retry() {
                 local tries="$1" pause="$2" out i
                 shift 2
