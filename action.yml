@@ -89,15 +89,22 @@ runs:
       id: scan
       shell: bash
       working-directory: ${{ inputs.cwd }}
+      env:
+        ALL_TARGETS: ${{ inputs.all-targets }}
+        PACKAGE: ${{ inputs.package }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        THRESHOLD: ${{ inputs.threshold }}
+        MIN_TOKENS: ${{ inputs.min-tokens }}
       run: |
         set --
-        [ "${{ inputs.all-targets }}" = "true" ] && set -- --all-targets "$@"
-        [ -n "${{ inputs.package }}" ] && set -- --package "${{ inputs.package }}" "$@"
-        if [ -n "${{ inputs.pr-number }}" ] || [ "${{ inputs.dry-run }}" = "true" ]; then
+        [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
+        [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
+        if [ -n "$PR_NUMBER" ] || [ "$DRY_RUN" = "true" ]; then
           report="$RUNNER_TEMP/dejadoc-report.json"
           cargo dejadoc \
-            --threshold "${{ inputs.threshold }}" \
-            --min-tokens "${{ inputs.min-tokens }}" \
+            --threshold "$THRESHOLD" \
+            --min-tokens "$MIN_TOKENS" \
             --no-fail --json "$@" > "$report"
           jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.groups | length) duplicated groups"' "$report"
           if [ "$(jq '.groups | length' "$report")" -gt 0 ]; then
@@ -105,8 +112,8 @@ runs:
           fi
         else
           cargo dejadoc \
-            --threshold "${{ inputs.threshold }}" \
-            --min-tokens "${{ inputs.min-tokens }}" \
+            --threshold "$THRESHOLD" \
+            --min-tokens "$MIN_TOKENS" \
             "$@"
         fi
 
@@ -115,15 +122,17 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        DRY_RUN: ${{ inputs.dry-run }}
+        CWD: ${{ inputs.cwd }}
       run: |
-        pr="${{ inputs.pr-number }}"
-        dry="${{ inputs.dry-run }}"
-        cwd="${{ inputs.cwd }}"
+        pr="$PR_NUMBER"
+        dry="$DRY_RUN"
+        cwd="$CWD"
         repo="$GITHUB_REPOSITORY"
         report="$RUNNER_TEMP/dejadoc-report.json"
         body="$RUNNER_TEMP/dejadoc-review.md"
         status="$RUNNER_TEMP/dejadoc-post-status"
-        plan_file="$RUNNER_TEMP/dejadoc-plan.tsv"
         inline_file="$RUNNER_TEMP/dejadoc-inline.tsv"
 
         # The head SHA and changed file list, empty when there is no pull request.
