@@ -78,6 +78,9 @@ jobs:
             --verify-tag --generate-notes --title "$GITHUB_REF_NAME" \
             || gh release view "$GITHUB_REF_NAME" --repo "$GITHUB_REPOSITORY" >/dev/null
 
+  # Binaries are best effort and independent of publish. A failed target never blocks the
+  # crate release, the action falls back to source for a missing asset, and re-running the
+  # target completes the release because upload is idempotent.
   binaries:
     name: Build ${{ matrix.target }}
     needs: create-release

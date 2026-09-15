@@ -130,6 +130,8 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         CWD: ${{ inputs.cwd }}
       run: |
+        # No set -e here. Each step checks its own status and writes an outcome file, so a
+        # failed api call degrades to a skipped review instead of aborting the run.
         pr="$PR_NUMBER"
         dry="$DRY_RUN"
         cwd="$CWD"
