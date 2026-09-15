@@ -54,6 +54,7 @@ runs:
         tag=''
         [ -n "$VERSION" ] && tag="v$VERSION"
 
+        # Keep these targets in sync with the release matrix in .github/workflows/release.yml.
         case "$RUNNER_OS/$RUNNER_ARCH" in
           Linux/X64)   target=x86_64-unknown-linux-gnu ;;
           Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
@@ -69,7 +70,7 @@ runs:
           mkdir -p "$dest"
           args=(--repo "$repo" --pattern "$asset" --dir "$dest" --clobber)
           [ -n "$tag" ] && args=("$tag" "${args[@]}")
-          if gh release download "${args[@]}" 2>/dev/null; then
+          if err="$(gh release download "${args[@]}" 2>&1)"; then
             bin=cargo-dejadoc
             [ "$RUNNER_OS" = Windows ] && bin=cargo-dejadoc.exe
             tar -xzf "$dest/$asset" -C "$dest"
@@ -78,9 +79,12 @@ runs:
             echo "dejadoc: installed the prebuilt $asset from ${tag:-the latest release}"
             exit 0
           fi
+          echo "dejadoc: could not download $asset, falling back to source"
+          printf '%s\n' "$err" | sed 's/^/dejadoc: /'
+        else
+          echo "dejadoc: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, falling back to source"
         fi
 
-        echo "dejadoc: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, building from source"
         install=(dejadoc)
         [ -n "$tag" ] && install+=(--version "$VERSION")
         cargo install "${install[@]}"
