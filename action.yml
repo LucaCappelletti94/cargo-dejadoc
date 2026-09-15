@@ -1,6 +1,6 @@
 name: dejadoc
 description: >-
-  Install dejadoc from crates.io, fail the job when doctests are duplicated
+  Install dejadoc, fail the job when doctests are duplicated
   across the workspace, or post the findings as a pull request review
 
 branding:
@@ -45,11 +45,43 @@ runs:
   steps:
     - name: Install dejadoc
       shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
       run: |
-        if [ -n "${{ inputs.version }}" ]; then
-          cargo install dejadoc --version "${{ inputs.version }}"
-        else
-          cargo install dejadoc
+        set -euo pipefail
+        repo="LucaCappelletti94/cargo-dejadoc"
+        version="${{ inputs.version }}"
+        case "$RUNNER_OS/$RUNNER_ARCH" in
+          Linux/X64)   target=x86_64-unknown-linux-gnu ;;
+          Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
+          macOS/X64)   target=x86_64-apple-darwin ;;
+          macOS/ARM64) target=aarch64-apple-darwin ;;
+          Windows/X64) target=x86_64-pc-windows-msvc ;;
+          *)           target='' ;;
+        esac
+        installed=0
+        if [ -n "$target" ]; then
+          if [ -n "$version" ]; then tag="v$version"; else tag=''; fi
+          asset="cargo-dejadoc-$target.tar.gz"
+          dest="$RUNNER_TEMP/dejadoc-bin"
+          mkdir -p "$dest"
+          if gh release download ${tag:+"$tag"} --repo "$repo" --pattern "$asset" --dir "$dest" --clobber 2>/dev/null; then
+            tar -xzf "$dest/$asset" -C "$dest"
+            bin=cargo-dejadoc
+            [ "$RUNNER_OS" = "Windows" ] && bin=cargo-dejadoc.exe
+            chmod +x "$dest/$bin" 2>/dev/null || true
+            echo "$dest" >> "$GITHUB_PATH"
+            installed=1
+            echo "dejadoc: installed the prebuilt $asset from ${tag:-the latest release}"
+          fi
+        fi
+        if [ "$installed" = "0" ]; then
+          echo "dejadoc: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, building from source"
+          if [ -n "$version" ]; then
+            cargo install dejadoc --version "$version"
+          else
+            cargo install dejadoc
+          fi
         fi
 
     - name: Scan for duplicated doctests
