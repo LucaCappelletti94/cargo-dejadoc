@@ -627,10 +627,7 @@ fn classify(info: &str) -> (bool, Vec<String>, bool) {
         match t {
             "rust" => seen_rust = true,
             "custom" => custom = true,
-            "ignore" => {
-                ignore = true;
-                seen_rust = !seen_other;
-            }
+            "ignore" => ignore = true,
             "should_panic" | "no_run" => {
                 seen_rust = !seen_other;
                 out.push(t.to_string());
@@ -644,13 +641,6 @@ fn classify(info: &str) -> (bool, Vec<String>, bool) {
                 out.push(t.to_string());
             }
             _ if t.starts_with("edition") => out.push(t.to_string()),
-            _ if t.len() == 5
-                && t.starts_with('E')
-                && t[1..].bytes().all(|b| b.is_ascii_digit()) =>
-            {
-                seen_rust = !seen_other || seen_rust;
-                out.push(t.to_string());
-            }
             "dejadoc" => {
                 allow = true;
                 seen_other = true;
@@ -1758,6 +1748,9 @@ pub trait Tr {\n    fn d(&self) {\n        /// ```\n        /// let d = 4;\n    
             ("rust no_run", &["no_run"]),
             ("no_run,dejadoc", &["no_run"]),
             ("compile_fail,E0597", &["compile_fail", "E0597"]),
+            ("edition2021", &["edition2021"]),
+            ("rust (a comment)", &[]),
+            ("rust {.myclass}", &[]),
         ];
         for (info, attrs) in runs {
             let src = format!("/// ```{info}\n/// fn main() {{}}\n/// ```\npub fn f() {{}}\n");
@@ -1787,6 +1780,10 @@ pub trait Tr {\n    fn d(&self) {\n        /// ```\n        /// let d = 4;\n    
             "foo,no_run",
             "rust,{unclosed",
             "rs",
+            "E0597",
+            "shell",
+            "foo,ignore-wasm",
+            "rust (unclosed",
         ] {
             let src = format!("/// ```{info}\n/// fn main() {{}}\n/// ```\npub fn f() {{}}\n");
             assert_eq!(run(&src), vec![], "{info}");
