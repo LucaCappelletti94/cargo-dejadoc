@@ -198,21 +198,62 @@ impl Walker<'_> {
 
     /// Items nested anywhere in a function body, as rustdoc visits them.
     fn body(&mut self, block: &syn::Block, prefix: &str) {
-        let mut nested = NestedItems(Vec::new());
+        let mut nested = NestedItems {
+            items: Vec::new(),
+            hidden: false,
+        };
         nested.visit_block(block);
-        for item in nested.0 {
+        for item in nested.items {
             self.item(item, prefix);
         }
     }
 }
 
 /// The items directly nested in a body. Each item's own body is walked
-/// by `Walker::item`, so the visit stops at the item.
-struct NestedItems<'ast>(Vec<&'ast Item>);
+/// by `Walker::item`, so the visit stops at the item. A failing `cfg` on
+/// an expression, statement, match arm or field value hides the items
+/// under it, since the visit sees a node's attributes before its
+/// children and every such node restores the flag on exit.
+struct NestedItems<'ast> {
+    items: Vec<&'ast Item>,
+    hidden: bool,
+}
+
+impl NestedItems<'_> {
+    fn scoped(&mut self, visit: impl FnOnce(&mut Self)) {
+        let hidden = self.hidden;
+        visit(self);
+        self.hidden = hidden;
+    }
+}
 
 impl<'ast> Visit<'ast> for NestedItems<'ast> {
     fn visit_item(&mut self, item: &'ast Item) {
-        self.0.push(item);
+        if !self.hidden {
+            self.items.push(item);
+        }
+    }
+
+    fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+        if !cfg::allows(core::slice::from_ref(attr)) {
+            self.hidden = true;
+        }
+    }
+
+    fn visit_expr(&mut self, expr: &'ast Expr) {
+        self.scoped(|v| syn::visit::visit_expr(v, expr));
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        self.scoped(|v| syn::visit::visit_stmt(v, stmt));
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        self.scoped(|v| syn::visit::visit_arm(v, arm));
+    }
+
+    fn visit_field_value(&mut self, field: &'ast syn::FieldValue) {
+        self.scoped(|v| syn::visit::visit_field_value(v, field));
     }
 }
 
@@ -1669,6 +1710,47 @@ pub trait Tr {\n    fn d(&self) {\n        /// ```\n        /// let d = 4;\n    
                     "mycrate::Tr::d::dflt",
                     &[],
                     "let d = 4;",
+                    false
+                ),
+            ]
+        );
+    }
+
+    #[test]
+    fn cfg_gated_statements_hide_their_items() {
+        let src = "\
+pub fn outer() {\n    #[cfg(test)]\n    {\n        /// ```\n        /// let a = 1;\n        /// ```\n        fn hidden() {}\n    }\n\
+    #[cfg(test)]\n    let _ = { /// ```\n        /// let b = 2;\n        /// ```\n        fn also() {} };\n\
+    #[cfg(doc)]\n    {\n        /// ```\n        /// let c = 3;\n        /// ```\n        fn shown() {}\n    }\n\
+    match 0 {\n        #[cfg(test)]\n        1 => {\n            /// ```\n            /// let d = 4;\n            /// ```\n            fn armed() {}\n        }\n\
+        _ => {\n            /// ```\n            /// let e = 5;\n            /// ```\n            fn arm() {}\n        }\n    }\n\
+    let _ = P {\n        #[cfg(test)]\n        a: {\n            /// ```\n            /// let f = 6;\n            /// ```\n            fn fa() {}\n        },\n\
+        b: {\n            /// ```\n            /// let g = 7;\n            /// ```\n            fn fb() {}\n        },\n    };\n}\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt(
+                    "src/lib.rs",
+                    16,
+                    "mycrate::outer::shown",
+                    &[],
+                    "let c = 3;",
+                    false
+                ),
+                dt(
+                    "src/lib.rs",
+                    30,
+                    "mycrate::outer::arm",
+                    &[],
+                    "let e = 5;",
+                    false
+                ),
+                dt(
+                    "src/lib.rs",
+                    45,
+                    "mycrate::outer::fb",
+                    &[],
+                    "let g = 7;",
                     false
                 ),
             ]
