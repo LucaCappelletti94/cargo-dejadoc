@@ -105,14 +105,38 @@ mod tests {
 
     #[test]
     fn the_host_is_linux_x86_64() {
-        assert!(allows(&attrs("#[cfg(unix)]")));
-        assert!(!allows(&attrs("#[cfg(windows)]")));
-        assert!(allows(&attrs("#[cfg(target_os = \"linux\")]")));
-        assert!(allows(&attrs("#[cfg(not(target_arch = \"wasm32\"))]")));
-        assert!(allows(&attrs("#[cfg(target_pointer_width = \"64\")]")));
-        assert!(allows(&attrs("#[cfg(target_has_atomic = \"ptr\")]")));
-        assert!(!allows(&attrs("#[cfg(target_has_atomic = \"128\")]")));
-        assert!(allows(&attrs("#[cfg(panic = \"unwind\")]")));
+        let on = [
+            "unix",
+            "target_os = \"linux\"",
+            "target_family = \"unix\"",
+            "target_arch = \"x86_64\"",
+            "target_pointer_width = \"64\"",
+            "target_endian = \"little\"",
+            "target_env = \"gnu\"",
+            "target_vendor = \"unknown\"",
+            "target_has_atomic = \"ptr\"",
+            "target_feature = \"sse2\"",
+            "panic = \"unwind\"",
+        ];
+        let off = [
+            "windows",
+            "target_os = \"macos\"",
+            "target_family = \"wasm\"",
+            "target_arch = \"wasm32\"",
+            "target_pointer_width = \"32\"",
+            "target_endian = \"big\"",
+            "target_env = \"msvc\"",
+            "target_vendor = \"apple\"",
+            "target_has_atomic = \"128\"",
+            "target_feature = \"avx2\"",
+            "panic = \"abort\"",
+        ];
+        for pred in on {
+            assert!(allows(&attrs(&alloc::format!("#[cfg({pred})]"))), "{pred}");
+        }
+        for pred in off {
+            assert!(!allows(&attrs(&alloc::format!("#[cfg({pred})]"))), "{pred}");
+        }
     }
 
     #[test]

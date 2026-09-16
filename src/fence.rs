@@ -20,16 +20,18 @@ pub(crate) struct CodeBlock {
     pub(crate) code: String,
 }
 
+/// rustdoc's markdown options for the main body of documentation.
+const OPTIONS: Options = Options::ENABLE_TABLES
+    .union(Options::ENABLE_FOOTNOTES)
+    .union(Options::ENABLE_STRIKETHROUGH)
+    .union(Options::ENABLE_TASKLISTS)
+    .union(Options::ENABLE_SMART_PUNCTUATION);
+
 /// Scan `text` for code blocks with rustdoc's markdown options. The
 /// line is the opening fence or, for an indented block, its first line.
 #[must_use]
 pub(crate) fn scan(text: &str) -> Vec<CodeBlock> {
-    let opts = Options::ENABLE_TABLES
-        | Options::ENABLE_FOOTNOTES
-        | Options::ENABLE_STRIKETHROUGH
-        | Options::ENABLE_TASKLISTS
-        | Options::ENABLE_SMART_PUNCTUATION;
-    let mut parser = Parser::new_ext(text, opts).into_offset_iter();
+    let mut parser = Parser::new_ext(text, OPTIONS).into_offset_iter();
     let mut out = Vec::new();
     while let Some((event, range)) = parser.next() {
         let Event::Start(Tag::CodeBlock(kind)) = event else {
@@ -100,6 +102,13 @@ mod tests {
         assert_eq!(scan(t), vec![block("rust", 0, "x")]);
     }
 
+    #[test]
+    fn footnote_continuation_is_not_a_block() {
+        // Footnotes are on for rustdoc, so the indented line continues
+        // the footnote instead of opening an indented block.
+        let t = "[^1]: note\n\n    let x = 1;\n";
+        assert_eq!(scan(t), vec![]);
+    }
     #[test]
     fn nested_list_is_not_a_block() {
         let t = "- item\n\n    - nested a\n    - nested b\n\n  tail\n";
