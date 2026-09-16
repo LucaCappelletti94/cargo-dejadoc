@@ -1255,7 +1255,7 @@ pub fn raw() {}
         // The positive branch is taken and the `not(…)` branch skipped,
         // as an all-features rustdoc build would see it. Other metas and
         // `doc(…)` lists contribute no text.
-        let src = "#[derive(Debug)]\n#[doc(hidden)]\n#[cfg_attr(feature = \"string\", derive(Clone), doc = \"```\")]\n#[cfg_attr(not(feature = \"string\"), doc = \"```ignore\")]\n/// fn main() { }\n/// ```\npub struct Gated;\n";
+        let src = "#[derive(Debug)]\n#[doc(hidden)]\n#[cfg_attr(feature = \"string\", derive(Clone), doc = \"```\", must_use = \"extra\")]\n#[cfg_attr(not(feature = \"string\"), doc = \"```ignore\")]\n/// fn main() { }\n/// ```\npub struct Gated;\n";
         assert_eq!(
             run(src),
             vec![dt(
