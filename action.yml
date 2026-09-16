@@ -266,7 +266,13 @@ runs:
           echo "skipped-readonly" > "$status"
           exit 0
         fi
-        if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" -f event=REQUEST_CHANGES 2>&1)"; then
+        # A review with no comment of its own needs a body, so the sites that
+        # could not be commented inline go there.
+        review=(-f event=REQUEST_CHANGES)
+        if [ -n "$failed_sites" ]; then
+          review+=(-f "body=$(printf 'Duplicated doctests dejadoc could not comment inline\n\n```\n%s```' "$failed_sites")")
+        fi
+        if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" "${review[@]}" 2>&1)"; then
           if printf '%s' "$resp" | grep -qE 'HTTP 403|"status": "403"'; then
             readonly_notice
             echo "skipped-readonly" > "$status"
