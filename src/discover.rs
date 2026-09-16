@@ -136,9 +136,10 @@ fn collect(
 }
 
 /// Collect the `mod name;` files and their module names, at every nesting
-/// depth. `dir` is the directory containing the defining file (explicit
-/// `#[path]` resolves against it). `base` is the implicit child directory
-/// (the companion directory for a file module).
+/// depth, skipping modules whose `cfg` fails. `dir` is the directory
+/// containing the defining file (explicit `#[path]` resolves against it).
+/// `base` is the implicit child directory (the companion directory for a
+/// file module).
 fn mod_decls(
     items: &[syn::Item],
     dir: &std::path::Path,
@@ -148,22 +149,26 @@ fn mod_decls(
     use syn::Item;
 
     for item in items {
-        if let Item::Mod(moditem) = item {
-            if let Some((_, children)) = &moditem.content {
-                mod_decls(children, dir, base, out);
-                continue;
-            }
-            // Raw identifiers keep their name in the module path.
-            let name = moditem
-                .ident
-                .to_string()
-                .trim_start_matches("r#")
-                .to_string();
-            match resolve_mod_path(dir, base, &name, &moditem.attrs) {
-                Some(path) if path.exists() => out.push((path, name)),
-                Some(path) => eprintln!("dejadoc: missing module file {}", path.display()),
-                None => {}
-            }
+        let Item::Mod(moditem) = item else {
+            continue;
+        };
+        if !crate::cfg::allows(&moditem.attrs) {
+            continue;
+        }
+        if let Some((_, children)) = &moditem.content {
+            mod_decls(children, dir, base, out);
+            continue;
+        }
+        // Raw identifiers keep their name in the module path.
+        let name = moditem
+            .ident
+            .to_string()
+            .trim_start_matches("r#")
+            .to_string();
+        match resolve_mod_path(dir, base, &name, &moditem.attrs) {
+            Some(path) if path.exists() => out.push((path, name)),
+            Some(path) => eprintln!("dejadoc: missing module file {}", path.display()),
+            None => {}
         }
     }
 }
@@ -415,6 +420,22 @@ mod tests {
         std::fs::write(&root, "pub mod missing;\npub fn f() {}\n").unwrap();
         let result = module_tree(&target(&root)).unwrap();
         assert_eq!(files(result).len(), 1);
+    }
+
+    #[test]
+    fn cfg_test_mod_files_are_not_collected() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(
+            &root,
+            "#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod inner { mod deep; }\n#[cfg(not(test))]\npub mod kept;\n",
+        )
+        .unwrap();
+        for name in ["tests.rs", "deep.rs", "kept.rs"] {
+            std::fs::write(dir.path().join(name), "pub fn g() {}\n").unwrap();
+        }
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(files(result).len(), 2);
     }
 
     #[test]
