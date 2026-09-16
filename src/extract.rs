@@ -13,10 +13,12 @@ use syn::{
     parse::{Parse, ParseStream},
     parse2,
     punctuated::Punctuated,
+    visit::Visit,
 };
 
 use crate::DocTest;
 use crate::IncludeRead;
+use crate::cfg;
 use crate::fence;
 
 /// A run of doc text with per-line source positions. One source spans the
@@ -43,7 +45,12 @@ pub fn extract(
     root: &str,
     read_include: &IncludeRead<'_>,
 ) -> Vec<DocTest> {
-    let mut out = Vec::new();
+    let mut walker = Walker {
+        file,
+        root,
+        read_include,
+        out: Vec::new(),
+    };
     // File-level `//!` docs: inner doc attributes only.
     let inner: Vec<syn::Attribute> = parsed
         .attrs
@@ -51,114 +58,174 @@ pub fn extract(
         .filter(|a| matches!(a.style, AttrStyle::Inner { .. }))
         .cloned()
         .collect();
-    for src in doc_sources(&inner, file, read_include) {
-        out.extend(blocks(&src, prefix, root));
+    if !walker.doc(&inner, prefix) {
+        return walker.out;
     }
     for item in &parsed.items {
-        walk_item(item, prefix, file, root, read_include, &mut out);
+        walker.item(item, prefix);
     }
-    out
+    walker.out
+}
+
+/// The walk over one source file.
+struct Walker<'a> {
+    file: &'a str,
+    root: &'a str,
+    read_include: &'a IncludeRead<'a>,
+    out: Vec<DocTest>,
+}
+
+impl Walker<'_> {
+    /// Collect the doctests of `attrs` under `item` when its cfg holds,
+    /// returning whether it did so the caller skips the children too.
+    fn doc(&mut self, attrs: &[syn::Attribute], item: &str) -> bool {
+        if !cfg::allows(attrs) {
+            return false;
+        }
+        for src in doc_sources(attrs, self.file, self.read_include) {
+            self.out.extend(blocks(&src, item, self.root));
+        }
+        true
+    }
+
+    fn item(&mut self, item: &Item, prefix: &str) {
+        match item {
+            Item::Mod(m) => {
+                let sub = format!("{prefix}::{}", m.ident);
+                // `m.attrs` also holds the mod body's inner `//!` docs.
+                if !self.doc(&m.attrs, &sub) {
+                    return;
+                }
+                if let Some((_, items)) = &m.content {
+                    for child in items {
+                        self.item(child, &sub);
+                    }
+                }
+            }
+            Item::Impl(i) => {
+                let sub = format!("{prefix}::{}", type_name(&i.self_ty));
+                if !self.doc(&i.attrs, &sub) {
+                    return;
+                }
+                for assoc in &i.items {
+                    let Some(name) = impl_assoc_name(assoc) else {
+                        continue;
+                    };
+                    let path = format!("{sub}::{name}");
+                    if self.doc(assoc_attrs(assoc), &path)
+                        && let syn::ImplItem::Fn(f) = assoc
+                    {
+                        self.body(&f.block, &path);
+                    }
+                }
+            }
+            Item::Trait(t) => {
+                let sub = format!("{prefix}::{}", t.ident);
+                if !self.doc(&t.attrs, &sub) {
+                    return;
+                }
+                for assoc in &t.items {
+                    let Some(name) = trait_assoc_name(assoc) else {
+                        continue;
+                    };
+                    let path = format!("{sub}::{name}");
+                    if self.doc(trait_assoc_attrs(assoc), &path)
+                        && let TraitItem::Fn(f) = assoc
+                        && let Some(block) = &f.default
+                    {
+                        self.body(block, &path);
+                    }
+                }
+            }
+            Item::ForeignMod(f) => {
+                if !self.doc(&f.attrs, prefix) {
+                    return;
+                }
+                for foreign in &f.items {
+                    if let Some(name) = foreign_name(foreign) {
+                        self.doc(foreign_attrs(foreign), &format!("{prefix}::{name}"));
+                    }
+                }
+            }
+            Item::Fn(f) => {
+                let path = format!("{prefix}::{}", f.sig.ident);
+                if self.doc(&f.attrs, &path) {
+                    self.body(&f.block, &path);
+                }
+            }
+            Item::Struct(s) => {
+                let path = format!("{prefix}::{}", s.ident);
+                if self.doc(&s.attrs, &path) {
+                    self.fields(s.fields.iter(), &path);
+                }
+            }
+            Item::Union(u) => {
+                let path = format!("{prefix}::{}", u.ident);
+                if self.doc(&u.attrs, &path) {
+                    self.fields(u.fields.named.iter(), &path);
+                }
+            }
+            Item::Enum(e) => {
+                let path = format!("{prefix}::{}", e.ident);
+                if !self.doc(&e.attrs, &path) {
+                    return;
+                }
+                for variant in &e.variants {
+                    let sub = format!("{path}::{}", variant.ident);
+                    if self.doc(&variant.attrs, &sub) {
+                        self.fields(variant.fields.iter(), &sub);
+                    }
+                }
+            }
+            _ => {
+                if let Some(name) = item_name(item) {
+                    self.doc(item_attrs(item), &format!("{prefix}::{name}"));
+                }
+            }
+        }
+    }
+
+    /// Fields under `prefix`, unnamed ones by position.
+    fn fields<'f>(&mut self, fields: impl Iterator<Item = &'f syn::Field>, prefix: &str) {
+        for (index, field) in fields.enumerate() {
+            let name = field
+                .ident
+                .as_ref()
+                .map_or_else(|| index.to_string(), ToString::to_string);
+            self.doc(&field.attrs, &format!("{prefix}::{name}"));
+        }
+    }
+
+    /// Items nested anywhere in a function body, as rustdoc visits them.
+    fn body(&mut self, block: &syn::Block, prefix: &str) {
+        let mut nested = NestedItems(Vec::new());
+        nested.visit_block(block);
+        for item in nested.0 {
+            self.item(item, prefix);
+        }
+    }
+}
+
+/// The items directly nested in a body. Each item's own body is walked
+/// by `Walker::item`, so the visit stops at the item.
+struct NestedItems<'ast>(Vec<&'ast Item>);
+
+impl<'ast> Visit<'ast> for NestedItems<'ast> {
+    fn visit_item(&mut self, item: &'ast Item) {
+        self.0.push(item);
+    }
 }
 
 fn item_attrs(item: &Item) -> &[syn::Attribute] {
     match item {
         Item::Const(c) => &c.attrs,
-        Item::Enum(e) => &e.attrs,
         Item::ExternCrate(e) => &e.attrs,
-        Item::Fn(f) => &f.attrs,
-        Item::ForeignMod(f) => &f.attrs,
-        Item::Impl(i) => &i.attrs,
         Item::Macro(m) => &m.attrs,
-        Item::Mod(m) => &m.attrs,
         Item::Static(s) => &s.attrs,
-        Item::Struct(s) => &s.attrs,
-        Item::Trait(t) => &t.attrs,
         Item::TraitAlias(t) => &t.attrs,
         Item::Type(t) => &t.attrs,
-        Item::Union(u) => &u.attrs,
         Item::Use(u) => &u.attrs,
         _ => &[],
-    }
-}
-
-fn walk_item(
-    item: &Item,
-    prefix: &str,
-    file: &str,
-    root: &str,
-    read_include: &IncludeRead<'_>,
-    out: &mut Vec<DocTest>,
-) {
-    match item {
-        Item::Mod(m) => {
-            let sub = format!("{prefix}::{}", m.ident);
-            // `m.attrs` also holds the mod body's inner `//!` docs.
-            push_doc(item_attrs(item), &sub, file, root, read_include, out);
-            if let Some((_, items)) = &m.content {
-                for child in items {
-                    walk_item(child, &sub, file, root, read_include, out);
-                }
-            }
-        }
-        Item::Impl(i) => {
-            let sub = format!("{prefix}::{}", type_name(&i.self_ty));
-            push_doc(item_attrs(item), &sub, file, root, read_include, out);
-            for assoc in &i.items {
-                if let Some(name) = impl_assoc_name(assoc) {
-                    push_doc(
-                        assoc_attrs(assoc),
-                        &format!("{sub}::{name}"),
-                        file,
-                        root,
-                        read_include,
-                        out,
-                    );
-                }
-            }
-        }
-        Item::Trait(t) => {
-            let sub = format!("{prefix}::{}", t.ident);
-            push_doc(item_attrs(item), &sub, file, root, read_include, out);
-            for assoc in &t.items {
-                if let Some(name) = trait_assoc_name(assoc) {
-                    push_doc(
-                        trait_assoc_attrs(assoc),
-                        &format!("{sub}::{name}"),
-                        file,
-                        root,
-                        read_include,
-                        out,
-                    );
-                }
-            }
-        }
-        Item::ForeignMod(f) => {
-            push_doc(item_attrs(item), prefix, file, root, read_include, out);
-            for foreign in &f.items {
-                if let Some(name) = foreign_name(foreign) {
-                    push_doc(
-                        foreign_attrs(foreign),
-                        &format!("{prefix}::{name}"),
-                        file,
-                        root,
-                        read_include,
-                        out,
-                    );
-                }
-            }
-        }
-        _ => {
-            if let Some(name) = item_name(item) {
-                push_doc(
-                    item_attrs(item),
-                    &format!("{prefix}::{name}"),
-                    file,
-                    root,
-                    read_include,
-                    out,
-                );
-            }
-        }
     }
 }
 
@@ -226,19 +293,6 @@ fn line_of(span: proc_macro2::Span) -> u32 {
     let line = span.start().line;
     // A line count beyond u32::MAX is physically unreachable; clamp it.
     u32::try_from(line).unwrap_or(u32::MAX)
-}
-
-fn push_doc(
-    attrs: &[syn::Attribute],
-    item: &str,
-    file: &str,
-    root: &str,
-    read_include: &IncludeRead<'_>,
-    out: &mut Vec<DocTest>,
-) {
-    for src in doc_sources(attrs, file, read_include) {
-        out.extend(blocks(&src, item, root));
-    }
 }
 
 /// Doc text from an item's attributes, `#[doc = "…"]` literals,
@@ -556,50 +610,95 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
 }
 
 /// Counted / allowed / skipped for an info string, plus the recorded
-/// doctest attributes.
+/// doctest attributes, by rustdoc's `LangString::parse` rules. A block
+/// is Rust unless a `custom` tag or an unknown tag not preceded by a
+/// Rust tag turns it off, and `ignore` skips it.
 fn classify(info: &str) -> (bool, Vec<String>, bool) {
-    let tokens: Vec<&str> = info
-        .split(',')
-        .map(str::trim)
-        .filter(|t| !t.is_empty())
-        .collect();
-    let first = tokens.first().copied();
-    let is_rust = matches!(
-        first,
-        None | Some(
-            "rust"
-                | "no_run"
-                | "should_panic"
-                | "compile_fail"
-                | "edition2015"
-                | "edition2018"
-                | "edition2021"
-                | "edition2024",
-        )
-    );
-    if !is_rust {
+    let Some(tokens) = lang_tokens(info) else {
         return (false, Vec::new(), false);
-    }
+    };
+    let mut seen_rust = false;
+    let mut seen_other = false;
+    let mut custom = false;
+    let mut ignore = false;
     let mut allow = false;
     let mut out = Vec::new();
     for t in tokens {
         match t {
-            "rust" | "dejadoc" => allow |= t == "dejadoc",
-            "ignore" => return (false, Vec::new(), false),
-            _ => out.extend(t.split_whitespace().map(String::from)),
+            "rust" => seen_rust = true,
+            "custom" => custom = true,
+            "ignore" => {
+                ignore = true;
+                seen_rust = !seen_other;
+            }
+            "should_panic" | "no_run" => {
+                seen_rust = !seen_other;
+                out.push(t.to_string());
+            }
+            _ if t.starts_with("ignore-") => {
+                seen_rust = !seen_other;
+                out.push(t.to_string());
+            }
+            "test_harness" | "compile_fail" | "standalone_crate" => {
+                seen_rust = !seen_other || seen_rust;
+                out.push(t.to_string());
+            }
+            _ if t.starts_with("edition") => out.push(t.to_string()),
+            _ if t.len() == 5
+                && t.starts_with('E')
+                && t[1..].bytes().all(|b| b.is_ascii_digit()) =>
+            {
+                seen_rust = !seen_other || seen_rust;
+                out.push(t.to_string());
+            }
+            "dejadoc" => {
+                allow = true;
+                seen_other = true;
+            }
+            _ => {
+                seen_other = true;
+                out.push(t.to_string());
+            }
         }
+    }
+    if custom || (seen_other && !seen_rust) || ignore {
+        return (false, Vec::new(), false);
     }
     (true, out, allow)
 }
 
+/// The tags of an info string: comma or whitespace separated, with
+/// `{…}` attribute blocks and `(…)` comments dropped. An unclosed block
+/// is rustdoc's parse error and yields `None`.
+fn lang_tokens(info: &str) -> Option<Vec<&str>> {
+    let mut out = Vec::new();
+    let mut start = None;
+    let mut chars = info.char_indices();
+    while let Some((i, c)) = chars.next() {
+        if c == '{' || c == '(' {
+            if let Some(s) = start.take() {
+                out.push(&info[s..i]);
+            }
+            let close = if c == '{' { '}' } else { ')' };
+            chars.by_ref().find(|(_, c)| *c == close)?;
+        } else if c == ',' || c.is_whitespace() {
+            if let Some(s) = start.take() {
+                out.push(&info[s..i]);
+            }
+        } else if start.is_none() {
+            start = Some(i);
+        }
+    }
+    if let Some(s) = start {
+        out.push(&info[s..]);
+    }
+    Some(out)
+}
+
 fn item_name(item: &Item) -> Option<String> {
     Some(match item {
-        Item::Fn(f) => f.sig.ident.to_string(),
         Item::Const(c) => c.ident.to_string(),
         Item::Static(s) => s.ident.to_string(),
-        Item::Enum(e) => e.ident.to_string(),
-        Item::Struct(s) => s.ident.to_string(),
-        Item::Union(u) => u.ident.to_string(),
         Item::Type(t) => t.ident.to_string(),
         Item::TraitAlias(t) => t.ident.to_string(),
         Item::Use(u) => use_name(&u.tree),
@@ -637,6 +736,7 @@ fn type_name(ty: &Type) -> String {
             .unwrap_or_default(),
         Type::Group(g) => type_name(&g.elem),
         Type::Paren(p) => type_name(&p.elem),
+        Type::Reference(r) => format!("&{}", type_name(&r.elem)),
         other => other.to_token_stream().to_string(),
     }
 }
@@ -912,8 +1012,15 @@ mod tests {
 
     #[test]
     fn block_doc_blank_inner_line_is_kept() {
+        // The stars stay, so each ` * ``` ` line is a list item fence.
         let src = "/**\n * A.\n\n * ```\n * fn main() {}\n * ```\n */\npub fn f() {}\n";
-        assert_eq!(run(src), vec![]);
+        assert_eq!(
+            run(src),
+            vec![
+                dt("src/lib.rs", 4, "mycrate::f", &[], "", false),
+                dt("src/lib.rs", 6, "mycrate::f", &[], "", false),
+            ]
+        );
     }
 
     #[test]
@@ -960,13 +1067,19 @@ mod tests {
     #[test]
     fn single_line_star_fence_is_not_stripped() {
         let src = "/// * ```\npub fn f() {}\n";
-        assert_eq!(run(src), vec![]);
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate::f", &[], "", false)]
+        );
     }
 
     #[test]
     fn raw_doc_non_star_tail_line_aborts_strip() {
         let src = "/// * ```\n/// * x\n///  y\npub fn f() {}\n";
-        assert_eq!(run(src), vec![]);
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate::f", &[], "", false)]
+        );
     }
 
     #[test]
@@ -988,13 +1101,19 @@ mod tests {
     #[test]
     fn block_doc_last_line_star_mismatch_aborts_strip() {
         let src = "/**\n * ```\n * fn main() {}\n  * x\n */\npub fn f() {}\n";
-        assert_eq!(run(src), vec![]);
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 2, "mycrate::f", &[], "", false)]
+        );
     }
 
     #[test]
     fn block_doc_misaligned_star_fence_is_not_stripped() {
         let src = "#[doc = \"   * ```\\n * fn main() {}\"]\npub fn f() {}\n";
-        assert_eq!(run(src), vec![]);
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate::f", &[], "", false)]
+        );
     }
 
     #[test]
@@ -1202,10 +1321,15 @@ mod tests {
             &dir.path().to_string_lossy(),
             &fs_read(&src),
         );
-        // rustdoc keeps the stars in include files (raw fragment kind);
-        // the resulting list-item fences are a residual divergence, as
-        // the scanner has no list context.
-        assert_eq!(dts, vec![]);
+        // rustdoc keeps the stars in include files (raw fragment kind),
+        // so the fences are list item fences and count as empty doctests.
+        assert_eq!(
+            dts,
+            vec![
+                dt("src/doc.md", 1, "mycrate::f", &[], "", false),
+                dt("src/doc.md", 3, "mycrate::f", &[], "", false),
+            ]
+        );
     }
 
     #[test]
@@ -1468,6 +1592,99 @@ pub fn raw() {}
         );
     }
 
+    /// Items are kept by their `cfg` with `test` off and every other cfg
+    /// on, as rustdoc collects doctests.
+    #[test]
+    fn cfg_test_items_are_skipped() {
+        let src = "\
+/// ```\n/// let a = 1;\n/// ```\n#[cfg(test)]\npub fn a() {}\n\
+#[cfg(test)]\nmod t {\n    /// ```\n    /// let b = 2;\n    /// ```\n    pub fn b() {}\n}\n\
+/// ```\n/// let c = 3;\n/// ```\n#[cfg(not(doc))]\npub fn c() {}\n\
+/// ```\n/// let d = 4;\n/// ```\n#[cfg(all(not(test), any(doctest, feature = \"x\")))]\npub fn d() {}\n\
+pub struct S {\n    /// ```\n    /// let e = 5;\n    /// ```\n    #[cfg(test)]\n    pub e: u8,\n}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 18, "mycrate::d", &[], "let d = 4;", false)]
+        );
+    }
+
+    #[test]
+    fn file_level_cfg_test_skips_the_file() {
+        let src = "#![cfg(test)]\n/// ```\n/// let a = 1;\n/// ```\npub fn a() {}\n";
+        assert_eq!(run(src), vec![]);
+    }
+
+    #[test]
+    fn fields_and_variants_are_walked() {
+        let src = "\
+pub struct S {\n    /// ```\n    /// let x = 1;\n    /// ```\n    pub x: u8,\n}\n\
+pub struct T(\n    /// ```\n    /// let t = 2;\n    /// ```\n    pub u8,\n);\n\
+pub enum E {\n    /// ```\n    /// let v = 3;\n    /// ```\n    V {\n        /// ```\n        /// let y = 4;\n        /// ```\n        y: u8,\n    },\n}\n\
+pub union U {\n    /// ```\n    /// let z = 5;\n    /// ```\n    pub z: u8,\n}\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt("src/lib.rs", 2, "mycrate::S::x", &[], "let x = 1;", false),
+                dt("src/lib.rs", 8, "mycrate::T::0", &[], "let t = 2;", false),
+                dt("src/lib.rs", 14, "mycrate::E::V", &[], "let v = 3;", false),
+                dt(
+                    "src/lib.rs",
+                    18,
+                    "mycrate::E::V::y",
+                    &[],
+                    "let y = 4;",
+                    false
+                ),
+                dt("src/lib.rs", 25, "mycrate::U::z", &[], "let z = 5;", false),
+            ]
+        );
+    }
+
+    #[test]
+    fn items_nested_in_bodies_are_walked() {
+        let src = "\
+pub fn outer() {\n    /// ```\n    /// let a = 1;\n    /// ```\n    fn inner() {}\n    let _ = || {\n        /// ```\n        /// let b = 2;\n        /// ```\n        struct Deep;\n    };\n}\n\
+pub struct S;\nimpl S {\n    pub fn m(&self) {\n        /// ```\n        /// let c = 3;\n        /// ```\n        fn helper() {}\n    }\n}\n\
+pub trait Tr {\n    fn d(&self) {\n        /// ```\n        /// let d = 4;\n        /// ```\n        fn dflt() {}\n    }\n}\n";
+        assert_eq!(
+            run(src),
+            vec![
+                dt(
+                    "src/lib.rs",
+                    2,
+                    "mycrate::outer::inner",
+                    &[],
+                    "let a = 1;",
+                    false
+                ),
+                dt(
+                    "src/lib.rs",
+                    7,
+                    "mycrate::outer::Deep",
+                    &[],
+                    "let b = 2;",
+                    false
+                ),
+                dt(
+                    "src/lib.rs",
+                    16,
+                    "mycrate::S::m::helper",
+                    &[],
+                    "let c = 3;",
+                    false
+                ),
+                dt(
+                    "src/lib.rs",
+                    24,
+                    "mycrate::Tr::d::dflt",
+                    &[],
+                    "let d = 4;",
+                    false
+                ),
+            ]
+        );
+    }
+
     #[test]
     fn impl_declaration_carries_its_docs() {
         let src = "struct S;\n/// ```\n/// fn main() {}\n/// ```\nimpl S {\n    pub fn f() {}\n}\n";
@@ -1477,6 +1694,22 @@ pub fn raw() {}
                 "src/lib.rs",
                 2,
                 "mycrate::S",
+                &[],
+                "fn main() {}",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn reference_self_type_names_its_target() {
+        let src = "struct S;\nimpl<'a> IntoIterator for &'a mut S {\n    /// ```\n    /// fn main() {}\n    /// ```\n    fn into_iter(self) {}\n}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                3,
+                "mycrate::&S::into_iter",
                 &[],
                 "fn main() {}",
                 false
@@ -1513,5 +1746,50 @@ pub fn raw() {}
     fn rust_ignore_fence_is_not_scanned() {
         let src = "/// ```rust,ignore\n/// fn main() {}\n/// ```\npub fn f() {}\n";
         assert_eq!(run(src), Vec::new());
+    }
+
+    /// The info strings rustdoc runs, with the attributes it records.
+    #[test]
+    fn lang_string_follows_rustdoc() {
+        let runs: &[(&str, &[&str])] = &[
+            ("no_run,foo", &["no_run", "foo"]),
+            ("ignore-wasm", &["ignore-wasm"]),
+            ("rust (a comment) {.myclass}", &[]),
+            ("rust no_run", &["no_run"]),
+            ("no_run,dejadoc", &["no_run"]),
+            ("compile_fail,E0597", &["compile_fail", "E0597"]),
+        ];
+        for (info, attrs) in runs {
+            let src = format!("/// ```{info}\n/// fn main() {{}}\n/// ```\npub fn f() {{}}\n");
+            assert_eq!(
+                run(&src),
+                vec![dt(
+                    "src/lib.rs",
+                    1,
+                    "mycrate::f",
+                    attrs,
+                    "fn main() {}",
+                    info.contains("dejadoc")
+                )],
+                "{info}"
+            );
+        }
+    }
+
+    /// The info strings rustdoc does not run.
+    #[test]
+    fn lang_string_skips_follow_rustdoc() {
+        for info in [
+            "rust,foo,no_run",
+            "custom,rust",
+            "rust ignore",
+            "dejadoc",
+            "foo,no_run",
+            "rust,{unclosed",
+            "rs",
+        ] {
+            let src = format!("/// ```{info}\n/// fn main() {{}}\n/// ```\npub fn f() {{}}\n");
+            assert_eq!(run(&src), vec![], "{info}");
+        }
     }
 }

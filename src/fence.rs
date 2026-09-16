@@ -1,9 +1,9 @@
-//! Code block extraction from doc text, mirroring rustdoc's
-//! pulldown-cmark doctest collection.
+//! Code block extraction from doc text through pulldown-cmark, the
+//! parser rustdoc collects doctests with.
 use alloc::string::String;
-use alloc::string::ToString;
-use alloc::vec;
 use alloc::vec::Vec;
+
+use pulldown_cmark::{CodeBlockKind, Event, Options, Parser, Tag, TagEnd};
 
 /// A code block found in doc text: a fenced block (backticks or tildes)
 /// or an indented block (four or more leading columns). Indented blocks
@@ -15,204 +15,48 @@ pub(crate) struct CodeBlock {
     pub(crate) info: String,
     /// 0-based index of the opening line within the doc text.
     pub(crate) line: usize,
-    /// Body lines joined by `'\n'`, indented blocks dedented by four
-    /// columns.
+    /// Body with container indentation removed, without the trailing
+    /// newline.
     pub(crate) code: String,
 }
 
-/// The class of the line before the current one, for the indented
-/// block rule that a block cannot interrupt a text line.
-#[derive(PartialEq)]
-enum Prev {
-    Start,
-    Blank,
-    Text,
-    BlockEnd,
-}
-
-/// Scan `text` for code blocks, matching rustdoc. A fence of at least
-/// three backticks or tildes with at most three leading spaces opens a
-/// fenced block; its closer is the same character, at least as long, at
-/// most three leading spaces, with nothing but trailing spaces or tabs.
-/// A backtick in a backtick fence's info string disqualifies the fence.
-/// A line of four or more leading columns (a tab counts to the next
-/// multiple of four) starts an indented block unless the previous line
-/// is text; its body drops four columns per line. Unterminated blocks
-/// emit at EOF.
+/// Scan `text` for code blocks with rustdoc's markdown options. The
+/// line is the opening fence or, for an indented block, its first line.
 #[must_use]
 pub(crate) fn scan(text: &str) -> Vec<CodeBlock> {
-    let lines: Vec<&str> = text.lines().collect();
-    let total = lines.len();
-    let mut out: Vec<CodeBlock> = Vec::new();
-    scan_lines(&lines, total, Prev::Start, &mut out);
-    out
-}
-
-/// Classify the lines one at a time until the slice is empty.
-fn scan_lines<'a>(
-    mut lines: &'a [&'a str],
-    total: usize,
-    mut prev: Prev,
-    out: &mut Vec<CodeBlock>,
-) {
-    while let [first, rest @ ..] = lines {
-        let line = total - lines.len();
-        if first.trim().is_empty() {
-            prev = Prev::Blank;
-            lines = rest;
+    let opts = Options::ENABLE_TABLES
+        | Options::ENABLE_FOOTNOTES
+        | Options::ENABLE_STRIKETHROUGH
+        | Options::ENABLE_TASKLISTS
+        | Options::ENABLE_SMART_PUNCTUATION;
+    let mut parser = Parser::new_ext(text, opts).into_offset_iter();
+    let mut out = Vec::new();
+    while let Some((event, range)) = parser.next() {
+        let Event::Start(Tag::CodeBlock(kind)) = event else {
             continue;
-        }
-        if let Some((c, len)) = fence_open(first) {
-            lines = fenced_block(first, rest, c, len, line, out);
-            prev = Prev::BlockEnd;
-            continue;
-        }
-        if indent_cols(first) >= 4 && matches!(prev, Prev::Start | Prev::Blank | Prev::BlockEnd) {
-            lines = indented_block(first, rest, line, out);
-            prev = Prev::BlockEnd;
-            continue;
-        }
-        prev = Prev::Text;
-        lines = rest;
-    }
-}
-
-/// Consume one fenced block opened by `opener`; return the remaining
-/// lines.
-fn fenced_block<'a>(
-    opener: &str,
-    rest: &'a [&'a str],
-    c: char,
-    len: usize,
-    line: usize,
-    out: &mut Vec<CodeBlock>,
-) -> &'a [&'a str] {
-    let info = fence_info(opener, c);
-    let mut body: Vec<String> = Vec::new();
-    let mut lines = rest;
-    while let [first, rest2 @ ..] = lines {
-        if fence_close(first, c, len) {
-            lines = rest2;
-            break;
-        }
-        body.push(first.to_string());
-        lines = rest2;
-    }
-    out.push(CodeBlock {
-        info,
-        line,
-        code: body.join("\n"),
-    });
-    lines
-}
-
-/// Consume one indented block whose first content line is `opener`;
-/// return the remaining lines.
-fn indented_block<'a>(
-    opener: &str,
-    rest: &'a [&'a str],
-    line: usize,
-    out: &mut Vec<CodeBlock>,
-) -> &'a [&'a str] {
-    let mut body: Vec<String> = vec![dedent4(opener).to_string()];
-    let mut pending_blank = false;
-    let mut lines = rest;
-    while let [first, rest2 @ ..] = lines {
-        if first.trim().is_empty() {
-            if pending_blank {
-                body.push(String::new());
+        };
+        let info = match kind {
+            CodeBlockKind::Fenced(lang) => lang.into_string(),
+            CodeBlockKind::Indented => String::new(),
+        };
+        let mut code = String::new();
+        for (event, _) in parser.by_ref() {
+            match event {
+                Event::Text(s) => code.push_str(&s),
+                Event::End(TagEnd::CodeBlock) => break,
+                _ => {}
             }
-            pending_blank = true;
-            lines = rest2;
-            continue;
         }
-        if indent_cols(first) < 4 {
-            break;
+        if code.ends_with('\n') {
+            code.pop();
         }
-        if pending_blank {
-            body.push(String::new());
-            pending_blank = false;
-        }
-        body.push(dedent4(first).to_string());
-        lines = rest2;
+        out.push(CodeBlock {
+            info,
+            line: text[..range.start].matches('\n').count(),
+            code,
+        });
     }
-    out.push(CodeBlock {
-        info: String::new(),
-        line,
-        code: body.join("\n"),
-    });
-    lines
-}
-
-/// An opening fence: the character and marker length, when the line is
-/// a valid opener.
-fn fence_open(line: &str) -> Option<(char, usize)> {
-    let indent = line.bytes().take_while(|&b| b == b' ').count();
-    if indent > 3 {
-        return None;
-    }
-    let rest = &line[indent..];
-    let c = rest.chars().next()?;
-    if c != '`' && c != '~' {
-        return None;
-    }
-    let len = rest.bytes().take_while(|&b| b as char == c).count();
-    if len < 3 {
-        return None;
-    }
-    if c == '`' && fence_info(line, c).contains('`') {
-        return None;
-    }
-    Some((c, len))
-}
-
-/// The info string of an opening fence line: the trimmed rest after the
-/// marker.
-fn fence_info(line: &str, c: char) -> String {
-    let indent = line.bytes().take_while(|&b| b == b' ').count();
-    let rest = &line[indent..];
-    let len = rest.bytes().take_while(|&b| b as char == c).count();
-    rest[len..].trim().to_string()
-}
-
-/// A closing fence: same character, at least the opener's length, at
-/// most three leading spaces, nothing but trailing spaces or tabs.
-fn fence_close(line: &str, c: char, len: usize) -> bool {
-    let indent = line.bytes().take_while(|&b| b == b' ').count();
-    if indent > 3 {
-        return false;
-    }
-    let rest = &line[indent..];
-    let n = rest.bytes().take_while(|&b| b as char == c).count();
-    n >= len && rest[n..].chars().all(|ch| ch == ' ' || ch == '\t')
-}
-
-/// Leading whitespace columns of a line; a tab advances to the next
-/// multiple of four.
-fn indent_cols(line: &str) -> usize {
-    let mut col = 0usize;
-    for ch in line.chars() {
-        if ch == ' ' {
-            col += 1;
-        } else if ch == '\t' {
-            col += 4 - (col % 4);
-        } else {
-            break;
-        }
-    }
-    col
-}
-
-/// The line without its first four columns.
-fn dedent4(line: &str) -> &str {
-    let mut col = 0usize;
-    for (i, ch) in line.char_indices() {
-        if col >= 4 {
-            return &line[i..];
-        }
-        col += if ch == '\t' { 4 - (col % 4) } else { 1 };
-    }
-    line
+    out
 }
 #[cfg(test)]
 mod tests {
@@ -254,6 +98,27 @@ mod tests {
     fn tilde_fence_scans() {
         let t = "~~~rust\nx\n~~~\n";
         assert_eq!(scan(t), vec![block("rust", 0, "x")]);
+    }
+
+    #[test]
+    fn nested_list_is_not_a_block() {
+        let t = "- item\n\n    - nested a\n    - nested b\n\n  tail\n";
+        assert_eq!(scan(t), vec![]);
+    }
+
+    #[test]
+    fn fence_inside_list_item_dedents() {
+        let t = "- item\n\n  ```\n  let a = 1;\n  ```\n\n- other\n\n    continuation\n\n    ```rust\n    let b = 2;\n    ```\n";
+        assert_eq!(
+            scan(t),
+            vec![block("", 2, "let a = 1;"), block("rust", 10, "let b = 2;")]
+        );
+    }
+
+    #[test]
+    fn blockquote_fence_dedents() {
+        let t = "> ```\n> let a = 1;\n> ```\n";
+        assert_eq!(scan(t), vec![block("", 0, "let a = 1;")]);
     }
 
     #[test]
