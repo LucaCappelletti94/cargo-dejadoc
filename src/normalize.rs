@@ -1,5 +1,6 @@
 //! Canonical form of a doctest body.
 
+use alloc::borrow::Cow;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -21,7 +22,8 @@ pub(crate) struct Canonical {
 /// Compute the canonical form of a doctest body.
 #[must_use]
 pub(crate) fn canonicalize(code: &str) -> Canonical {
-    let body: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
+    let unhidden: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
+    let body = without_crate_attrs(&unhidden);
     if let Ok(mut file) = syn::parse_str::<syn::File>(&body) {
         crate::alpha::normalize_file(&mut file);
         return from_stream(file.to_token_stream());
@@ -40,6 +42,30 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
         text: text.clone(),
         unparsed: true,
         tokens: text.split_whitespace().count(),
+    }
+}
+
+/// A body's leading `#![…]` attributes, which rustdoc lifts onto the
+/// generated crate, then the rest of its tokens.
+struct Lead {
+    attrs: Vec<syn::Attribute>,
+    rest: proc_macro2::TokenStream,
+}
+
+impl syn::parse::Parse for Lead {
+    fn parse(input: syn::parse::ParseStream) -> syn::Result<Self> {
+        Ok(Self {
+            attrs: input.call(syn::Attribute::parse_inner)?,
+            rest: input.parse()?,
+        })
+    }
+}
+
+/// The body without its leading crate attributes.
+fn without_crate_attrs(body: &str) -> Cow<'_, str> {
+    match syn::parse_str::<Lead>(body) {
+        Ok(lead) if !lead.attrs.is_empty() => Cow::Owned(lead.rest.to_string()),
+        _ => Cow::Borrowed(body),
     }
 }
 
@@ -251,6 +277,15 @@ mod tests {
     fn alpha_renames_use_aliases() {
         let a = canonicalize("use std::collections::BTreeMap as Pino;\nPino::new();\n");
         let b = canonicalize("use std::collections::BTreeMap as Abete;\nAbete::new();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn leading_inner_attributes_are_lifted() {
+        let a =
+            canonicalize("#![allow(unused)]\n#![feature(x)]\n# use x::Y;\nlet pino = Y::new();\n");
+        let b = canonicalize("# use x::Y;\nlet abete = Y::new();\n");
+        assert!(!a.unparsed);
         assert_eq!(a.text, b.text);
     }
 

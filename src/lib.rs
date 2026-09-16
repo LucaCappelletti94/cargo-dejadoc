@@ -16,6 +16,7 @@ use std::eprintln;
 use std::path::{Path, PathBuf};
 
 mod alpha;
+mod cfg;
 mod config;
 #[cfg(feature = "std")]
 mod discover;
