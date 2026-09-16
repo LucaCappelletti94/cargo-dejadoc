@@ -1,0 +1,39 @@
+name: Wrong review
+description: A dejadoc review comment is wrong or a duplicate was missed
+title: "Wrong review"
+body:
+  - type: dropdown
+    id: kind
+    attributes:
+      label: What is wrong
+      options:
+        - The doctests are not duplicates
+        - A duplicate was missed
+        - The comment or suggestion is on the wrong lines
+        - Something else
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: dejadoc version
+    validations:
+      required: true
+  - type: input
+    id: review
+    attributes:
+      label: Pull request
+      description: The pull request the review was posted on
+  - type: textarea
+    id: group
+    attributes:
+      label: Reported group
+      description: The sites of the group, one per line
+      render: text
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: The doctests involved when the pull request is private, and what you expected
+    validations:
+      required: true

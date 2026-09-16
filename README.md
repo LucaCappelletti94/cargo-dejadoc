@@ -42,7 +42,7 @@ jobs:
           pr-number: ${{ github.event.pull_request.number }}
 ```
 
-Every duplicated doctest whose file is in the pull request diff gets an inline comment, the first copy marked as the one to keep and each later copy with a suggestion that deletes it, and the review requests changes. Sites outside the diff get no comment, and when no site is in the diff the review is skipped.
+Every duplicated doctest whose file is in the pull request diff gets an inline comment, the first copy marked as the one to keep and each later copy with a suggestion that deletes it, and the review requests changes. Each comment ends with a link that opens a prefilled issue here for reporting a wrong review. Sites outside the diff get no comment, and when no site is in the diff the review is skipped.
 
 A pull request from a fork runs with a read-only `GITHUB_TOKEN`, so the action logs a warning, skips the review, and the job passes. To review fork pull requests, trigger on `pull_request_target` and check out the pull request head as below. That trigger runs the job with write access, so read [GitHub's guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target) before opting the checkout in with `allow-unsafe-pr-checkout`.
 

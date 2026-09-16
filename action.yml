@@ -180,6 +180,23 @@ runs:
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
+        # Each comment links to a prefilled wrong-review issue for its group.
+        uri() { jq -rn --arg s "$1" '$s | @uri'; }
+        version="$(cargo dejadoc --version | awk '{ print $NF }')"
+        report_link() {
+          local sites
+          sites="$(jq -r --arg cwd "$cwd" --argjson g "$1" '
+            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+            .groups[$g - 1].sites as $s
+            | [$s[:12][] | "\(sp):\(.line)  \(.item)"]
+              + (if ($s | length) > 12 then ["and \(($s | length) - 12) more"] else [] end)
+            | join("\n")' "$report")"
+          printf '[👎 Report a wrong review](https://github.com/LucaCappelletti94/cargo-dejadoc/issues/new?template=wrong-review.yml&title=%s&version=%s&review=%s&group=%s)' \
+            "$(uri "Wrong review on $repo#$pr, group $1")" \
+            "$(uri "$version")" \
+            "$(uri "$GITHUB_SERVER_URL/$repo/pull/$pr")" \
+            "$(uri "$sites")"
+        }
         readonly=0
         failed_sites=''
         if [ "$dry" != "true" ] && [ -s "$inline_file" ]; then
@@ -187,7 +204,7 @@ runs:
             [ -n "$p" ] || continue
             if [ "$c" = "1" ]; then
               note="Duplicated doctest, group $g, copy 1 of $n. This is the copy the [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) review keeps."
-              post_body="$note"
+              post_body="$(printf '%s\n\n%s' "$note" "$(report_link "$g")")"
               fields=(-F "line=$line" -f side=RIGHT)
             else
               close_line="$(awk -v l="$line" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$p" 2>/dev/null)" || close_line=''
@@ -196,7 +213,7 @@ runs:
                 continue
               fi
               note="Duplicated doctest, group $g, copy $c of $n. The [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) review suggests removing this copy."
-              post_body="$(printf '%s\n\n```suggestion\n```' "$note")"
+              post_body="$(printf '%s\n\n```suggestion\n```\n\n%s' "$note" "$(report_link "$g")")"
               fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
             fi
             if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
