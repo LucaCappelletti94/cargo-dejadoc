@@ -244,7 +244,7 @@ fn push_doc(
 /// Doc text from an item's attributes, `#[doc = "…"]` literals,
 /// `include_str!` files, and `concat!` mixes, assembled into one doc
 /// stream, so fences may straddle include boundaries. A `cfg_attr` doc is
-/// taken unless its predicate is `not(…)`, as an all-features build sees it.
+/// taken when its predicate holds with every feature and cfg on.
 fn doc_sources(
     attrs: &[syn::Attribute],
     file: &str,
@@ -257,31 +257,41 @@ fn doc_sources(
             if let Meta::NameValue(nv) = &attr.meta {
                 push_doc_expr(&mut parts, &nv.value, line, file, read_include);
             }
-        } else if attr.path().is_ident("cfg_attr") {
-            let Meta::List(list) = &attr.meta else {
-                continue;
-            };
-            let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-            else {
-                continue;
-            };
-            let mut metas = metas.into_iter();
-            let Some(pred) = metas.next() else {
-                continue;
-            };
-            if matches!(&pred, Meta::List(l) if l.path.is_ident("not")) {
-                continue;
-            }
-            for meta in metas {
-                if let Meta::NameValue(nv) = meta
-                    && nv.path.is_ident("doc")
-                {
-                    push_doc_expr(&mut parts, &nv.value, line, file, read_include);
-                }
+        } else if attr.path().is_ident("cfg_attr")
+            && let Meta::List(list) = &attr.meta
+            && let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            && metas.first().is_some_and(cfg_holds)
+        {
+            let docs = metas.iter().skip(1).filter_map(|meta| match meta {
+                Meta::NameValue(nv) if nv.path.is_ident("doc") => Some(nv),
+                _ => None,
+            });
+            for nv in docs {
+                push_doc_expr(&mut parts, &nv.value, line, file, read_include);
             }
         }
     }
     merge_parts(parts)
+}
+
+/// Whether a cfg predicate holds with every feature and cfg on.
+fn cfg_holds(pred: &Meta) -> bool {
+    let Meta::List(list) = pred else {
+        return true;
+    };
+    if list.path.is_ident("not") {
+        return !list
+            .parse_args::<Meta>()
+            .is_ok_and(|inner| cfg_holds(&inner));
+    }
+    let inner = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated);
+    if list.path.is_ident("all") {
+        inner.is_ok_and(|inner| inner.iter().all(cfg_holds))
+    } else if list.path.is_ident("any") {
+        inner.is_ok_and(|inner| inner.iter().any(cfg_holds))
+    } else {
+        true
+    }
 }
 
 /// Push the doc text of one `doc = …` value.
@@ -1243,13 +1253,32 @@ pub fn raw() {}
     #[test]
     fn cfg_attr_doc_opens_the_fence() {
         // The positive branch is taken and the `not(…)` branch skipped,
-        // as an all-features rustdoc build would see it.
-        let src = "#[cfg_attr(feature = \"string\", doc = \"```\")]\n#[cfg_attr(not(feature = \"string\"), doc = \"```ignore\")]\n/// fn main() { }\n/// ```\npub fn gated() {}\n";
+        // as an all-features rustdoc build would see it. Other metas and
+        // `doc(…)` lists contribute no text.
+        let src = "#[derive(Debug)]\n#[doc(hidden)]\n#[cfg_attr(feature = \"string\", derive(Clone), doc = \"```\")]\n#[cfg_attr(not(feature = \"string\"), doc = \"```ignore\")]\n/// fn main() { }\n/// ```\npub struct Gated;\n";
         assert_eq!(
             run(src),
             vec![dt(
                 "src/lib.rs",
-                1,
+                3,
+                "mycrate::Gated",
+                &[],
+                "fn main() { }",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn cfg_attr_predicate_holds_with_every_cfg_on() {
+        // `all` with a negated feature is false, `any` with one true arm
+        // is true, so only the second fence opens.
+        let src = "#[cfg_attr(all(feature = \"a\", not(feature = \"b\")), doc = \"```\")]\n#[cfg_attr(any(not(doc), feature = \"b\"), doc = \"```\")]\n/// fn main() { }\n/// ```\npub fn gated() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                2,
                 "mycrate::gated",
                 &[],
                 "fn main() { }",
