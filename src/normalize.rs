@@ -263,8 +263,8 @@ mod tests {
 
     #[test]
     fn alpha_use_name_equals_its_aliased_form() {
-        let a = canonicalize("use pkg::pino;\npino();\n");
-        let b = canonicalize("use pkg::pino as abete;\nabete();\n");
+        let a = canonicalize("use pkg::{pino, sub::*};\npino();\n");
+        let b = canonicalize("use pkg::{pino as abete, sub::*};\nabete();\n");
         assert_eq!(a.text, b.text);
     }
 
