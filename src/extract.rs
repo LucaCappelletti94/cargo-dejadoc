@@ -243,45 +243,80 @@ fn push_doc(
 
 /// Doc text from an item's attributes, `#[doc = "…"]` literals,
 /// `include_str!` files, and `concat!` mixes, assembled into one doc
-/// stream, so fences may straddle include boundaries.
+/// stream, so fences may straddle include boundaries. A `cfg_attr` doc is
+/// taken unless its predicate is `not(…)`, as an all-features build sees it.
 fn doc_sources(
     attrs: &[syn::Attribute],
     file: &str,
     read_include: &IncludeRead<'_>,
 ) -> Vec<DocSource> {
     let mut parts: Vec<(String, u32, String)> = Vec::new();
-    for attr in attrs.iter().filter(|a| a.path().is_ident("doc")) {
+    for attr in attrs {
         let line = line_of(attr.pound_token.span);
-        let Meta::NameValue(nv) = &attr.meta else {
-            continue;
-        };
-        match &nv.value {
-            Expr::Lit(ExprLit {
-                lit: Lit::Str(s), ..
-            }) => parts.push((doc_value(&s.value()), line, file.to_string())),
-            Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
-                if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
-                    push_include(&mut parts, file, read_include, &s.value());
+        if attr.path().is_ident("doc") {
+            if let Meta::NameValue(nv) = &attr.meta {
+                push_doc_expr(&mut parts, &nv.value, line, file, read_include);
+            }
+        } else if attr.path().is_ident("cfg_attr") {
+            let Meta::List(list) = &attr.meta else {
+                continue;
+            };
+            let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+            else {
+                continue;
+            };
+            let mut metas = metas.into_iter();
+            let Some(pred) = metas.next() else {
+                continue;
+            };
+            if matches!(&pred, Meta::List(l) if l.path.is_ident("not")) {
+                continue;
+            }
+            for meta in metas {
+                if let Meta::NameValue(nv) = meta
+                    && nv.path.is_ident("doc")
+                {
+                    push_doc_expr(&mut parts, &nv.value, line, file, read_include);
                 }
             }
-            Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("concat") => {
-                if let Ok(concat) = parse2::<ConcatParts>(mac.tokens.clone()) {
-                    for part in concat.0 {
-                        match part {
-                            ConcatPart::Lit(s) => {
-                                parts.push((doc_value(&s.value()), line, file.to_string()));
-                            }
-                            ConcatPart::Include(s) => {
-                                push_include(&mut parts, file, read_include, &s.value());
-                            }
+        }
+    }
+    merge_parts(parts)
+}
+
+/// Push the doc text of one `doc = …` value.
+fn push_doc_expr(
+    parts: &mut Vec<(String, u32, String)>,
+    value: &Expr,
+    line: u32,
+    file: &str,
+    read_include: &IncludeRead<'_>,
+) {
+    match value {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => parts.push((doc_value(&s.value()), line, file.to_string())),
+        Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
+            if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
+                push_include(parts, file, read_include, &s.value());
+            }
+        }
+        Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("concat") => {
+            if let Ok(concat) = parse2::<ConcatParts>(mac.tokens.clone()) {
+                for part in concat.0 {
+                    match part {
+                        ConcatPart::Lit(s) => {
+                            parts.push((doc_value(&s.value()), line, file.to_string()));
+                        }
+                        ConcatPart::Include(s) => {
+                            push_include(parts, file, read_include, &s.value());
                         }
                     }
                 }
             }
-            _ => {}
         }
+        _ => {}
     }
-    merge_parts(parts)
 }
 
 fn push_include(
@@ -1198,6 +1233,24 @@ pub fn raw() {}
                 "src/lib.rs",
                 3,
                 "mycrate::raw",
+                &[],
+                "fn main() { }",
+                false
+            )]
+        );
+    }
+
+    #[test]
+    fn cfg_attr_doc_opens_the_fence() {
+        // The positive branch is taken and the `not(…)` branch skipped,
+        // as an all-features rustdoc build would see it.
+        let src = "#[cfg_attr(feature = \"string\", doc = \"```\")]\n#[cfg_attr(not(feature = \"string\"), doc = \"```ignore\")]\n/// fn main() { }\n/// ```\npub fn gated() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt(
+                "src/lib.rs",
+                1,
+                "mycrate::gated",
                 &[],
                 "fn main() { }",
                 false
