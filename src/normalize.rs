@@ -255,6 +255,27 @@ mod tests {
     }
 
     #[test]
+    fn alpha_use_of_different_items_stays_distinct() {
+        let a = canonicalize("use pkg::pino;\npino();\n");
+        let b = canonicalize("use pkg::abete;\nabete();\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_use_name_equals_its_aliased_form() {
+        let a = canonicalize("use pkg::pino;\npino();\n");
+        let b = canonicalize("use pkg::pino as abete;\nabete();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_use_group_keeps_each_item() {
+        let a = canonicalize("use pkg::{pino, qno};\npino(qno);\n");
+        let b = canonicalize("use pkg::{pino, ebano};\npino(ebano);\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
     fn alpha_does_not_touch_unparsed_fallback() {
         let a = canonicalize("let pino = @\n");
         let b = canonicalize("let abete = @\n");

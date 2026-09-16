@@ -560,16 +560,27 @@ impl VisitMut for Renamer {
     }
 
     fn visit_use_tree_mut(&mut self, tree: &mut syn::UseTree) {
-        // The bound name is the alias, or the final name without one;
-        // the default visitor has no rename hook for it.
+        // A plain name is both the imported item and its local alias, so it
+        // becomes `item as canon` to keep the item and rename the alias.
         match tree {
             syn::UseTree::Path(path) => {
                 self.visit_use_tree_mut(&mut path.tree);
             }
             syn::UseTree::Name(name) => {
-                let bound = name.ident.to_string();
-                if let Some(canon) = self.lookup(&[Ns::Value, Ns::Type], &bound) {
-                    name.ident = Ident::new(&canon, name.ident.span());
+                if let Some(canon) = self.lookup(&[Ns::Value, Ns::Type], &name.ident.to_string()) {
+                    let rename = Ident::new(&canon, name.ident.span());
+                    let glob = syn::UseTree::Glob(syn::UseGlob {
+                        star_token: <syn::Token![*]>::default(),
+                    });
+                    if let syn::UseTree::Name(syn::UseName { ident }) =
+                        core::mem::replace(tree, glob)
+                    {
+                        *tree = syn::UseTree::Rename(syn::UseRename {
+                            ident,
+                            as_token: <syn::Token![as]>::default(),
+                            rename,
+                        });
+                    }
                 }
             }
             syn::UseTree::Rename(rename) => {
