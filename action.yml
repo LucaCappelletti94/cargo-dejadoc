@@ -259,7 +259,7 @@ runs:
 
         readonly_notice() {
           echo "dejadoc: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
-          echo "dejadoc: for pull requests from forks, enable the repository setting 'Send write tokens to workflows from pull requests', run the workflow with pull_request_target (see the security guidance), or supply a write token"
+          echo "dejadoc: to review fork pull requests, trigger on pull_request_target and check out the pull request head, or on a private repository enable 'Send write tokens to workflows from pull requests'"
         }
         if [ "$readonly" = "1" ]; then
           readonly_notice

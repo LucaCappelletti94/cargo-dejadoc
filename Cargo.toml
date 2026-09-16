@@ -9,6 +9,7 @@ license = "MIT"
 repository = "https://github.com/LucaCappelletti94/cargo-dejadoc"
 keywords = ["cargo-subcommand", "doctest", "duplicate-detection", "cli", "rustdoc"]
 categories = ["command-line-utilities", "development-tools::testing"]
+exclude = ["/docs"]
 
 [[bin]]
 name = "cargo-dejadoc"
