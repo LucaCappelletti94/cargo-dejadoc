@@ -8,6 +8,7 @@
 //! canonical form. Free identifiers, field names, method names,
 //! attribute paths, and string literals are never rewritten.
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -271,18 +272,49 @@ fn fn_param_names<'a>(inputs: impl Iterator<Item = &'a syn::FnArg>) -> Vec<Strin
     out
 }
 
-/// The names bound by a use tree, one per name or alias.
-fn use_names(tree: &syn::UseTree, out: &mut Vec<String>) {
-    match tree {
-        syn::UseTree::Path(path) => use_names(&path.tree, out),
-        syn::UseTree::Name(name) => out.push(name.ident.to_string()),
-        syn::UseTree::Rename(rename) => out.push(rename.rename.to_string()),
-        syn::UseTree::Group(group) => {
-            for item in &group.items {
-                use_names(item, out);
+/// Bind a use name in both namespaces and return its value canon.
+fn bind_use_name(renamer: &mut Renamer, name: &str) -> String {
+    let canon = renamer.bind(Ns::Value, name);
+    renamer.bind(Ns::Type, name);
+    canon
+}
+
+impl Renamer {
+    /// Bind every name a use tree introduces and rewrite the tree. A plain
+    /// name is both the imported item and its local alias, so it becomes
+    /// `item as canon` to keep the item and rename the alias.
+    fn bind_use_tree(&mut self, tree: syn::UseTree) -> syn::UseTree {
+        match tree {
+            syn::UseTree::Path(mut path) => {
+                path.tree = Box::new(self.bind_use_tree(*path.tree));
+                syn::UseTree::Path(path)
             }
+            syn::UseTree::Name(syn::UseName { ident }) => {
+                let canon = bind_use_name(self, &ident.to_string());
+                syn::UseTree::Rename(syn::UseRename {
+                    rename: Ident::new(&canon, ident.span()),
+                    ident,
+                    as_token: <syn::Token![as]>::default(),
+                })
+            }
+            syn::UseTree::Rename(mut rename) => {
+                let canon = bind_use_name(self, &rename.rename.to_string());
+                rename.rename = Ident::new(&canon, rename.rename.span());
+                syn::UseTree::Rename(rename)
+            }
+            syn::UseTree::Group(mut group) => {
+                group.items = group
+                    .items
+                    .into_pairs()
+                    .map(|pair| {
+                        let (tree, comma) = pair.into_tuple();
+                        syn::punctuated::Pair::new(self.bind_use_tree(tree), comma)
+                    })
+                    .collect();
+                syn::UseTree::Group(group)
+            }
+            glob @ syn::UseTree::Glob(_) => glob,
         }
-        syn::UseTree::Glob(_) => {}
     }
 }
 
@@ -547,55 +579,13 @@ impl VisitMut for Renamer {
     }
 
     fn visit_item_use_mut(&mut self, item: &mut syn::ItemUse) {
-        let mut names = Vec::new();
-        use_names(&item.tree, &mut names);
-        for name in &names {
-            self.bind(Ns::Value, name);
-            self.bind(Ns::Type, name);
-        }
         for attr in &mut item.attrs {
             self.visit_attribute_mut(attr);
         }
-        self.visit_use_tree_mut(&mut item.tree);
-    }
-
-    fn visit_use_tree_mut(&mut self, tree: &mut syn::UseTree) {
-        // A plain name is both the imported item and its local alias, so it
-        // becomes `item as canon` to keep the item and rename the alias.
-        match tree {
-            syn::UseTree::Path(path) => {
-                self.visit_use_tree_mut(&mut path.tree);
-            }
-            syn::UseTree::Name(name) => {
-                if let Some(canon) = self.lookup(&[Ns::Value, Ns::Type], &name.ident.to_string()) {
-                    let rename = Ident::new(&canon, name.ident.span());
-                    let glob = syn::UseTree::Glob(syn::UseGlob {
-                        star_token: <syn::Token![*]>::default(),
-                    });
-                    if let syn::UseTree::Name(syn::UseName { ident }) =
-                        core::mem::replace(tree, glob)
-                    {
-                        *tree = syn::UseTree::Rename(syn::UseRename {
-                            ident,
-                            as_token: <syn::Token![as]>::default(),
-                            rename,
-                        });
-                    }
-                }
-            }
-            syn::UseTree::Rename(rename) => {
-                let alias = rename.rename.to_string();
-                if let Some(canon) = self.lookup(&[Ns::Value, Ns::Type], &alias) {
-                    rename.rename = Ident::new(&canon, rename.rename.span());
-                }
-            }
-            syn::UseTree::Group(group) => {
-                for item in &mut group.items {
-                    self.visit_use_tree_mut(item);
-                }
-            }
-            syn::UseTree::Glob(_) => {}
-        }
+        let glob = syn::UseTree::Glob(syn::UseGlob {
+            star_token: <syn::Token![*]>::default(),
+        });
+        item.tree = self.bind_use_tree(core::mem::replace(&mut item.tree, glob));
     }
 
     fn visit_expr_closure_mut(&mut self, closure: &mut syn::ExprClosure) {
