@@ -186,7 +186,7 @@ runs:
           while IFS=$'\t' read -r p line item g c n; do
             [ -n "$p" ] || continue
             if [ "$c" = "1" ]; then
-              note="Duplicated doctest, group $g, copy 1 of $n. This is the copy the dejadoc review keeps."
+              note="Duplicated doctest, group $g, copy 1 of $n. This is the copy the [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) review keeps."
               post_body="$note"
               fields=(-F "line=$line" -f side=RIGHT)
             else
@@ -195,7 +195,7 @@ runs:
                 failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
                 continue
               fi
-              note="Duplicated doctest, group $g, copy $c of $n. The dejadoc review suggests removing this copy."
+              note="Duplicated doctest, group $g, copy $c of $n. The [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) review suggests removing this copy."
               post_body="$(printf '%s\n\n```suggestion\n```' "$note")"
               fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
             fi
