@@ -12,3 +12,10 @@ pub fn beta_fn() {}
 pub fn beta_unparsed() {}
 
 pub mod util;
+
+/// ```
+/// let mut values = vec![3, 1, 2];
+/// values.sort();
+/// assert_eq!(values, vec![1, 2, 3]);
+/// ```
+pub fn sort_values() {}
