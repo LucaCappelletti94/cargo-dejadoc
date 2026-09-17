@@ -72,6 +72,12 @@ runs:
           asset="cargo-dejadoc-$target.tar.gz"
           dest="$RUNNER_TEMP/dejadoc-bin"
           mkdir -p "$dest"
+          # Action series releases carry no binaries and GitHub marks the newest one Latest,
+          # so resolve the newest release that actually ships the asset instead of trusting Latest.
+          if [ -z "$tag" ]; then
+            tag="$(gh api "repos/$repo/releases?per_page=30" --paginate \
+              --jq ".[] | select(.draft == false and .prerelease == false) | select([.assets[].name] | index(\"$asset\")) | .tag_name" 2>/dev/null | head -n1)" || true
+          fi
           args=(--repo "$repo" --pattern "$asset" --dir "$dest" --clobber)
           [ -n "$tag" ] && args=("$tag" "${args[@]}")
           if err="$(gh release download "${args[@]}" 2>&1)"; then
@@ -80,7 +86,7 @@ runs:
             tar -xzf "$dest/$asset" -C "$dest"
             chmod +x "$dest/$bin" 2>/dev/null || true
             echo "$dest" >> "$GITHUB_PATH"
-            echo "dejadoc: installed the prebuilt $asset from ${tag:-the latest release}"
+            echo "dejadoc: installed the prebuilt $asset from $tag"
             exit 0
           fi
           echo "dejadoc: could not download $asset, falling back to source"
