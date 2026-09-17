@@ -354,6 +354,7 @@ runs:
           fi
         }
         readonly=0
+        actionable=0
         failed_sites=''
         out_of_range=''
         rendered=''
@@ -381,6 +382,7 @@ runs:
           close_line="$(close_line_of "$p" "$line")"
           if [ -z "$close_line" ]; then
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
+            actionable=1
             continue
           fi
           # An empty line right after the block becomes a stray once the
@@ -442,8 +444,9 @@ runs:
               out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line" "$close_line")  $item"$'\n'
             else
               failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
-            fi
           fi
+          fi
+          actionable=1
         done < "$inline_file"
 
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
@@ -495,6 +498,11 @@ runs:
             echo "dejadoc: no duplicated doctest is in the pull request diff, the review is not posted"
             echo "skipped-nodiff" > "$status"
           fi
+          exit 0
+        fi
+        if [ "$actionable" = "0" ]; then
+          echo "dejadoc: every duplicated copy in the pull request diff is a kept copy, the review is not posted"
+          echo "skipped-keeps" > "$status"
           exit 0
         fi
 
