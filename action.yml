@@ -303,13 +303,31 @@ runs:
             printf '`%s:%s`' "$2" "$label"
           fi
         }
-        # The permalink of the doctest block starting at line $3 of path $2 at
-        # commit $1, the range ends at the closing fence of file $4 when found.
-        block_link() {
+        # The line ending the doctest block started at line $2 of path $1,
+        # read from file $3 when given, from the head tree otherwise.
+        block_end() {
           local f
-          f="$2"
-          [ -n "${4:-}" ] && f="$4"
-          blob_link "$1" "$2" "$3" "$(close_line_of "$f" "$3")"
+          f="$1"
+          [ -n "${3:-}" ] && f="$3"
+          close_line_of "$f" "$2"
+        }
+        # The bare permalink url GitHub expands into a code preview of the
+        # cited lines, empty when no commit is known.
+        blob_url() {
+          [ -n "$1" ] || return 0
+          if [ -n "${4:-}" ] && [ "$4" != "$3" ]; then
+            printf '%s/%s/blob/%s/%s#L%s-L%s' "$GITHUB_SERVER_URL" "$repo" "$1" "$2" "$3" "$4"
+          else
+            printf '%s/%s/blob/%s/%s#L%s' "$GITHUB_SERVER_URL" "$repo" "$1" "$2" "$3"
+          fi
+        }
+        # The inline text location of a block, `path:start` or `path:start-end`.
+        loc_text() {
+          if [ -n "${3:-}" ] && [ "$3" != "$2" ]; then
+            printf '`%s:%s-%s`' "$1" "$2" "$3"
+          else
+            printf '`%s:%s`' "$1" "$2"
+          fi
         }
         # Base tree file for a repo-relative path, empty when the tree is absent.
         base_file() {
@@ -345,29 +363,34 @@ runs:
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             continue
           fi
+          url=''
           if [ "$onlynew" = "1" ]; then
             if [ -n "$basekeep" ]; then
               bp="${basekeep%:*}"
               bl="${basekeep##*:}"
-              cite="$(block_link "$base_sha" "$bp" "$bl" "$(base_file "$bp")")"
-              note="This doctest was added by this pull request and duplicates a copy that already exists at $cite, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+              ce="$(block_end "$bp" "$bl" "$(base_file "$bp")")"
+              url="$(blob_url "$base_sha" "$bp" "$bl" "$ce")"
+              note="This doctest was added by this pull request and duplicates a copy that already exists at $(loc_text "$bp" "$bl" "$ce"), [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
             elif [ "$removable" = "1" ]; then
               kp="${keepat%:*}"
               kl="${keepat##*:}"
-              cite="$(block_link "$head_sha" "$kp" "$kl")"
-              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at $cite and suggests removing this one."
+              ce="$(block_end "$kp" "$kl")"
+              url="$(blob_url "$head_sha" "$kp" "$kl" "$ce")"
+              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at $(loc_text "$kp" "$kl" "$ce") and suggests removing this one."
             else
               note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first added copy and suggests removing the rest."
             fi
           elif [ "$removable" = "1" ]; then
             fp="${first%:*}"
             fl="${first##*:}"
-            cite="$(block_link "$head_sha" "$fp" "$fl")"
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at $cite and suggests removing this one."
+            ce="$(block_end "$fp" "$fl")"
+            url="$(blob_url "$head_sha" "$fp" "$fl" "$ce")"
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at $(loc_text "$fp" "$fl" "$ce") and suggests removing this one."
           else
             note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
           fi
           comment="$note"
+          [ -n "$url" ] && comment="$comment"$'\n\n'"$url"
           [ "$removable" = "1" ] && comment="$comment"$'\n\n```suggestion\n```'
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
           if [ "$dry" = "true" ]; then
