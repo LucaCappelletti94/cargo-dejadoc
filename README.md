@@ -8,7 +8,7 @@
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
-`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, reporting any identified duplicates. Use it in your GitHub CI!
+`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, reporting any duplicates. Use it in your GitHub CI!
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
 
