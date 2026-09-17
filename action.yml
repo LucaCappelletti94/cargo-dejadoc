@@ -154,9 +154,10 @@ runs:
         [ -n "$CWD" ] && dir="$dir/$CWD"
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
-        [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
+        # Threshold 1 inventories every base doctest, a group the pull request
+        # completes from a single existing copy must still be reported.
         if ! (cd "$dir" && cargo dejadoc \
-          --threshold "$THRESHOLD" \
+          --threshold 1 \
           --min-tokens "$MIN_TOKENS" \
           --no-fail --json "$@") > "$RUNNER_TEMP/dejadoc-base-report.json"; then
           rm -f "$RUNNER_TEMP/dejadoc-base-report.json"
@@ -240,11 +241,14 @@ runs:
               | .hash as $h
               | ((.sites[0] | spath) + ":" + (.sites[0].line | tostring)) as $first
               | ($base.keep[$h] // "") as $basekeep
+              | ([ .sites[] | ([$h, .item, (spath)] | join("\t")) ]) as $ks
               | [ .sites | to_entries[]
                   | (([$h, .value.item, (.value | spath)] | join("\t")) as $k
+                     | (([ $ks[: .key ][] | select(. == $k) ] | length) + 1) as $idx
+                     | ([ $base.keys[] | select(. == $k) ] | length) as $bcount
                      | { g: $g, c: (.key + 1), n: $n, first: $first, s: .value,
                          p: (.value | spath),
-                         isNew: (($base.keys | any(. == $k)) | not),
+                         isNew: ($idx > $bcount),
                          basekeep: $basekeep }) ] as $rows
               | ($rows | map(select(.isNew)) | length) as $knew
               | $rows[] | . + { knew: $knew }
@@ -254,7 +258,8 @@ runs:
           | select(($changed | index($row.p)) != null)
           | select(if $onlynew_mode then $row.isNew else true end)
           | [$row.p, (.s.line | tostring), .s.item, (.g | tostring), (.c | tostring),
-             (.n | tostring), .first, (if .isNew then "1" else "0" end), .basekeep, (.knew | tostring)]
+             (.n | tostring), .first, (if .isNew then "1" else "0" end),
+             (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring)]
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
@@ -281,21 +286,35 @@ runs:
         close_line_of() {
           awk -v l="$2" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$1" 2>/dev/null
         }
-        # A markdown quote of the doctest starting at line $2 of file $1.
-        quote_of() {
-          local cl body
-          [ -f "$1" ] || return 0
-          cl="$(close_line_of "$1" "$2")"
-          [ -n "$cl" ] || cl="$2"
-          body="$(sed -n "${2},${cl}p" "$1" 2>/dev/null | head -n 12)"
-          [ -n "$body" ] || return 0
-          printf '%s\n' "$body" | sed 's/^/> /'
-        }
+        # A permalink to lines $3 to $4 of path $2 at commit $1, GitHub shows
+        # and highlights those lines. Without a sha it falls back to plain text.
         blob_link() {
-          if [ -n "$1" ]; then
-            printf '[`%s:%s`](%s/%s/blob/%s/%s#L%s)' "$2" "$3" "$GITHUB_SERVER_URL" "$repo" "$1" "$2" "$3"
+          local anchor label
+          if [ -n "${4:-}" ] && [ "$4" != "$3" ]; then
+            anchor="#L$3-L$4"
+            label="$3-$4"
           else
-            printf '`%s:%s`' "$2" "$3"
+            anchor="#L$3"
+            label="$3"
+          fi
+          if [ -n "$1" ]; then
+            printf '[`%s:%s`](%s/%s/blob/%s/%s%s)' "$2" "$label" "$GITHUB_SERVER_URL" "$repo" "$1" "$2" "$anchor"
+          else
+            printf '`%s:%s`' "$2" "$label"
+          fi
+        }
+        # The permalink of the doctest block starting at line $3 of path $2 at
+        # commit $1, the range ends at the closing fence of file $4 when found.
+        block_link() {
+          local f
+          f="$2"
+          [ -n "${4:-}" ] && f="$4"
+          blob_link "$1" "$2" "$3" "$(close_line_of "$f" "$3")"
+        }
+        # Base tree file for a repo-relative path, empty when the tree is absent.
+        base_file() {
+          if [ -f "$RUNNER_TEMP/dejadoc-base/$1" ]; then
+            printf '%s' "$RUNNER_TEMP/dejadoc-base/$1"
           fi
         }
         readonly=0
@@ -307,6 +326,7 @@ runs:
         while IFS=$'\t' read -r p line item g c n first new basekeep knew; do
           [ -n "$p" ] || continue
           site="$p:$line"
+          [ "$basekeep" = "-" ] && basekeep=''
           if [ "$new" = "1" ] && [ -z "${seen_first[$g]:-}" ]; then
             seen_first[$g]="$site"
           fi
@@ -325,36 +345,28 @@ runs:
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             continue
           fi
-          q=''
           if [ "$onlynew" = "1" ]; then
             if [ -n "$basekeep" ]; then
               bp="${basekeep%:*}"
               bl="${basekeep##*:}"
-              q="$(quote_of "$RUNNER_TEMP/dejadoc-base/$bp" "$bl")"
-              cite="$(blob_link "$base_sha" "$bp" "$bl")"
-              if [ -n "$q" ]; then
-                note="This doctest was added by this pull request and duplicates a copy that already exists at $cite."$'\n\n'"$q"$'\n\n'"[dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
-              else
-                note="This doctest was added by this pull request and duplicates a copy that already exists at $cite, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
-              fi
-              q=''
+              cite="$(block_link "$base_sha" "$bp" "$bl" "$(base_file "$bp")")"
+              note="This doctest was added by this pull request and duplicates a copy that already exists at $cite, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
             elif [ "$removable" = "1" ]; then
               kp="${keepat%:*}"
               kl="${keepat##*:}"
-              q="$(quote_of "$kp" "$kl")"
-              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at \`$keepat\` and suggests removing this one."
+              cite="$(block_link "$head_sha" "$kp" "$kl")"
+              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at $cite and suggests removing this one."
             else
               note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first added copy and suggests removing the rest."
             fi
           elif [ "$removable" = "1" ]; then
             fp="${first%:*}"
             fl="${first##*:}"
-            q="$(quote_of "$fp" "$fl")"
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
+            cite="$(block_link "$head_sha" "$fp" "$fl")"
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at $cite and suggests removing this one."
           else
             note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
           fi
-          [ "$removable" = "1" ] && [ -n "$q" ] && note="$note"$'\n\n'"$q"
           comment="$note"
           [ "$removable" = "1" ] && comment="$comment"$'\n\n```suggestion\n```'
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
@@ -377,7 +389,7 @@ runs:
             printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
             printf '%s\n' "$err" | sed 's/^/dejadoc: /'
             if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
-              out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
+              out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line" "$close_line")  $item"$'\n'
             else
               failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
             fi
