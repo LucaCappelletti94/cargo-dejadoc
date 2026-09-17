@@ -375,11 +375,20 @@ runs:
           fi
           keepat="$first"
           [ "$new" = "1" ] && keepat="${seen_first[$g]:-$first}"
-          close_line=''
-          [ "$removable" = "1" ] && close_line="$(close_line_of "$p" "$line")"
-          if [ "$removable" = "1" ] && [ -z "$close_line" ]; then
+          # Comments only land on copies the author should act on, a kept
+          # copy stays silent.
+          [ "$removable" = "1" ] || continue
+          close_line="$(close_line_of "$p" "$line")"
+          if [ -z "$close_line" ]; then
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             continue
+          fi
+          # An empty line right after the block becomes a stray once the
+          # copy is gone, it joins the deleted range.
+          delete_end="$close_line"
+          nx="$(awk -v l="$close_line" 'NR == l + 1 { print "x" $0; exit }' "$p" 2>/dev/null)"
+          if [ -n "$nx" ] && [ -z "$(printf '%s' "${nx#x}" | tr -d '[:space:]')" ]; then
+            delete_end=$((close_line + 1))
           fi
           url=''
           pv_s=''
@@ -393,41 +402,33 @@ runs:
               pv_s="$bl"
               pv_e="$ce"
               note="This doctest was added by this pull request and duplicates a copy that already exists at $(loc_md "$(loc_text "$bp" "$bl" "$ce")" "$url"), [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
-            elif [ "$removable" = "1" ]; then
+            else
               kp="${keepat%:*}"
               kl="${keepat##*:}"
               ce="$(block_end "$kp" "$kl")"
               url="$(blob_url "$head_sha" "$kp" "$kl" "$ce")"
               pv_s="$kl"
               pv_e="$ce"
-              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at $(loc_md "$(loc_text "$kp" "$kl" "$ce")" "$url") and suggests removing this one."
-            else
-              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first added copy and suggests removing the rest."
+              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first added copy at $(loc_md "$(loc_text "$kp" "$kl" "$ce")" "$url") and removing this one."
             fi
-          elif [ "$removable" = "1" ]; then
+          else
             fp="${first%:*}"
             fl="${first##*:}"
             ce="$(block_end "$fp" "$fl")"
             url="$(blob_url "$head_sha" "$fp" "$fl" "$ce")"
             pv_s="$fl"
             pv_e="$ce"
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at $(loc_md "$(loc_text "$fp" "$fl" "$ce")" "$url") and suggests removing this one."
-          else
-            note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first copy at $(loc_md "$(loc_text "$fp" "$fl" "$ce")" "$url") and removing this one."
           fi
           comment="$note"
           [ -n "$url" ] && comment="$comment"$'\n\n'"$(preview_of "$url" "$pv_s" "$pv_e")"
-          [ "$removable" = "1" ] && comment="$comment"$'\n\n```suggestion\n```'
+          comment="$comment"$'\n\n```suggestion\n```'
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
           if [ "$dry" = "true" ]; then
             rendered+="$comment"$'\n\n'
             continue
           fi
-          if [ "$removable" = "1" ]; then
-            fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
-          else
-            fields=(-F "line=$line" -f side=RIGHT)
-          fi
+          fields=(-F "start_line=$line" -F "line=$delete_end" -f start_side=RIGHT -f side=RIGHT)
           if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
             -f "commit_id=$head_sha" -f "path=$p" "${fields[@]}" \
             -f "body=$comment" 2>&1)"; then
