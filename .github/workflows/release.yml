@@ -15,18 +15,26 @@ jobs:
   verify-version:
     name: Verify tag matches version
     runs-on: ubuntu-latest
+    outputs:
+      crate-release: ${{ steps.check.outputs.crate-release }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
 
       - name: Check tag against Cargo.toml version
+        id: check
         run: |
           tag="${GITHUB_REF_NAME#v}"
           manifest="$(grep -m1 '^version = ' Cargo.toml | sed -E 's/version = "(.*)"/\1/')"
           echo "tag version: $tag"
           echo "manifest version: $manifest"
-          if [ "$tag" != "$manifest" ]; then
+          if [ "$tag" = "$manifest" ]; then
+            echo "crate-release=true" >> "$GITHUB_OUTPUT"
+          elif [ "${tag%%.*}" != "${manifest%%.*}" ]; then
+            echo "tag $tag is not a crate release tag for version $manifest, skipping" >> "$GITHUB_STEP_SUMMARY"
+            echo "crate-release=false" >> "$GITHUB_OUTPUT"
+          else
             echo "::error::tag $tag does not match Cargo.toml version $manifest"
             exit 1
           fi
@@ -34,6 +42,7 @@ jobs:
   ci:
     name: CI
     needs: verify-version
+    if: needs.verify-version.outputs.crate-release == 'true'
     uses: ./.github/workflows/ci.yml
     secrets: inherit
 
