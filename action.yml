@@ -149,6 +149,7 @@ runs:
           echo "dejadoc: cannot check out the base commit, the full report is reviewed"
           exit 0
         fi
+        printf '%s\n' "$base_sha" > "$RUNNER_TEMP/dejadoc-base-sha"
         dir="$RUNNER_TEMP/dejadoc-base"
         [ -n "$CWD" ] && dir="$dir/$CWD"
         set --
@@ -184,7 +185,7 @@ runs:
         inline_file="$RUNNER_TEMP/dejadoc-inline.tsv"
         onlynew=0
         [ -s "$base_report" ] && onlynew=1
-
+        base_sha="$(cat "$RUNNER_TEMP/dejadoc-base-sha" 2>/dev/null || echo '')"
         # The head SHA and changed file list, empty when there is no pull request.
         head_sha=''
         changed_files=''
@@ -280,11 +281,21 @@ runs:
         close_line_of() {
           awk -v l="$2" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$1" 2>/dev/null
         }
+        # A markdown quote of the doctest starting at line $2 of file $1.
+        quote_of() {
+          local cl body
+          [ -f "$1" ] || return 0
+          cl="$(close_line_of "$1" "$2")"
+          [ -n "$cl" ] || cl="$2"
+          body="$(sed -n "${2},${cl}p" "$1" 2>/dev/null | head -n 12)"
+          [ -n "$body" ] || return 0
+          printf '%s\n' "$body" | sed 's/^/> /'
+        }
         blob_link() {
-          if [ -n "$head_sha" ]; then
-            printf '[%s:%s](%s/%s/blob/%s/%s#L%s)' "$1" "$2" "$GITHUB_SERVER_URL" "$repo" "$head_sha" "$1" "$2"
+          if [ -n "$1" ]; then
+            printf '[`%s:%s`](%s/%s/blob/%s/%s#L%s)' "$2" "$3" "$GITHUB_SERVER_URL" "$repo" "$1" "$2" "$3"
           else
-            printf '%s:%s' "$1" "$2"
+            printf '`%s:%s`' "$2" "$3"
           fi
         }
         readonly=0
@@ -311,22 +322,39 @@ runs:
           close_line=''
           [ "$removable" = "1" ] && close_line="$(close_line_of "$p" "$line")"
           if [ "$removable" = "1" ] && [ -z "$close_line" ]; then
-            out_of_range="$out_of_range- group $g  $(blob_link "$p" "$line")  $item"$'\n'
+            out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             continue
           fi
+          q=''
           if [ "$onlynew" = "1" ]; then
             if [ -n "$basekeep" ]; then
-              note="This doctest was added by this pull request and duplicates a copy that already exists at \`$basekeep\`, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+              bp="${basekeep%:*}"
+              bl="${basekeep##*:}"
+              q="$(quote_of "$RUNNER_TEMP/dejadoc-base/$bp" "$bl")"
+              cite="$(blob_link "$base_sha" "$bp" "$bl")"
+              if [ -n "$q" ]; then
+                note="This doctest was added by this pull request and duplicates a copy that already exists at $cite."$'\n\n'"$q"$'\n\n'"[dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+              else
+                note="This doctest was added by this pull request and duplicates a copy that already exists at $cite, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+              fi
+              q=''
             elif [ "$removable" = "1" ]; then
+              kp="${keepat%:*}"
+              kl="${keepat##*:}"
+              q="$(quote_of "$kp" "$kl")"
               note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at \`$keepat\` and suggests removing this one."
             else
               note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first added copy and suggests removing the rest."
             fi
           elif [ "$removable" = "1" ]; then
+            fp="${first%:*}"
+            fl="${first##*:}"
+            q="$(quote_of "$fp" "$fl")"
             note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
           else
             note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
           fi
+          [ "$removable" = "1" ] && [ -n "$q" ] && note="$note"$'\n\n'"$q"
           comment="$note"
           [ "$removable" = "1" ] && comment="$comment"$'\n\n```suggestion\n```'
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
@@ -349,7 +377,7 @@ runs:
             printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
             printf '%s\n' "$err" | sed 's/^/dejadoc: /'
             if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
-              out_of_range="$out_of_range- group $g  $(blob_link "$p" "$line")  $item"$'\n'
+              out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             else
               failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
             fi
