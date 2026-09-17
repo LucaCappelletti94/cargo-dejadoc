@@ -24,18 +24,21 @@ pub(crate) struct Canonical {
 pub(crate) fn canonicalize(code: &str) -> Canonical {
     let unhidden: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
     let stripped = without_crate_attrs(&unhidden);
-    let body = flatten_include_depth(&stripped);
-    if let Ok(mut file) = syn::parse_str::<syn::File>(&body) {
+    let body = stripped.as_ref();
+    if let Ok(mut file) = syn::parse_str::<syn::File>(body) {
         crate::alpha::normalize_file(&mut file);
-        return from_stream(file.to_token_stream());
+        let stream = flatten_include_depth(file.to_token_stream());
+        return from_stream(stream);
     }
     if let Ok(mut block) = syn::parse_str::<syn::Block>(&format!("{{\n{body}\n}}")) {
         crate::alpha::normalize_block(&mut block);
-        return from_stream(block.to_token_stream());
+        let stream = flatten_include_depth(block.to_token_stream());
+        return from_stream(stream);
     }
-    if let Ok(mut expr) = syn::parse_str::<syn::Expr>(&body) {
+    if let Ok(mut expr) = syn::parse_str::<syn::Expr>(body) {
         crate::alpha::normalize_expr(&mut expr);
-        return from_stream(expr.to_token_stream());
+        let stream = flatten_include_depth(expr.to_token_stream());
+        return from_stream(stream);
     }
     // Not Rust: keep the visible text, collapsed to single spaces.
     let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
@@ -87,48 +90,73 @@ fn map_line(line: &str) -> String {
     }
 }
 
-/// Strips the leading `../` components of path string literals. The depth
-/// is an artifact of the file spelling the include, not of the included
-/// text, and rustdoc resolves either spelling from the same crate root.
-fn flatten_include_depth(body: &str) -> Cow<'_, str> {
-    if !body.contains("../") {
-        return Cow::Borrowed(body);
-    }
-    let b = body.as_bytes();
-    let mut out = String::with_capacity(body.len());
-    let mut i = 0;
-    while i < b.len() {
-        if b[i] != b'"' {
-            let start = i;
-            while i < b.len() && b[i] != b'"' {
-                i += 1;
-            }
-            out.push_str(&body[start..i]);
-            continue;
-        }
-        let mut j = i + 1;
-        while j < b.len() && b[j] != b'"' {
-            j += usize::from(b[j] == b'\\') + 1;
-        }
-        if j >= b.len() {
-            out.push('"');
-            out.push_str(strip_dotdot(&body[i + 1..]));
-            return Cow::Owned(out);
-        }
-        out.push('"');
-        out.push_str(strip_dotdot(&body[i + 1..j]));
-        out.push('"');
-        i = j + 1;
-    }
-    Cow::Owned(out)
+/// Strips the leading `../` components of path literals passed to
+/// `include`-style macros (`include!`, `include_str!`, egui's
+/// `include_image!`). The depth is an artifact of the file spelling the
+/// include: rustdoc compiles a doctest from the package root, so either
+/// spelling resolves to the same file, while a `println!` or `File::open`
+/// path is runtime content and every component of it matters.
+fn flatten_include_depth(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
+    flatten_stream(stream, false)
 }
 
-fn strip_dotdot(inner: &str) -> &str {
-    let mut s = inner;
-    while let Some(rest) = s.strip_prefix("../") {
-        s = rest;
+/// Walks one token list. `strip` is set by an ident containing `include`
+/// and stays set across the `!`, so the macro delimiter it introduces is
+/// entered in include mode, where every string literal loses its leading
+/// `../` components. Any group or literal ends the run.
+fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2::TokenStream {
+    let mut out = proc_macro2::TokenStream::new();
+    let mut strip = strip;
+    for tree in stream {
+        match tree {
+            proc_macro2::TokenTree::Ident(id) => {
+                strip = id.to_string().contains("include");
+                out.extend(core::iter::once(proc_macro2::TokenTree::Ident(id)));
+            }
+            proc_macro2::TokenTree::Punct(p) => {
+                out.extend(core::iter::once(proc_macro2::TokenTree::Punct(p)));
+            }
+            proc_macro2::TokenTree::Group(group) => {
+                let inner = flatten_stream(group.stream(), strip);
+                strip = false;
+                let mut out_group = proc_macro2::Group::new(group.delimiter(), inner);
+                out_group.set_span(group.span());
+                out.extend(core::iter::once(proc_macro2::TokenTree::Group(out_group)));
+            }
+            proc_macro2::TokenTree::Literal(lit) => {
+                let kept = if strip {
+                    flat_literal(&lit).map_or(proc_macro2::TokenTree::Literal(lit), |f| {
+                        proc_macro2::TokenTree::from(f)
+                    })
+                } else {
+                    proc_macro2::TokenTree::Literal(lit)
+                };
+                strip = false;
+                out.extend(core::iter::once(kept));
+            }
+        }
     }
-    s
+    out
+}
+
+/// The literal with leading `../` components removed, `None` unless it is
+/// a string literal (plain, raw, or byte) whose text starts with depth.
+/// Prefix and hash runs are preserved, escape sequences are untouched.
+fn flat_literal(lit: &proc_macro2::Literal) -> Option<proc_macro2::Literal> {
+    let s = lit.to_string();
+    let open = s.find('"')?;
+    let prefix = &s[..open];
+    let hashes = prefix.strip_prefix('r').unwrap_or(prefix);
+    let close = s.len().checked_sub(1 + hashes.len())?;
+    let inner = s.get(open + 1..close)?;
+    if !inner.starts_with("../") {
+        return None;
+    }
+    let mut stripped = inner;
+    while let Some(rest) = stripped.strip_prefix("../") {
+        stripped = rest;
+    }
+    format!("{prefix}\"{stripped}\"{hashes}").parse().ok()
 }
 
 fn from_stream(stream: proc_macro2::TokenStream) -> Canonical {
@@ -183,6 +211,41 @@ mod tests {
     }
 
     #[test]
+    fn a_printed_relative_path_is_its_own_content() {
+        let a = r#"fn main() { println!("../status"); }"#;
+        let b = r#"fn main() { println!("status"); }"#;
+        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn a_runtime_relative_path_is_its_own_content() {
+        let a = r#"let f = File::open("../data.csv").unwrap();"#;
+        let b = r#"let f = File::open("data.csv").unwrap();"#;
+        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn include_str_depth_is_not_a_difference() {
+        let a = r#"let readme = include_str!("../README.md");"#;
+        let b = r#"let readme = include_str!("README.md");"#;
+        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn include_bytes_depth_is_not_a_difference() {
+        let a = r#"let icon = include_bytes!("../../assets/icon.png");"#;
+        let b = r#"let icon = include_bytes!("assets/icon.png");"#;
+        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn raw_include_paths_keep_their_hashes() {
+        let a = r##"let spec = include_str!(r#"../SPEC.md"#);"##;
+        let b = r##"let spec = include_str!(r#"SPEC.md"#);"##;
+        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
     fn escaped_quotes_do_not_end_a_literal() {
         let a = "# include!(\"../a\\\"b.rs\");\nfn main() {}";
         let b = "# include!(\"a\\\"b.rs\");\nfn main() {}";
@@ -190,30 +253,11 @@ mod tests {
     }
 
     #[test]
-    fn an_unclosed_literal_is_cleaned_like_a_closed_one() {
-        let a = "# include!(\"../x.rs\",\nfn main() {}\n\"";
-        let b = "# include!(\"x.rs\",\nfn main() {}\n\"";
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
-    }
-
-    #[test]
-    fn a_trailing_backslash_advances_one_step() {
-        let a = "# include!(\"../a\\\\\");\nfn main() {}\n\"";
-        let b = "# include!(\"a\\\\\");\nfn main() {}\n\"";
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
-    }
-
-    #[test]
-    fn a_single_backslash_skips_only_the_escaped_quote() {
-        let a = "# include!(\"../a\\\"b\") // c\nfn main() {}";
-        let b = "# include!(\"a\\\"b\") // c\nfn main() {}";
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
-    }
-
-    #[test]
-    fn a_closed_literal_after_an_unclosed_one_keeps_its_text() {
-        let a = "# include!(\"../x\nfn main() { let q = \"../y.rs\"; }";
-        assert!(canonicalize(a).text.contains("../y"));
+    fn unparsed_bodies_keep_their_text_verbatim() {
+        let a = canonicalize("include!(\"../x.rs\",");
+        let b = canonicalize("include!(\"x.rs\",");
+        assert!(a.unparsed && b.unparsed);
+        assert_ne!(a.text, b.text);
     }
 
     #[test]
