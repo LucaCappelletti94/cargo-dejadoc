@@ -33,6 +33,9 @@ jobs:
               [ -f "$body" ] || { echo "the review body is missing"; exit 1; }
               grep -q 'duplicated groups' "$body" || { echo "the summary line is missing"; exit 1; }
               grep -q 'tests/fixtures/dupws/alpha/src/util.rs' "$body" || { echo "the fixture sites are missing"; exit 1; }
+              grep -q 'times in the workspace' "$body" || { echo "the copy count wording is missing"; exit 1; }
+              grep -q 'keeps the first copy at' "$body" || { echo "the kept copy location is missing"; exit 1; }
+              grep -q 'Support dejadoc](https://github.com/sponsors/LucaCappelletti94)' "$body" || { echo "the support link is missing"; exit 1; }
               ;;
             posted)
               n="$PR_NUMBER"
