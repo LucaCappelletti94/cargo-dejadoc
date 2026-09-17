@@ -4,6 +4,7 @@
 //! let file_level = true;
 //! ```
 
+// dejadoc demo touch, review comments render on the sites in this diff.
 pub mod util;
 
 /// Alpha function.
