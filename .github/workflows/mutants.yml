@@ -29,6 +29,9 @@ jobs:
     # column four at the same character for every +- and %/ variant.
     # block_star_strip: the star-predicate and blank-line gate mutants never change
     # a scanned doctest; their killable twins are pinned by tests with the same name.
+    # flatten_include_depth: the escape flag and the unclosed-literal gate
+    # are proved equivalent, the quote ends the literal either way and the
+    # fall-through slice equals the gate's slice at j == len.
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
@@ -62,3 +65,5 @@ jobs:
           -E 'replace > with >= in block_star_strip'
           -E 'delete ! in block_star_strip'
           -E 'replace == with != in block_star_strip'
+          -E 'replace == with != in flatten_include_depth'
+          -E 'replace >= with < in flatten_include_depth'
