@@ -100,20 +100,23 @@ fn flatten_include_depth(stream: proc_macro2::TokenStream) -> proc_macro2::Token
     flatten_stream(stream, false)
 }
 
-/// Walks one token list. `strip` is set by an ident containing `include`
-/// and stays set across the `!`, so the macro delimiter it introduces is
-/// entered in include mode, where every string literal loses its leading
-/// `../` components. Any group or literal ends the run.
+/// Walks one token list. `strip` is set by a macro name (`include` or
+/// `include_…`) and kept only by the following `!`, so strip mode is
+/// entered exactly by macro call syntax, never by a method or a binding
+/// named `includes`. In include mode the delimiter's string literals
+/// lose their leading `../` components. Any group or literal ends it.
 fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2::TokenStream {
     let mut out = proc_macro2::TokenStream::new();
     let mut strip = strip;
     for tree in stream {
         match tree {
             proc_macro2::TokenTree::Ident(id) => {
-                strip = id.to_string().contains("include");
+                let name = id.to_string();
+                strip = name == "include" || name.starts_with("include_");
                 out.extend(core::iter::once(proc_macro2::TokenTree::Ident(id)));
             }
             proc_macro2::TokenTree::Punct(p) => {
+                strip = strip && p.as_char() == '!';
                 out.extend(core::iter::once(proc_macro2::TokenTree::Punct(p)));
             }
             proc_macro2::TokenTree::Group(group) => {
@@ -243,6 +246,27 @@ mod tests {
         let a = r##"let spec = include_str!(r#"../SPEC.md"#);"##;
         let b = r##"let spec = include_str!(r#"SPEC.md"#);"##;
         assert_eq!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn a_variable_named_includes_holds_content() {
+        let a = r#"let includes = "../parts.cfg";"#;
+        let b = r#"let includes = "parts.cfg";"#;
+        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn a_variable_named_include_holds_content() {
+        let a = r#"let include = "../parts.cfg";"#;
+        let b = r#"let include = "parts.cfg";"#;
+        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn a_method_named_includes_holds_content() {
+        let a = r#"let hit = config.includes("../parts.cfg");"#;
+        let b = r#"let hit = config.includes("parts.cfg");"#;
+        assert_ne!(canonicalize(a).text, canonicalize(b).text);
     }
 
     #[test]
