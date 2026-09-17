@@ -490,7 +490,9 @@ mod tests {
         cargo_package(
             dir.path(),
             "ws",
-            "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n",
+            // [workspace] stops cargo adopting an ancestor manifest, so
+            // the fixture resolves the same wherever the tempdir lives.
+            "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n[workspace]\n",
         );
         let bin = dir.path().join("src").join("bin");
         std::fs::create_dir_all(&bin).unwrap();
@@ -508,7 +510,7 @@ mod tests {
         cargo_package(
             dir.path(),
             "ws",
-            "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n",
+            "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n[workspace]\n",
         );
         let bin = dir.path().join("src").join("bin");
         std::fs::create_dir_all(&bin).unwrap();
