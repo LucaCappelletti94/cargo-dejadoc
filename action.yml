@@ -1,7 +1,7 @@
 name: dejadoc
 description: >-
-  Install dejadoc, fail the job when doctests are duplicated
-  across the workspace, or post the findings as a pull request review
+  Dejadoc scans and canonicalizes every doctest your workspace's rustdoc
+  would run, reporting any duplicates. Use it in your GitHub CI!
 
 branding:
   icon: 'copy'
