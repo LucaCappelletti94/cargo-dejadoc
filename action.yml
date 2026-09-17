@@ -39,6 +39,10 @@ inputs:
     description: Render the review instead of posting it
     required: false
     default: 'false'
+  only-new:
+    description: In pull request mode report only duplicates this pull request introduces
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -121,6 +125,43 @@ runs:
             "$@"
         fi
 
+    - name: Scan the base commit
+      if: ${{ inputs.pr-number != '' && inputs.only-new == 'true' }}
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+        PR_NUMBER: ${{ inputs.pr-number }}
+        CWD: ${{ inputs.cwd }}
+        ALL_TARGETS: ${{ inputs.all-targets }}
+        PACKAGE: ${{ inputs.package }}
+        THRESHOLD: ${{ inputs.threshold }}
+        MIN_TOKENS: ${{ inputs.min-tokens }}
+      run: |
+        # The base report lets the review ignore duplicates that already exist on the
+        # base commit. Any failure degrades to reviewing the full report.
+        base_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.base.sha' 2>/dev/null)" || base_sha=''
+        if [ -z "$base_sha" ]; then
+          echo "dejadoc: cannot read the base commit, the full report is reviewed"
+          exit 0
+        fi
+        if ! git -C "$GITHUB_WORKSPACE" fetch -q --depth 1 origin "$base_sha" \
+          || ! git -C "$GITHUB_WORKSPACE" worktree add -q --detach "$RUNNER_TEMP/dejadoc-base" "$base_sha"; then
+          echo "dejadoc: cannot check out the base commit, the full report is reviewed"
+          exit 0
+        fi
+        dir="$RUNNER_TEMP/dejadoc-base"
+        [ -n "$CWD" ] && dir="$dir/$CWD"
+        set --
+        [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
+        [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
+        if ! (cd "$dir" && cargo dejadoc \
+          --threshold "$THRESHOLD" \
+          --min-tokens "$MIN_TOKENS" \
+          --no-fail --json "$@") > "$RUNNER_TEMP/dejadoc-base-report.json"; then
+          rm -f "$RUNNER_TEMP/dejadoc-base-report.json"
+          echo "dejadoc: the base scan failed, the full report is reviewed"
+        fi
+
     - name: Post the findings as a pull request review
       if: ${{ steps.scan.outputs.found == 'true' && (inputs.pr-number != '' || inputs.dry-run == 'true') }}
       shell: bash
@@ -137,9 +178,12 @@ runs:
         cwd="$CWD"
         repo="$GITHUB_REPOSITORY"
         report="$RUNNER_TEMP/dejadoc-report.json"
+        base_report="$RUNNER_TEMP/dejadoc-base-report.json"
         body="$RUNNER_TEMP/dejadoc-review.md"
         status="$RUNNER_TEMP/dejadoc-post-status"
         inline_file="$RUNNER_TEMP/dejadoc-inline.tsv"
+        onlynew=0
+        [ -s "$base_report" ] && onlynew=1
 
         # The head SHA and changed file list, empty when there is no pull request.
         head_sha=''
@@ -167,23 +211,49 @@ runs:
           changed_json='[]'
         fi
 
-        # Inline sites. A site is inline when its file is in the pull request diff.
-        # The copy number is the site position in the group, the first copy is kept.
-        jq -r --arg cwd "$cwd" --argjson changed "$changed_json" '
+        # Base site identity, a site exists on the base when the same hash, item and
+        # path were already there, and the first base copy is the kept original.
+        if [ "$onlynew" = "1" ]; then
+          base_json="$(jq --arg cwd "$cwd" '
+            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+            { keys: [.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(sp)"],
+              keep: (reduce .groups[] as $gr ({};
+                .[$gr.hash] = (($gr.sites[0] | sp) + ":" + ($gr.sites[0].line | tostring)))) }' "$base_report")"
+        else
+          base_json='{"keys": [], "keep": {}}'
+        fi
+
+        # Sites to comment on. In only-new mode a site must be introduced by this
+        # pull request, a new hash, item or path relative to the base report. A
+        # site is inline when its file is in the pull request diff.
+        onlynew_mode=false
+        [ "$onlynew" = "1" ] && onlynew_mode=true
+        jq -r --arg cwd "$cwd" --argjson changed "$changed_json" --argjson base "$base_json" \
+          --argjson onlynew_mode "$onlynew_mode" '
           def spath: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
           . as $r
           | [ range(0; ($r.groups | length)) as $gi
               | $r.groups[$gi]
               | ($gi + 1) as $g
               | (.sites | length) as $n
+              | .hash as $h
               | ((.sites[0] | spath) + ":" + (.sites[0].line | tostring)) as $first
-              | .sites | to_entries[]
-              | { g: $g, c: (.key + 1), n: $n, first: $first, s: .value, p: (.value | spath) }
+              | ($base.keep[$h] // "") as $basekeep
+              | [ .sites | to_entries[]
+                  | (([$h, .value.item, (.value | spath)] | join("\t")) as $k
+                     | { g: $g, c: (.key + 1), n: $n, first: $first, s: .value,
+                         p: (.value | spath),
+                         isNew: (($base.keys | any(. == $k)) | not),
+                         basekeep: $basekeep }) ] as $rows
+              | ($rows | map(select(.isNew)) | length) as $knew
+              | $rows[] | . + { knew: $knew }
           ]
           | .[]
           | . as $row
           | select(($changed | index($row.p)) != null)
-          | [$row.p, ($row.s.line | tostring), $row.s.item, ($row.g | tostring), ($row.c | tostring), ($row.n | tostring), $row.first]
+          | select(if $onlynew_mode then $row.isNew else true end)
+          | [$row.p, (.s.line | tostring), .s.item, (.g | tostring), (.c | tostring),
+             (.n | tostring), .first, (if .isNew then "1" else "0" end), .basekeep, (.knew | tostring)]
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
@@ -210,46 +280,82 @@ runs:
         close_line_of() {
           awk -v l="$2" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$1" 2>/dev/null
         }
-        comment_body() {
-          local g="$1" c="$2" n="$3" first="$4" note body
-          if [ "$c" = "1" ]; then
-            note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
-            body="$note"
+        blob_link() {
+          if [ -n "$head_sha" ]; then
+            printf '[%s:%s](%s/%s/blob/%s/%s#L%s)' "$1" "$2" "$GITHUB_SERVER_URL" "$repo" "$head_sha" "$1" "$2"
           else
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
-            body="$note"$'\n\n```suggestion\n```'
+            printf '%s:%s' "$1" "$2"
           fi
-          printf '%s\n\n%s %s' "$body" "$(report_link "$g")" "$support_link"
         }
         readonly=0
         failed_sites=''
-        if [ "$dry" != "true" ] && [ -s "$inline_file" ]; then
-          while IFS=$'\t' read -r p line item g c n first; do
-            [ -n "$p" ] || continue
-            post_body="$(comment_body "$g" "$c" "$n" "$first")"
-            if [ "$c" = "1" ]; then
-              fields=(-F "line=$line" -f side=RIGHT)
+        out_of_range=''
+        rendered=''
+        # One pass builds every comment, live posts them, the dry run renders them.
+        declare -A seen_first=()
+        while IFS=$'\t' read -r p line item g c n first new basekeep knew; do
+          [ -n "$p" ] || continue
+          site="$p:$line"
+          if [ "$new" = "1" ] && [ -z "${seen_first[$g]:-}" ]; then
+            seen_first[$g]="$site"
+          fi
+          if [ "$onlynew" = "1" ]; then
+            if [ -n "$basekeep" ] || [ "$site" != "${seen_first[$g]}" ]; then removable=1; else removable=0; fi
+          elif [ "$c" != "1" ]; then
+            removable=1
+          else
+            removable=0
+          fi
+          keepat="$first"
+          [ "$new" = "1" ] && keepat="${seen_first[$g]:-$first}"
+          close_line=''
+          [ "$removable" = "1" ] && close_line="$(close_line_of "$p" "$line")"
+          if [ "$removable" = "1" ] && [ -z "$close_line" ]; then
+            out_of_range="$out_of_range- group $g  $(blob_link "$p" "$line")  $item"$'\n'
+            continue
+          fi
+          if [ "$onlynew" = "1" ]; then
+            if [ -n "$basekeep" ]; then
+              note="This doctest was added by this pull request and duplicates a copy that already exists at \`$basekeep\`, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+            elif [ "$removable" = "1" ]; then
+              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at \`$keepat\` and suggests removing this one."
             else
-              close_line="$(close_line_of "$p" "$line")"
-              if [ -z "$close_line" ]; then
-                failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
-                continue
-              fi
-              fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
+              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first added copy and suggests removing the rest."
             fi
-            if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
-              -f "commit_id=$head_sha" -f "path=$p" "${fields[@]}" \
-              -f "body=$post_body" 2>&1)"; then
-              if printf '%s' "$err" | grep -qE 'HTTP 403|"status": "403"'; then
-                readonly=1
-                break
-              fi
+          elif [ "$removable" = "1" ]; then
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
+          else
+            note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
+          fi
+          comment="$note"
+          [ "$removable" = "1" ] && comment="$comment"$'\n\n```suggestion\n```'
+          comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
+          if [ "$dry" = "true" ]; then
+            rendered+="$comment"$'\n\n'
+            continue
+          fi
+          if [ "$removable" = "1" ]; then
+            fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
+          else
+            fields=(-F "line=$line" -f side=RIGHT)
+          fi
+          if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
+            -f "commit_id=$head_sha" -f "path=$p" "${fields[@]}" \
+            -f "body=$comment" 2>&1)"; then
+            if printf '%s' "$err" | grep -qE 'HTTP 403|"status": "403"'; then
+              readonly=1
+              break
+            fi
+            printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
+            printf '%s\n' "$err" | sed 's/^/dejadoc: /'
+            if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
+              out_of_range="$out_of_range- group $g  $(blob_link "$p" "$line")  $item"$'\n'
+            else
               failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
             fi
-          done < "$inline_file"
-        fi
+          fi
+        done < "$inline_file"
 
-        # The review body, dry run only. The live review is posted without a body.
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then
           stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report")"
@@ -264,15 +370,6 @@ runs:
                     + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
                   ) | join("\n")) + "\n\n"
             ) | join("")' "$report")"
-          would_block=''
-          while IFS=$'\t' read -r p line item g c n first; do
-            [ -n "$p" ] || continue
-            if [ "$c" != "1" ] && [ -z "$(close_line_of "$p" "$line")" ]; then
-              would_block+="### $p:$line  $item"$'\n\n'"dejadoc cannot locate the end of this doctest, the site would be listed in the review body instead."$'\n\n'
-              continue
-            fi
-            would_block+="### $p:$line  $item"$'\n\n'"$(comment_body "$g" "$c" "$n" "$first")"$'\n\n'
-          done < "$inline_file"
           {
             echo 'Duplicated doctests found by dejadoc'
             echo 'dejadoc dry run, the review is not posted'
@@ -282,14 +379,17 @@ runs:
             printf '%s\n\n' "$groups_block"
             echo 'Inline comments dejadoc would post'
             echo
-            printf '%s' "$would_block"
+            printf '%s' "$rendered"
+            if [ -n "$out_of_range" ]; then
+              echo
+              echo 'Sites outside the lines GitHub shows in the diff, the review body would list them'
+              echo
+              printf '%s' "$out_of_range"
+            fi
             echo
             echo
             echo "Run $run_url"
           } > "$body"
-        fi
-
-        if [ "$dry" = "true" ]; then
           { echo; cat "$body"; } >> "$GITHUB_STEP_SUMMARY"
           echo "dejadoc dry run, the review is not posted"
           cat "$body"
@@ -298,12 +398,13 @@ runs:
         fi
 
         if [ ! -s "$inline_file" ]; then
-          echo "dejadoc: no duplicated doctest is in the pull request diff, the review is not posted"
-          if [ -n "$failed_sites" ]; then
-            echo "dejadoc: the inline comments failed for the following sites"
-            printf '%s' "$failed_sites"
+          if [ "$onlynew" = "1" ]; then
+            echo "dejadoc: no duplicate was introduced by this pull request, the review is not posted"
+            echo "skipped-existing" > "$status"
+          else
+            echo "dejadoc: no duplicated doctest is in the pull request diff, the review is not posted"
+            echo "skipped-nodiff" > "$status"
           fi
-          echo "skipped-nodiff" > "$status"
           exit 0
         fi
 
@@ -316,11 +417,19 @@ runs:
           echo "skipped-readonly" > "$status"
           exit 0
         fi
-        # A review with no comment of its own needs a body, so the sites that
-        # could not be commented inline go there.
+        # A review with no comment of its own needs a body. Sites GitHub could not
+        # anchor inline are listed with permalinks to the head commit.
         review=(-f event=REQUEST_CHANGES)
+        review_body=''
+        if [ -n "$out_of_range" ]; then
+          review_body="$(printf 'These duplicated doctests are not on lines GitHub shows in this pull request diff, the inline comment cannot attach there. The links point at the copies on the head commit.\n\n%s' "$out_of_range")"
+        fi
         if [ -n "$failed_sites" ]; then
-          review+=(-f "body=$(printf 'Duplicated doctests dejadoc could not comment inline\n\n```\n%s```' "$failed_sites")")
+          failed_block="$(printf '\n\nDuplicated doctests dejadoc could not comment inline\n\n```\n%s```' "$failed_sites")"
+          review_body="$review_body$failed_block"
+        fi
+        if [ -n "$review_body" ]; then
+          review+=(-f "body=$review_body")
         fi
         if ! resp="$(gh api -X POST "repos/$repo/pulls/$pr/reviews" "${review[@]}" 2>&1)"; then
           if printf '%s' "$resp" | grep -qE 'HTTP 403|"status": "403"'; then
