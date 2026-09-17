@@ -32,3 +32,8 @@ pub fn alpha_allowed() {}
 /// @ nope nope
 /// ```
 pub fn alpha_unparsed() {}
+
+/// ```
+/// fn shared() { }
+/// ```
+pub fn alpha_added() {}
