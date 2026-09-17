@@ -66,6 +66,9 @@ jobs:
             skipped-readonly)
               echo "read-only token, the review was skipped as expected for a fork pull request"
               ;;
+            skipped-existing)
+              echo "no duplicate is introduced by this pull request, the review was skipped as expected"
+              ;;
             *)
               echo "unexpected post status: $status"
               exit 1
