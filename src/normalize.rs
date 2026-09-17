@@ -7,6 +7,7 @@ use alloc::string::ToString;
 use alloc::vec::Vec;
 
 use quote::ToTokens;
+use syn::ext::IdentExt;
 /// Canonical form of a doctest body.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Canonical {
@@ -111,7 +112,7 @@ fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2:
     for tree in stream {
         match tree {
             proc_macro2::TokenTree::Ident(id) => {
-                let name = id.to_string();
+                let name = id.unraw().to_string();
                 strip = name == "include" || name.starts_with("include_");
                 out.extend(core::iter::once(proc_macro2::TokenTree::Ident(id)));
             }
@@ -246,6 +247,15 @@ mod tests {
         let a = r##"let spec = include_str!(r#"../SPEC.md"#);"##;
         let b = r##"let spec = include_str!(r#"SPEC.md"#);"##;
         assert_eq!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn a_raw_spelled_include_is_still_an_include() {
+        let near = r#"# r#include!("../doctest_setup.rs");
+# fn main() {}"#;
+        let far = r#"# r#include!("../../doctest_setup.rs");
+# fn main() {}"#;
+        assert_eq!(canonicalize(near).text, canonicalize(far).text);
     }
 
     #[test]
