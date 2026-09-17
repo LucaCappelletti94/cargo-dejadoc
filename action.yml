@@ -244,6 +244,8 @@ runs:
                 readonly=1
                 break
               fi
+              printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
+              printf '%s\n' "$err" | sed 's/^/dejadoc: /'
               failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
             fi
           done < "$inline_file"
