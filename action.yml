@@ -329,6 +329,24 @@ runs:
             printf '`%s:%s`' "$1" "$2"
           fi
         }
+        # The permalink wrapped in a markdown link when it exists.
+        loc_md() {
+          if [ -n "$2" ]; then
+            printf '[%s](%s)' "$1" "$2"
+          else
+            printf '%s' "$1"
+          fi
+        }
+        # The bare url GitHub previews as code, collapsed in a details block
+        # when the block spans more than ten lines.
+        preview_of() {
+          local n="${3:-$2}"
+          if [ $((n - $2 + 1)) -gt 10 ]; then
+            printf '<details>\n<summary>Show the duplicated doctest</summary>\n\n%s\n\n</details>' "$1"
+          else
+            printf '%s' "$1"
+          fi
+        }
         # Base tree file for a repo-relative path, empty when the tree is absent.
         base_file() {
           if [ -f "$RUNNER_TEMP/dejadoc-base/$1" ]; then
@@ -364,19 +382,25 @@ runs:
             continue
           fi
           url=''
+          pv_s=''
+          pv_e=''
           if [ "$onlynew" = "1" ]; then
             if [ -n "$basekeep" ]; then
               bp="${basekeep%:*}"
               bl="${basekeep##*:}"
               ce="$(block_end "$bp" "$bl" "$(base_file "$bp")")"
               url="$(blob_url "$base_sha" "$bp" "$bl" "$ce")"
-              note="This doctest was added by this pull request and duplicates a copy that already exists at $(loc_text "$bp" "$bl" "$ce"), [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+              pv_s="$bl"
+              pv_e="$ce"
+              note="This doctest was added by this pull request and duplicates a copy that already exists at $(loc_md "$(loc_text "$bp" "$bl" "$ce")" "$url"), [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
             elif [ "$removable" = "1" ]; then
               kp="${keepat%:*}"
               kl="${keepat##*:}"
               ce="$(block_end "$kp" "$kl")"
               url="$(blob_url "$head_sha" "$kp" "$kl" "$ce")"
-              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at $(loc_text "$kp" "$kl" "$ce") and suggests removing this one."
+              pv_s="$kl"
+              pv_e="$ce"
+              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first added copy at $(loc_md "$(loc_text "$kp" "$kl" "$ce")" "$url") and suggests removing this one."
             else
               note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first added copy and suggests removing the rest."
             fi
@@ -385,12 +409,14 @@ runs:
             fl="${first##*:}"
             ce="$(block_end "$fp" "$fl")"
             url="$(blob_url "$head_sha" "$fp" "$fl" "$ce")"
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at $(loc_text "$fp" "$fl" "$ce") and suggests removing this one."
+            pv_s="$fl"
+            pv_e="$ce"
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at $(loc_md "$(loc_text "$fp" "$fl" "$ce")" "$url") and suggests removing this one."
           else
             note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
           fi
           comment="$note"
-          [ -n "$url" ] && comment="$comment"$'\n\n'"$url"
+          [ -n "$url" ] && comment="$comment"$'\n\n'"$(preview_of "$url" "$pv_s" "$pv_e")"
           [ "$removable" = "1" ] && comment="$comment"$'\n\n```suggestion\n```'
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
           if [ "$dry" = "true" ]; then
