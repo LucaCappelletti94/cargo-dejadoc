@@ -155,7 +155,13 @@ runs:
           echo "failed" > "$status"
           exit 1
         fi
-        if [ -n "$pr" ] && [ -n "$head_sha" ] && [ -n "$changed_files" ]; then
+        if [ "$dry" = "true" ]; then
+          # A dry run renders the review as if every scanned site were in
+          # the diff, so the step summary shows each comment in full.
+          changed_json="$(jq -r --arg cwd "$cwd" '
+            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+            [.groups[].sites[] | sp] | unique' "$report")"
+        elif [ -n "$pr" ] && [ -n "$head_sha" ] && [ -n "$changed_files" ]; then
           changed_json="$(printf '%s\n' "$changed_files" | jq -R . | jq -s .)"
         else
           changed_json='[]'
@@ -170,13 +176,14 @@ runs:
               | $r.groups[$gi]
               | ($gi + 1) as $g
               | (.sites | length) as $n
+              | ((.sites[0] | spath) + ":" + (.sites[0].line | tostring)) as $first
               | .sites | to_entries[]
-              | { g: $g, c: (.key + 1), n: $n, s: .value, p: (.value | spath) }
+              | { g: $g, c: (.key + 1), n: $n, first: $first, s: .value, p: (.value | spath) }
           ]
           | .[]
           | . as $row
           | select(($changed | index($row.p)) != null)
-          | [$row.p, ($row.s.line | tostring), $row.s.item, ($row.g | tostring), ($row.c | tostring), ($row.n | tostring)]
+          | [$row.p, ($row.s.line | tostring), $row.s.item, ($row.g | tostring), ($row.c | tostring), ($row.n | tostring), $row.first]
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
@@ -197,14 +204,25 @@ runs:
             "$(uri "$GITHUB_SERVER_URL/$repo/pull/$pr")" \
             "$(uri "$sites")"
         }
+        support_link='[❤️ Support dejadoc](https://github.com/sponsors/LucaCappelletti94)'
+        comment_body() {
+          local g="$1" c="$2" n="$3" first="$4" note body
+          if [ "$c" = "1" ]; then
+            note="This doctest appears $n times in the workspace, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
+            body="$note"
+          else
+            note="This doctest appears $n times in the workspace, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
+            body="$note"$'\n\n```suggestion\n```'
+          fi
+          printf '%s\n\n%s %s' "$body" "$(report_link "$g")" "$support_link"
+        }
         readonly=0
         failed_sites=''
         if [ "$dry" != "true" ] && [ -s "$inline_file" ]; then
-          while IFS=$'\t' read -r p line item g c n; do
+          while IFS=$'\t' read -r p line item g c n first; do
             [ -n "$p" ] || continue
+            post_body="$(comment_body "$g" "$c" "$n" "$first")"
             if [ "$c" = "1" ]; then
-              note="Duplicated doctest, group $g, copy 1 of $n. This is the copy the [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) review keeps."
-              post_body="$(printf '%s\n\n%s' "$note" "$(report_link "$g")")"
               fields=(-F "line=$line" -f side=RIGHT)
             else
               close_line="$(awk -v l="$line" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$p" 2>/dev/null)" || close_line=''
@@ -212,8 +230,6 @@ runs:
                 failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
                 continue
               fi
-              note="Duplicated doctest, group $g, copy $c of $n. The [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) review suggests removing this copy."
-              post_body="$(printf '%s\n\n```suggestion\n```\n\n%s' "$note" "$(report_link "$g")")"
               fields=(-F "start_line=$line" -F "line=$close_line" -f start_side=RIGHT -f side=RIGHT)
             fi
             if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
@@ -243,13 +259,21 @@ runs:
                     + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
                   ) | join("\n")) + "\n\n"
             ) | join("")' "$report")"
+          would_block=''
+          while IFS=$'\t' read -r p line item g c n first; do
+            [ -n "$p" ] || continue
+            would_block+="### $p:$line  $item"$'\n\n'"$(comment_body "$g" "$c" "$n" "$first")"$'\n\n'
+          done < "$inline_file"
           {
             echo 'Duplicated doctests found by dejadoc'
             echo 'dejadoc dry run, the review is not posted'
             echo
             printf '%s\n' "$stats"
             echo
-            printf '%s' "$groups_block"
+            printf '%s\n\n' "$groups_block"
+            echo 'Inline comments dejadoc would post'
+            echo
+            printf '%s' "$would_block"
             echo
             echo
             echo "Run $run_url"
