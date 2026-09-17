@@ -205,13 +205,18 @@ runs:
             "$(uri "$sites")"
         }
         support_link='[❤️ Support dejadoc](https://github.com/sponsors/LucaCappelletti94)'
+        # The line closing the doctest opened at line $2 of file $1, empty
+        # when no closing fence is found, the live posting eligibility.
+        close_line_of() {
+          awk -v l="$2" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$1" 2>/dev/null
+        }
         comment_body() {
           local g="$1" c="$2" n="$3" first="$4" note body
           if [ "$c" = "1" ]; then
-            note="This doctest appears $n times in the workspace, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
+            note="This doctest appears $n times in this scan, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps this first copy and suggests removing the rest."
             body="$note"
           else
-            note="This doctest appears $n times in the workspace, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) keeps the first copy at \`$first\` and suggests removing this one."
             body="$note"$'\n\n```suggestion\n```'
           fi
           printf '%s\n\n%s %s' "$body" "$(report_link "$g")" "$support_link"
@@ -225,7 +230,7 @@ runs:
             if [ "$c" = "1" ]; then
               fields=(-F "line=$line" -f side=RIGHT)
             else
-              close_line="$(awk -v l="$line" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$p" 2>/dev/null)" || close_line=''
+              close_line="$(close_line_of "$p" "$line")"
               if [ -z "$close_line" ]; then
                 failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
                 continue
@@ -262,6 +267,10 @@ runs:
           would_block=''
           while IFS=$'\t' read -r p line item g c n first; do
             [ -n "$p" ] || continue
+            if [ "$c" != "1" ] && [ -z "$(close_line_of "$p" "$line")" ]; then
+              would_block+="### $p:$line  $item"$'\n\n'"dejadoc cannot locate the end of this doctest, the site would be listed in the review body instead."$'\n\n'
+              continue
+            fi
             would_block+="### $p:$line  $item"$'\n\n'"$(comment_body "$g" "$c" "$n" "$first")"$'\n\n'
           done < "$inline_file"
           {
