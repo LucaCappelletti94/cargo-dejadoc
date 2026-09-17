@@ -37,3 +37,33 @@ pub fn alpha_unparsed() {}
 /// fn shared() { }
 /// ```
 pub fn alpha_added() {}
+
+/// ```
+/// fn big_shared() {
+///     let a = 1;
+///     let b = 2;
+///     let c = 3;
+///     let d = 4;
+///     let e = 5;
+///     let f = 6;
+///     let g = 7;
+///     let h = 8;
+///     assert_eq!(a + b + c + d + e + f + g + h, 36);
+/// }
+/// ```
+pub fn alpha_long_a() {}
+
+/// ```
+/// fn big_shared() {
+///     let a = 1;
+///     let b = 2;
+///     let c = 3;
+///     let d = 4;
+///     let e = 5;
+///     let f = 6;
+///     let g = 7;
+///     let h = 8;
+///     assert_eq!(a + b + c + d + e + f + g + h, 36);
+/// }
+/// ```
+pub fn alpha_long_b() {}
