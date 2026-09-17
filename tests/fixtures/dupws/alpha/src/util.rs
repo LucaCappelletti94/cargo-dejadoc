@@ -1,4 +1,4 @@
-/// Helper with a doctest.
+/// A helper with a doctest.
 /// ```
 /// fn helper() { }
 /// ```
