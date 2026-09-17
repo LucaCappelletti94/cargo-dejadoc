@@ -67,3 +67,11 @@ pub fn alpha_long_a() {}
 /// }
 /// ```
 pub fn alpha_long_b() {}
+
+/// Intro
+///
+/// ```
+/// fn shared() { }
+/// ```
+
+pub fn alpha_added_doc_end() {}
