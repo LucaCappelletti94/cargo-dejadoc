@@ -101,28 +101,32 @@ fn is_comma(tree: &TokenTree) -> bool {
 
 /// Rewrite every literal token in `stream` to its canonical decimal spelling.
 ///
-/// Descends into groups so literals inside macro arguments are also rewritten.
+/// Descends into groups, except the token tree of a macro call, where
+/// the spelling of a literal can be observable.
 pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
-    stream
-        .into_iter()
-        .map(|tree| match tree {
-            TokenTree::Literal(lit) => {
+    let mut out = Vec::new();
+    let mut after_bang = false;
+    for tree in stream {
+        let tree = match tree {
+            TokenTree::Literal(lit) if !after_bang => {
                 let span = lit.span();
                 match syn::parse_str::<syn::Lit>(&lit.to_string()) {
                     Ok(parsed) => canon_one_lit(parsed, span),
                     Err(_) => TokenTree::Literal(lit),
                 }
             }
-            TokenTree::Group(group) => {
+            TokenTree::Group(group) if !after_bang => {
                 let span = group.span();
-                let inner = canonical_literals(group.stream());
-                let mut rebuilt = Group::new(group.delimiter(), inner);
+                let mut rebuilt = Group::new(group.delimiter(), canonical_literals(group.stream()));
                 rebuilt.set_span(span);
                 TokenTree::Group(rebuilt)
             }
             other => other,
-        })
-        .collect()
+        };
+        after_bang = matches!(&tree, TokenTree::Punct(p) if p.as_char() == '!');
+        out.push(tree);
+    }
+    out.into_iter().collect()
 }
 
 fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
@@ -215,6 +219,7 @@ impl VisitMut for Drift {
             |u| syn::Stmt::Item(syn::Item::Use(u)),
         );
         hoist_block_items(&mut block.stmts);
+        semicolon_non_tail_macros(&mut block.stmts);
         syn::visit_mut::visit_block_mut(self, block);
         drop_empty_stmts(&mut block.stmts);
         fold_tail_return(&mut block.stmts);
@@ -243,13 +248,9 @@ impl VisitMut for Drift {
         fold_paren_type(ty);
     }
 
-    fn visit_return_type_mut(&mut self, rt: &mut syn::ReturnType) {
-        syn::visit_mut::visit_return_type_mut(self, rt);
-        if let syn::ReturnType::Type(_, ty) = rt
-            && matches!(ty.as_ref(), syn::Type::Tuple(t) if t.elems.is_empty())
-        {
-            *rt = syn::ReturnType::Default;
-        }
+    fn visit_signature_mut(&mut self, sig: &mut syn::Signature) {
+        syn::visit_mut::visit_signature_mut(self, sig);
+        fold_unit_return(&mut sig.output);
     }
 
     fn visit_stmt_mut(&mut self, stmt: &mut syn::Stmt) {
@@ -307,7 +308,6 @@ impl VisitMut for Drift {
 
     fn visit_stmt_macro_mut(&mut self, node: &mut syn::StmtMacro) {
         normalize_macro_delim(&mut node.mac);
-        node.semi_token.get_or_insert_with(Default::default);
         syn::visit_mut::visit_stmt_macro_mut(self, node);
     }
 
@@ -388,6 +388,28 @@ fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
     }
 }
 
+/// Give every statement macro but the last one a semicolon, which the
+/// brace form omits. A tail macro's value is the block's value.
+fn semicolon_non_tail_macros(stmts: &mut [syn::Stmt]) {
+    let Some((_, rest)) = stmts.split_last_mut() else {
+        return;
+    };
+    for stmt in rest {
+        if let syn::Stmt::Macro(mac) = stmt {
+            mac.semi_token.get_or_insert_with(Default::default);
+        }
+    }
+}
+
+/// Drop an explicit `-> ()`, which a signature means by omitting it.
+fn fold_unit_return(output: &mut syn::ReturnType) {
+    if let syn::ReturnType::Type(_, ty) = output
+        && matches!(ty.as_ref(), syn::Type::Tuple(t) if t.elems.is_empty())
+    {
+        *output = syn::ReturnType::Default;
+    }
+}
+
 /// Remove a no-attribute `Expr::Paren` wrapper, leaving the inner expression.
 fn fold_paren_expr(expr: &mut syn::Expr) {
     if !matches!(expr, syn::Expr::Paren(p) if p.attrs.is_empty()) {
@@ -425,12 +447,7 @@ fn fold_paren_type(ty: &mut syn::Type) {
 /// comments and lint-level directives.
 fn is_inert_attr(attr: &syn::Attribute) -> bool {
     let p = attr.path();
-    p.is_ident("doc")
-        || p.is_ident("allow")
-        || p.is_ident("expect")
-        || p.is_ident("warn")
-        || p.is_ident("deny")
-        || p.is_ident("forbid")
+    p.is_ident("doc") || p.is_ident("allow") || p.is_ident("expect") || p.is_ident("warn")
 }
 
 /// Drop inert attributes from the list.

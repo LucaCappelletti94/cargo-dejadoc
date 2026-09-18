@@ -351,17 +351,32 @@ mod tests {
 
     #[test]
     fn macro_call_all_three_delimiters_merge() {
-        let bracket = canonicalize("vec![1, 2];");
-        let paren = canonicalize("vec!(1, 2);");
-        let brace = canonicalize("vec! {1, 2}");
+        let bracket = canonicalize("vec![1, 2];\nf();");
+        let paren = canonicalize("vec!(1, 2);\nf();");
+        let brace = canonicalize("vec! {1, 2}\nf();");
         assert_eq!(bracket.text, paren.text);
         assert_eq!(paren.text, brace.text);
     }
 
     #[test]
     fn statement_macro_brace_merges_with_paren() {
-        let a = canonicalize("println! {\"hello\"}");
-        let b = canonicalize("println!(\"hello\");");
+        let a = canonicalize("println! {\"hello\"}\nf();");
+        let b = canonicalize("println!(\"hello\");\nf();");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_tail_macro_without_a_semicolon_stays() {
+        let tail = canonicalize("macro_rules! five { () => { 5 } }\nfn f() -> i32 { five! {} }");
+        let discarded =
+            canonicalize("macro_rules! five { () => { 5 } }\nfn f() -> i32 { five!(); }");
+        assert_ne!(tail.text, discarded.text);
+    }
+
+    #[test]
+    fn a_non_tail_macro_statement_merges_either_delimiter() {
+        let a = canonicalize("m! {1}\nf();");
+        let b = canonicalize("m!(1);\nf();");
         assert_eq!(a.text, b.text);
     }
 
@@ -447,6 +462,20 @@ mod tests {
     }
 
     #[test]
+    fn a_stringified_literal_keeps_its_spelling() {
+        let a = canonicalize("assert_eq!(stringify!(0x10), \"0x10\");");
+        let b = canonicalize("assert_eq!(stringify!(16), \"0x10\");");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_matcher_literal_keeps_its_spelling() {
+        let a = canonicalize("macro_rules! m { (0x10) => { 1 } }\nm!(0x10);");
+        let b = canonicalize("macro_rules! m { (16) => { 1 } }\nm!(16);");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
     fn integer_binary_and_decimal_agree() {
         assert_eq!(canonicalize("0b1010").text, canonicalize("10").text);
     }
@@ -505,17 +534,13 @@ mod tests {
     }
 
     #[test]
-    fn integer_literal_in_macro_args_merges() {
+    fn macro_argument_literals_stay_opaque() {
         let a = canonicalize("assert_eq!(1_000, 1000);");
         let b = canonicalize("assert_eq!(1000, 1000);");
-        assert_eq!(a.text, b.text);
-    }
-
-    #[test]
-    fn integer_literal_in_nested_macro_merges() {
-        let a = canonicalize("vec![vec![0x01, 0x02]]");
-        let b = canonicalize("vec![vec![1, 2]]");
-        assert_eq!(a.text, b.text);
+        assert_ne!(a.text, b.text);
+        let c = canonicalize("vec![vec![0x01, 0x02]]");
+        let d = canonicalize("vec![vec![1, 2]]");
+        assert_ne!(c.text, d.text);
     }
 
     #[test]
@@ -724,6 +749,23 @@ mod tests {
         let a = canonicalize("#[allow(unused)]\nfn f() {}");
         let b = canonicalize("fn f() {}");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn deny_and_forbid_stay() {
+        let plain = canonicalize("fn f() { let x = 1; }");
+        assert_ne!(
+            canonicalize("#[deny(unused)]\nfn f() { let x = 1; }").text,
+            plain.text
+        );
+        assert_ne!(
+            canonicalize("#[forbid(unused)]\nfn f() { let x = 1; }").text,
+            plain.text
+        );
+        assert_eq!(
+            canonicalize("#[warn(unused)]\nfn f() { let x = 1; }").text,
+            plain.text
+        );
     }
 
     #[test]
@@ -1207,10 +1249,10 @@ fn f() {}"#,
     }
 
     #[test]
-    fn unit_return_type_folds_closure() {
+    fn closure_unit_return_type_stays() {
         let a = canonicalize("|| -> () { 1 }");
         let b = canonicalize("|| 1");
-        assert_eq!(a.text, b.text);
+        assert_ne!(a.text, b.text);
     }
 
     #[test]
