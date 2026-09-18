@@ -417,6 +417,16 @@ mod tests {
     }
 
     #[test]
+    fn a_statement_arm_block_keeps_its_statement() {
+        let a = canonicalize("match v { Some(x) => { foo(x); } None => {} }");
+        let b = canonicalize("match v { Some(x) => { bar(x); } None => {} }");
+        assert_ne!(a.text, b.text);
+        let c = canonicalize("match v { Some(x) => { m!(x); } None => {} }");
+        let d = canonicalize("match v { Some(x) => { n!(x); } None => {} }");
+        assert_ne!(c.text, d.text);
+    }
+
+    #[test]
     fn match_arm_block_with_let_stays_distinct() {
         let a = canonicalize("match v { Some(x) => { let y = x; foo(y) }, None => 0, }");
         let b = canonicalize("match v { Some(x) => foo(x), None => 0, }");
@@ -1414,6 +1424,16 @@ mod tests {
         let a = canonicalize("macro_rules! pino { () => { 1 } }\npino!()\n");
         let b = canonicalize("macro_rules! abete { () => { 1 } }\nabete!()\n");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_keeps_unit_variant_patterns() {
+        let a = canonicalize("match it {\n    None => 0,\n    Some(v) => v,\n}\n");
+        let b = canonicalize("match it {\n    Empty => 0,\n    Some(v) => v,\n}\n");
+        assert_ne!(a.text, b.text);
+        let c = canonicalize("let Unit = make();\n");
+        let d = canonicalize("let Other = make();\n");
+        assert_ne!(c.text, d.text);
     }
 
     #[test]

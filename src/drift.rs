@@ -198,7 +198,10 @@ fn unwrap_arm_block(arm: &mut syn::Arm) {
     let syn::Expr::Block(block) = arm.body.as_mut() else {
         return;
     };
-    if block.label.is_some() || !block.attrs.is_empty() || block.block.stmts.len() != 1 {
+    if block.label.is_some()
+        || !block.attrs.is_empty()
+        || !matches!(block.block.stmts.as_slice(), [syn::Stmt::Expr(_, None)])
+    {
         return;
     }
     if let Some(syn::Stmt::Expr(expr, None)) = block.block.stmts.pop() {

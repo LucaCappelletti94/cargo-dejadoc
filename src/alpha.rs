@@ -334,12 +334,25 @@ pub(crate) fn normalize_file(file: &mut syn::File) {
     renamer.visit_file_mut(file);
 }
 
+/// True for an ident pattern that names a unit struct, variant, or
+/// const rather than a binding, by the uppercase naming convention.
+fn is_unit_path(id: &syn::PatIdent) -> bool {
+    id.by_ref.is_none()
+        && id.mutability.is_none()
+        && id.subpat.is_none()
+        && id.ident.to_string().starts_with(|c: char| c.is_uppercase())
+}
+
 /// Rewrite the binder identifiers of `pat` to their canonical names.
 fn rewrite_pat_bindings(renamer: &mut Renamer, pat: &mut syn::Pat) {
     match pat {
         syn::Pat::Ident(id) => {
-            let name = id.ident.to_string();
-            if let Some(canon) = renamer.lookup(&[Ns::Value], &name) {
+            let ns: &[Ns] = if is_unit_path(id) {
+                &[Ns::Value, Ns::Type]
+            } else {
+                &[Ns::Value]
+            };
+            if let Some(canon) = renamer.lookup(ns, &id.ident.to_string()) {
                 id.ident = Ident::new(&canon, id.ident.span());
             }
             if let Some((_, sub)) = &mut id.subpat {
@@ -389,7 +402,9 @@ fn rewrite_pat_bindings(renamer: &mut Renamer, pat: &mut syn::Pat) {
 fn pattern_names(pat: &syn::Pat, out: &mut Vec<String>) {
     match pat {
         syn::Pat::Ident(id) => {
-            out.push(id.ident.to_string());
+            if !is_unit_path(id) {
+                out.push(id.ident.to_string());
+            }
             if let Some((_, sub)) = &id.subpat {
                 pattern_names(sub, out);
             }
