@@ -4,6 +4,7 @@
 
 use dejadoc::{Dejadoc, Report};
 use std::path::Path;
+#[cfg(feature = "cli")]
 use std::process::Command;
 
 const FIXTURE: &str = "tests/fixtures/dupws";
@@ -129,6 +130,7 @@ fn exit_code_reflects_duplicates() {
     );
 }
 #[test]
+#[cfg(feature = "cli")]
 fn binary_runs_end_to_end() {
     let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
     let out = Command::new(bin)
@@ -144,6 +146,7 @@ fn binary_runs_end_to_end() {
 }
 
 #[test]
+#[cfg(feature = "cli")]
 fn binary_prints_annotations_beside_the_report() {
     let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
     let out = Command::new(bin)
@@ -166,6 +169,7 @@ fn binary_prints_annotations_beside_the_report() {
 }
 
 #[test]
+#[cfg(feature = "cli")]
 fn package_named_dejadoc_is_not_filtered() {
     // Only the cargo subcommand token at position 1 is stripped; a flag
     // value that happens to be "dejadoc" must survive to clap.
