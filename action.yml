@@ -159,10 +159,22 @@ runs:
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
             "${gate[@]}" "$@" > "$out" || status=$?
-          # The scan runs in cwd, GitHub resolves an annotation path from the
-          # repository root. In-place sed differs between GNU and BSD.
-          if [ -n "$CWD" ] && [ "$CWD" != "." ]; then
-            sed "s|^::\\([a-z]*\\) file=|::\\1 file=${CWD%/}/|" "$out" > "$out.rooted"
+          # The scan reports paths relative to the workspace root cargo
+          # resolved, GitHub resolves an annotation path from the repository
+          # root.
+          root="$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.workspace_root')" || root=''
+          prefix=''
+          if [ -n "$root" ] && [ -n "${GITHUB_WORKSPACE:-}" ]; then
+            prefix="$(realpath --relative-to="$GITHUB_WORKSPACE" "$root" 2>/dev/null)" || prefix=''
+            [ "$prefix" = "." ] && prefix=''
+          fi
+          if [ -n "$prefix" ]; then
+            while IFS= read -r line; do
+              case "$line" in
+                ::*" file="*) printf '%s file=%s/%s\n' "${line%% file=*}" "$prefix" "${line#* file=}" ;;
+                *) printf '%s\n' "$line" ;;
+              esac
+            done < "$out" > "$out.rooted"
             mv "$out.rooted" "$out"
           fi
           cat "$out"
