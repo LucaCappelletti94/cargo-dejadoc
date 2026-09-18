@@ -625,6 +625,31 @@ impl Parse for ConcatParts {
     }
 }
 
+/// Path with `.` and `..` segments resolved, so one file has one spelling.
+fn lexical(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split('/') {
+        match part {
+            "." | "" => {}
+            ".." if matches!(parts.last(), Some(&last) if last != "..") => {
+                parts.pop();
+            }
+            other => parts.push(other),
+        }
+    }
+    let mut out = String::new();
+    if path.starts_with('/') {
+        out.push('/');
+    }
+    for (i, part) in parts.iter().enumerate() {
+        if i > 0 {
+            out.push('/');
+        }
+        out.push_str(part);
+    }
+    out
+}
+
 /// Code blocks of one doc source, unindented, classified and positioned.
 fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
     let mut out = Vec::new();
@@ -639,7 +664,7 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
             .and_then(|f| f.strip_prefix('/'))
             .unwrap_or(&src.files[f.line]);
         out.push(DocTest {
-            file: file.to_string(),
+            file: lexical(file),
             line: src.lines[f.line],
             item: item.to_string(),
             info,
@@ -807,6 +832,35 @@ mod tests {
             code: code.into(),
             allow,
         }
+    }
+
+    #[test]
+    fn one_included_file_gets_one_spelling() {
+        let src = "#[doc = include_str!(\"../docs/guide.md\")]\npub fn f() {}\n";
+        let parsed = syn::parse_file(src).unwrap();
+        let spliced = extract(
+            "mycrate",
+            "/root/src/deep/mod.rs",
+            &parsed,
+            "/root",
+            &|_f: &str, _p: &str| {
+                Some((
+                    "/root/src/deep/../docs/guide.md".to_string(),
+                    "```\nlet x = 1;\n```\n".to_string(),
+                ))
+            },
+        );
+        assert_eq!(spliced.len(), 1);
+        assert_eq!(spliced[0].file, "src/docs/guide.md");
+    }
+
+    #[test]
+    fn lexical_resolves_dot_segments() {
+        assert_eq!(lexical("a/src/../docs/x.md"), "a/docs/x.md");
+        assert_eq!(lexical("a/src/deep/../../docs/x.md"), "a/docs/x.md");
+        assert_eq!(lexical("./a/./b.rs"), "a/b.rs");
+        assert_eq!(lexical("/abs/../b.rs"), "/b.rs");
+        assert_eq!(lexical("../outside/x.md"), "../outside/x.md");
     }
 
     #[test]
