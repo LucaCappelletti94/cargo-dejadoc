@@ -20,6 +20,8 @@ jobs:
           cwd: tests/fixtures/dupws
           pr-number: ${{ github.event.pull_request.number }}
           dry-run: ${{ github.event_name == 'push' }}
+          # The fixture duplicates are deliberate, so they are not flagged on this repository's own diffs.
+          annotations: false
       - name: Check the posting behavior
         env:
           GH_TOKEN: ${{ github.token }}

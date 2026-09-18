@@ -41,6 +41,9 @@ struct Args {
     /// Print each group's code.
     #[arg(short, long)]
     verbose: bool,
+    /// Also print GitHub workflow annotations, one per copy to remove.
+    #[arg(long)]
+    github: bool,
 }
 
 fn main() -> ExitCode {
@@ -61,7 +64,12 @@ fn main() -> ExitCode {
             let out = if args.json {
                 dejadoc::json(&report)
             } else {
-                dejadoc::human(&report, args.verbose)
+                let mut out = dejadoc::human(&report, args.verbose);
+                if args.github {
+                    out.push('\n');
+                    out.push_str(&dejadoc::annotations(&report, args.no_fail));
+                }
+                out
             };
             println!("{out}");
             dejadoc::exit_code(&report, args.no_fail)

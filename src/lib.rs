@@ -29,7 +29,7 @@ mod report;
 /// Reader for an `include_str!` doc splice, given the containing file and
 /// the path as written. Yields the resolved path and text.
 type IncludeRead<'a> = dyn Fn(&str, &str) -> Option<(String, String)> + 'a;
-pub use report::{human, json};
+pub use report::{annotations, human, json};
 
 /// Scan parameters. In `run`, unset values fall back to `.dejadoc.toml`,
 /// then to defaults.

@@ -43,6 +43,10 @@ inputs:
     description: In pull request mode report only duplicates this pull request introduces
     required: false
     default: 'true'
+  annotations:
+    description: Annotate each copy to remove, which needs no token
+    required: false
+    default: 'true'
 
 runs:
   using: 'composite'
@@ -110,6 +114,7 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         THRESHOLD: ${{ inputs.threshold }}
         MIN_TOKENS: ${{ inputs.min-tokens }}
+        ANNOTATIONS: ${{ inputs.annotations }}
       run: |
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
@@ -125,10 +130,23 @@ runs:
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
         else
+          out="$RUNNER_TEMP/dejadoc-gate.txt"
+          status=0
+          gate=()
+          [ "$ANNOTATIONS" = "true" ] && gate+=(--github)
           cargo dejadoc \
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
-            "$@"
+            "${gate[@]}" "$@" > "$out" || status=$?
+          cat "$out"
+          {
+            echo '### dejadoc'
+            echo
+            echo '```'
+            grep -v '^::' "$out"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          exit "$status"
         fi
 
     - name: Scan the base commit
@@ -178,6 +196,7 @@ runs:
         PR_NUMBER: ${{ inputs.pr-number }}
         DRY_RUN: ${{ inputs.dry-run }}
         CWD: ${{ inputs.cwd }}
+        ANNOTATIONS: ${{ inputs.annotations }}
       run: |
         # No set -e here. Each step checks its own status and writes an outcome file, so a
         # failed api call degrades to a skipped review instead of aborting the run.
@@ -267,6 +286,30 @@ runs:
              (.n | tostring), .first, (if .isNew then "1" else "0" end),
              (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring)]
           | @tsv' "$report" > "$inline_file"
+
+        # Annotations for every reported copy, and the scan in the run
+        # summary. Both are workflow output rather than API calls, so a fork
+        # pull request shows the findings even when no review can be posted.
+        if [ -s "$inline_file" ] && [ "$dry" != "true" ]; then
+          if [ "$ANNOTATIONS" = "true" ]; then
+            while IFS=$'\t' read -r p line item g _c _n first _isnew _bk _knew; do
+              printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
+                "$p" "$line" "$item" "$first" "$g"
+            done < "$inline_file"
+          fi
+          {
+            jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups\n"' "$report"
+            [ "$onlynew" = "1" ] && echo 'The annotations mark the copies this pull request introduced.'
+            echo
+            jq -r --arg cwd "$cwd" '
+              def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+              .groups[] | "- group `\(.id)`, \(.sites | length) copies\n"
+                + (.sites | to_entries | map(
+                    "  - " + (if .key == 0 then "kept  " else "remove" end)
+                    + " `" + (.value | sp) + ":" + (.value.line | tostring) + "`  "
+                    + .value.item) | join("\n"))' "$report"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
 
         # The inline posts, live mode only. The first post is the permission probe.
         # Each comment links to a prefilled wrong-review issue for its group.
@@ -506,7 +549,7 @@ runs:
 
         readonly_notice() {
           echo "dejadoc: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
-          echo "dejadoc: to review fork pull requests, trigger on pull_request_target and check out the pull request head, or on a private repository enable 'Send write tokens to workflows from pull requests'"
+          echo "dejadoc: the annotations and the run summary carry the findings, the removal suggestion needs a review comment"
         }
         if [ "$readonly" = "1" ]; then
           readonly_notice

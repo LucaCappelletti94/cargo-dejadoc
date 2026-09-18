@@ -44,27 +44,11 @@ jobs:
 
 Review mode reports only the duplicates your pull request introduces, comparing each site against a scan of the base commit. Comments land on the copies to remove, a kept copy never gets one. Each comment links the copy that survives and GitHub renders those lines right in the comment, long ones collapsed behind a show link. The link points at the base commit for pre-existing copies and at the first added copy for groups the pull request created, and the removal suggestion deletes the copy together with an empty line left behind. Sites GitHub cannot anchor get permalinks in the review body. Set `only-new: false` to also report duplicates that predate the pull request.
 
-Forks run with a read-only `GITHUB_TOKEN`, the action skips the review and the job passes. To review forks, trigger on `pull_request_target` and check out the pull request head as below, a trigger that runs with write access, so read [GitHub's guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target) before opting the checkout in with `allow-unsafe-pr-checkout`.
+Every run also writes the report to the job summary and one annotation per copy to remove, which GitHub anchors to the line in the diff. Annotations are workflow output rather than API calls, so they need no token and a fork pull request shows the findings whatever the token allows. The `--github` flag prints them from the command line too, next to the usual report.
 
-```yaml
-on: pull_request_target
-jobs:
-  dejadoc:
-    runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
-    steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          allow-unsafe-pr-checkout: true
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: LucaCappelletti94/cargo-dejadoc@v1
-        with:
-          pr-number: ${{ github.event.pull_request.number }}
-```
+Forks run with a read-only `GITHUB_TOKEN`, so the review itself cannot be posted, the annotations and the summary carry the findings and the job passes. The removal suggestion is the part a fork loses, since only a review comment can offer one. To post reviews on forks as well, keep the `pull_request` trigger and let a second workflow post from the base branch, as [GitHub's guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target) describes, or on a private repository enable **Send write tokens to workflows from pull requests** under Settings > Actions > General.
 
-On a private repository, the setting **Send write tokens to workflows from pull requests** under Settings > Actions > General does the same without changing the trigger.
+`pull_request_target` also grants write access, and the action still accepts it, but the recipe means checking out the pull request head in a privileged job, so it is not the path this README recommends.
 
 The library builds the same report in memory.
 
