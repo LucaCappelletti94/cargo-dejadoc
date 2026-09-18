@@ -93,9 +93,16 @@ jobs:
 
 The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token. `pull_request_target` grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
 
-The library builds the same report in memory.
+The library builds the same report in memory, so a project's own task runner can gate on it without installing anything. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set.
+
+```toml
+[dependencies]
+dejadoc = { version = "0.1", default-features = false, features = ["std"] }
+```
 
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 2);
 ```
+
+The default `cli` feature adds `clap` for the binary, which a library dependency does not need.

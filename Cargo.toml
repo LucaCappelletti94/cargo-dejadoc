@@ -14,11 +14,12 @@ exclude = ["/docs"]
 [[bin]]
 name = "cargo-dejadoc"
 path = "src/main.rs"
-required-features = ["std"]
+required-features = ["cli"]
 
 [features]
-default = ["std"]
-std = ["dep:cargo_metadata", "dep:clap", "dep:thiserror", "dep:toml"]
+default = ["cli"]
+std = ["dep:cargo_metadata", "dep:thiserror", "dep:toml"]
+cli = ["std", "dep:clap"]
 
 [dependencies]
 blake3 = { version = "1.8.7", default-features = false }
