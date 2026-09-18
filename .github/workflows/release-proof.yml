@@ -1,0 +1,51 @@
+---
+name: Release proof
+
+# Temporary workflow that runs the published action against a scratch fixture,
+# so a release is proven from a real pull request rather than locally.
+on: pull_request
+
+jobs:
+  render:
+    name: Render the review in the job summary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          cwd: tests/fixtures/reltest
+          pr-number: ${{ github.event.pull_request.number }}
+          dry-run: true
+
+  prepare:
+    name: Prepare the review without a token
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          cwd: tests/fixtures/reltest
+          pr-number: ${{ github.event.pull_request.number }}
+          payload: dejadoc-payload
+          mode: prepare
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+
+  post:
+    name: Post the prepared review
+    needs: prepare
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          payload: dejadoc-payload
+          mode: post
