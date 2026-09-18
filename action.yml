@@ -115,6 +115,7 @@ runs:
         THRESHOLD: ${{ inputs.threshold }}
         MIN_TOKENS: ${{ inputs.min-tokens }}
         ANNOTATIONS: ${{ inputs.annotations }}
+        CWD: ${{ inputs.cwd }}
       run: |
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
@@ -126,6 +127,16 @@ runs:
             --min-tokens "$MIN_TOKENS" \
             --no-fail --json "$@" > "$report"
           jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.groups | length) duplicated groups"' "$report"
+          # The whole scan in the run summary, which needs no token, so a
+          # fork pull request has it whatever the review can do.
+          {
+            jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report"
+            jq -r --arg cwd "$CWD" '
+              def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+              .groups[] | "\n- group `\(.id)`, \(.sites | length) copies\n"
+                + (.sites | map("  - `" + sp + ":" + (.line | tostring) + "`  " + .item)
+                   | join("\n"))' "$report"
+          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$(jq '.groups | length' "$report")" -gt 0 ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
@@ -287,30 +298,6 @@ runs:
              (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring)]
           | @tsv' "$report" > "$inline_file"
 
-        # Annotations for every reported copy, and the scan in the run
-        # summary. Both are workflow output rather than API calls, so a fork
-        # pull request shows the findings even when no review can be posted.
-        if [ -s "$inline_file" ] && [ "$dry" != "true" ]; then
-          if [ "$ANNOTATIONS" = "true" ]; then
-            while IFS=$'\t' read -r p line item g _c _n first _isnew _bk _knew; do
-              printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
-                "$p" "$line" "$item" "$first" "$g"
-            done < "$inline_file"
-          fi
-          {
-            jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups\n"' "$report"
-            [ "$onlynew" = "1" ] && echo 'The annotations mark the copies this pull request introduced.'
-            echo
-            jq -r --arg cwd "$cwd" '
-              def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-              .groups[] | "- group `\(.id)`, \(.sites | length) copies\n"
-                + (.sites | to_entries | map(
-                    "  - " + (if .key == 0 then "kept  " else "remove" end)
-                    + " `" + (.value | sp) + ":" + (.value.line | tostring) + "`  "
-                    + .value.item) | join("\n"))' "$report"
-          } >> "$GITHUB_STEP_SUMMARY"
-        fi
-
         # The inline posts, live mode only. The first post is the permission probe.
         # Each comment links to a prefilled wrong-review issue for its group.
         uri() { jq -rn --arg s "$1" '$s | @uri'; }
@@ -406,6 +393,7 @@ runs:
         failed_sites=''
         out_of_range=''
         rendered=''
+        findings=''
         # One pass builds every comment, live posts them, the dry run renders them.
         declare -A seen_first=()
         while IFS=$'\t' read -r p line item g c n first new basekeep knew; do
@@ -427,6 +415,15 @@ runs:
           # Comments only land on copies the author should act on, a kept
           # copy stays silent.
           [ "$removable" = "1" ] || continue
+          # The annotation carries the same finding without a token, so a
+          # fork pull request shows it anchored in the diff.
+          if [ "$ANNOTATIONS" = "true" ] && [ "$dry" != "true" ]; then
+            keep="$basekeep"
+            [ -z "$keep" ] && keep="$keepat"
+            printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
+              "$p" "$line" "$item" "$keep" "$g"
+            findings="$findings- \`$p:$line\`  $item, duplicates \`$keep\`"$'\n'
+          fi
           close_line="$(close_line_of "$p" "$line")"
           if [ -z "$close_line" ]; then
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
@@ -494,6 +491,17 @@ runs:
             fi
           fi
         done < "$inline_file"
+
+        # The reported copies in the run summary, beside the whole scan the
+        # scan step wrote there.
+        if [ -n "$findings" ] && [ "$dry" != "true" ]; then
+          {
+            echo
+            echo '#### Copies to remove'
+            echo
+            printf '%s' "$findings"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
 
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then

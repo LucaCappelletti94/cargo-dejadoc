@@ -252,6 +252,13 @@ mod tests {
     }
 
     #[test]
+    fn annotations_skip_a_group_without_sites() {
+        let mut empty = report();
+        empty.groups[0].sites.clear();
+        assert_eq!(annotations(&empty, false), "");
+    }
+
+    #[test]
     fn annotations_mark_every_later_site_of_a_larger_group() {
         let mut three = report();
         three.groups[0]
