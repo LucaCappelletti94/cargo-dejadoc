@@ -553,7 +553,13 @@ runs:
           exit 0
         fi
 
-        if [ ! -s "$inline_file" ] && [ "$mode" != "post" ]; then
+          jq -n --arg pr "$pr" --arg head "$head_sha" --arg oor "$out_of_range" --arg f "$findings" \
+            '{pr: $pr, head_sha: $head, out_of_range: $oor, findings: $f}' > "$meta"
+          touch "$comments"
+        fi
+        # Nothing to post, in prepare mode the payload still exists so the
+        # posting job has something to download.
+        if [ ! -s "$comments" ] && [ -z "$out_of_range" ]; then
           if [ "$onlynew" = "1" ]; then
             echo "dejadoc: no duplicate was introduced by this pull request, the review is not posted"
             echo "skipped-existing" > "$status"
@@ -562,10 +568,6 @@ runs:
             echo "skipped-nodiff" > "$status"
           fi
           exit 0
-        fi
-
-          jq -n --arg pr "$pr" --arg head "$head_sha" --arg oor "$out_of_range" --arg f "$findings" \
-            '{pr: $pr, head_sha: $head, out_of_range: $oor, findings: $f}' > "$meta"
         fi
         # The reported copies in the run summary, beside the whole scan the
         # scan step wrote there.
