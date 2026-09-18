@@ -516,6 +516,12 @@ mod tests {
     }
 
     #[test]
+    fn a_float_canonicalizes_to_its_text_form() {
+        assert_eq!(canonicalize("1_000.50").text, "fn _dejadoc_0 () { 1000.5 }");
+        assert_eq!(canonicalize("1.0E+03").text, "fn _dejadoc_0 () { 1.0e3 }");
+    }
+
+    #[test]
     fn float_exponent_form_stays_distinct() {
         assert_ne!(canonicalize("1e3").text, canonicalize("1000.0").text);
         assert_eq!(canonicalize("1.0E+03").text, canonicalize("1.0e3").text);
@@ -573,10 +579,21 @@ mod tests {
     }
 
     #[test]
-    fn string_literal_in_attribute_value_merges() {
+    fn string_literal_in_attribute_value_stays_opaque() {
         let a = canonicalize(r#"#[my_attr(label = r"same")] fn f() {}"#);
         let b = canonicalize(r#"#[my_attr(label = "same")] fn f() {}"#);
-        assert_eq!(a.text, b.text);
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_attribute_argument_literal_stays_opaque() {
+        let attr = canonicalize("#[my_attr(label = 0x10)]\nfn f() {}");
+        assert_ne!(
+            attr.text,
+            canonicalize("#[my_attr(label = 16)]\nfn f() {}").text
+        );
+        let call = canonicalize("my_attr!(label = 0x10);");
+        assert_ne!(call.text, canonicalize("my_attr!(label = 16);").text);
     }
 
     #[test]
