@@ -144,6 +144,15 @@ impl VisitMut for Drift {
         syn::visit_mut::visit_arm_mut(self, arm);
     }
 
+    fn visit_stmt_mut(&mut self, stmt: &mut syn::Stmt) {
+        match stmt {
+            syn::Stmt::Macro(v) => strip_doc_attrs(&mut v.attrs),
+            syn::Stmt::Local(v) => strip_doc_attrs(&mut v.attrs),
+            _ => {}
+        }
+        syn::visit_mut::visit_stmt_mut(self, stmt);
+    }
+
     fn visit_item_mut(&mut self, item: &mut syn::Item) {
         if let Some(attrs) = item_attrs(item) {
             strip_doc_attrs(attrs);

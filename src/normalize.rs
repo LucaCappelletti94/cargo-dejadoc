@@ -408,6 +408,15 @@ mod tests {
     }
 
     #[test]
+    fn labelled_or_attributed_arm_block_is_kept() {
+        let plain = canonicalize("match v { Some(x) => { foo(x) }, None => 0, }");
+        let labelled = canonicalize("match v { Some(x) => 'a: { foo(x) }, None => 0, }");
+        let attributed = canonicalize("match v { Some(x) => #[allow(x)] { foo(x) }, None => 0, }");
+        assert_ne!(labelled.text, plain.text);
+        assert_ne!(attributed.text, plain.text);
+    }
+
+    #[test]
     fn match_arm_block_with_let_stays_distinct() {
         let a = canonicalize("match v { Some(x) => { let y = x; foo(y) }, None => 0, }");
         let b = canonicalize("match v { Some(x) => foo(x), None => 0, }");
@@ -425,6 +434,68 @@ mod tests {
     fn doc_comment_on_local_fn_merges() {
         let a = canonicalize("/// Doc comment.\nfn f() -> u8 { 1 }");
         let b = canonicalize("fn f() -> u8 { 1 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn doc_comments_on_every_item_kind_merge() {
+        let body = |doc: &str| {
+            [
+                "fn main() {}",
+                "const C: u8 = 1;",
+                "enum E { A }",
+                "#[macro_use]\nextern crate foo;",
+                "extern \"C\" { fn cf(); }",
+                "impl S {}",
+                "m! {}",
+                "mod md {}",
+                "static ST: u8 = 1;",
+                "struct S;",
+                "trait T {}",
+                "trait TA = T;",
+                "type Ty = u8;",
+                "union U { n: u8 }",
+                "use a::b;",
+            ]
+            .iter()
+            .fold(String::new(), |mut out, item| {
+                out.push_str(doc);
+                out.push_str(item);
+                out.push('\n');
+                out
+            })
+        };
+        assert_eq!(
+            canonicalize(&body("/// Doc\n")).text,
+            canonicalize(&body("")).text
+        );
+    }
+
+    #[test]
+    fn doc_comments_on_statements_merge() {
+        let a = canonicalize("/// Doc\nlet x = 1;\n/// Doc\nm!(x);\n");
+        let b = canonicalize("let x = 1;\nm!(x);\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn doc_comments_on_impl_and_trait_items_merge() {
+        let body = |doc: &str| {
+            format!(
+                "trait T {{ {doc}const C: u8; {doc}fn f(&self); {doc}type A; {doc}m!(); }}\n\
+                 struct S;\nimpl T for S {{ {doc}const C: u8 = 1; {doc}fn f(&self) {{}} {doc}type A = u8; {doc}m!(); }}\n"
+            )
+        };
+        assert_eq!(
+            canonicalize(&body("#[doc = \"d\"] ")).text,
+            canonicalize(&body("")).text
+        );
+    }
+
+    #[test]
+    fn doc_comment_on_variant_merges() {
+        let a = canonicalize("enum E {\n    /// Doc\n    A,\n}");
+        let b = canonicalize("enum E { A }");
         assert_eq!(a.text, b.text);
     }
 
@@ -473,6 +544,13 @@ mod tests {
     }
 
     #[test]
+    fn use_self_leaf_is_the_module() {
+        let a = canonicalize("use a::{self};\nfoo();\n");
+        let b = canonicalize("use a;\nfoo();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn pub_use_stays_distinct() {
         let a = canonicalize("pub use a::b;\n");
         let b = canonicalize("use a::b;\n");
@@ -496,7 +574,7 @@ mod tests {
     fn bare_expression_parses() {
         let c = canonicalize("1 + 1");
         assert!(!c.unparsed);
-        assert!(c.tokens > 0);
+        assert_eq!(c.tokens, 5);
     }
 
     #[test]
@@ -590,6 +668,26 @@ mod tests {
         let explicit =
             canonicalize("fn main() -> Result<(), E> {\n    let x = f()?;\n    Ok(())\n}");
         assert_eq!(tail.text, explicit.text);
+    }
+
+    #[test]
+    fn only_the_exact_ok_tail_becomes_a_result_main() {
+        for (tail, call) in [
+            ("Ok::<(), E>(1)", "Ok(1)"),
+            ("Ok::<(), E>((), 1)", "Ok((), 1)"),
+            ("Err::<(), E>(())", "Err(())"),
+            ("<T>::Ok::<(), E>(())", "<T>::Ok(())"),
+            ("::Ok::<(), E>(())", "::Ok(())"),
+            ("m::Ok::<(), E>(())", "m::Ok(())"),
+        ] {
+            let bare = canonicalize(&format!("let x = f()?;\n{tail}"));
+            let explicit = canonicalize(&format!(
+                "fn main() -> Result<(), E> {{ let x = f()?; {call} }}"
+            ));
+            assert_ne!(bare.text, explicit.text, "{tail}");
+        }
+        let unit_err = canonicalize("fn main() -> Result<(), ()> {\n    Ok(())\n}");
+        assert_ne!(canonicalize("Ok::<()>(())").text, unit_err.text);
     }
 
     #[test]
@@ -737,6 +835,20 @@ mod tests {
     fn alpha_const_forward_ref_collapses() {
         let a = canonicalize("fn main() { let _ = FOO; }\nconst FOO: u8 = 1;\n");
         let b = canonicalize("fn main() { let _ = BAR; }\nconst BAR: u8 = 1;\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_every_item_kind_forward_ref_collapses() {
+        let body = |s: &str, e: &str, u: &str, t: &str, tr: &str| {
+            format!(
+                "fn main() {{ let _ = {s}; let _ = {e}::A; let _ = {u} {{ n: 1 }}; let _: {t} = 1; }}\n\
+                 fn g<X: {tr}>() {{}}\n\
+                 static {s}: u8 = 1;\nenum {e} {{ A }}\nunion {u} {{ n: u8 }}\ntype {t} = u8;\ntrait {tr} {{}}\n"
+            )
+        };
+        let a = canonicalize(&body("S1", "E1", "U1", "T1", "R1"));
+        let b = canonicalize(&body("S2", "E2", "U2", "T2", "R2"));
         assert_eq!(a.text, b.text);
     }
 
@@ -1127,6 +1239,23 @@ mod tests {
     }
 
     #[test]
+    fn a_binder_inside_the_repeat_element_is_renamed() {
+        let a = canonicalize("vec![{ let x = 1; x }; 2]\n");
+        let b = canonicalize("vec![{ let y = 1; y }; 2]\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_longer_semicolon_list_keeps_the_token_walk() {
+        let a = canonicalize("m!({ let x = 1; x }; 1; 2)\n");
+        let b = canonicalize("m!({ let y = 1; y }; 1; 2)\n");
+        assert_ne!(a.text, b.text);
+        let c = canonicalize("m!({ let x = 1; x }; 1;)\n");
+        let d = canonicalize("m!({ let y = 1; y }; 1;)\n");
+        assert_ne!(c.text, d.text);
+    }
+
+    #[test]
     fn alpha_field_access_not_renamed_for_unrelated_local() {
         let a = canonicalize("let x = 1;\nprintln!(\"{}\", s.x)\n");
         let b = canonicalize("let y = 1;\nprintln!(\"{}\", s.x)\n");
@@ -1148,6 +1277,13 @@ mod tests {
     }
 
     #[test]
+    fn a_placeholder_between_escapes_is_renamed() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{{{x}}}\")\n");
+        let b = canonicalize("let y = 1;\nprintln!(\"{{{y}}}\")\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn alpha_format_width_param_renamed() {
         let a = canonicalize("let x = 1;\nlet w = 5;\nprintln!(\"{x:>w$}\")\n");
         let b = canonicalize("let y = 1;\nlet z = 5;\nprintln!(\"{y:>z$}\")\n");
@@ -1166,6 +1302,13 @@ mod tests {
         let a = canonicalize("macro_rules! pino { () => { 1 } }\nouter!(pino! if foo);\n");
         let b = canonicalize("macro_rules! abete { () => { 1 } }\nouter!(abete! if foo);\n");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn fallback_tokens_keep_their_content() {
+        let a = canonicalize("outer!(pino! if foo);\n");
+        let b = canonicalize("outer!(pino! if bar);\n");
+        assert_ne!(a.text, b.text);
     }
 
     #[test]

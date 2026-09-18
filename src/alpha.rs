@@ -576,11 +576,11 @@ fn begin_generics(renamer: &mut Renamer, generics: &mut syn::Generics) {
     }
 }
 
-/// Walk a condition, binding each `let` pattern of a `&&` chain before
-/// the operands to its right.
+/// Walk a condition, binding each `let` pattern before the operands to
+/// its right. Only `&&` may carry a `let`, so every binary splits.
 fn walk_let_cond(renamer: &mut Renamer, cond: &mut syn::Expr) {
     match cond {
-        syn::Expr::Binary(binary) if matches!(binary.op, syn::BinOp::And(_)) => {
+        syn::Expr::Binary(binary) => {
             walk_let_cond(renamer, &mut binary.left);
             walk_let_cond(renamer, &mut binary.right);
         }
