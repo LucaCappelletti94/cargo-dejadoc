@@ -579,16 +579,16 @@ mod tests {
     }
 
     #[test]
-    fn string_literal_in_attribute_value_merges() {
+    fn string_literal_in_attribute_value_stays_opaque() {
         let a = canonicalize(r#"#[my_attr(label = r"same")] fn f() {}"#);
         let b = canonicalize(r#"#[my_attr(label = "same")] fn f() {}"#);
-        assert_eq!(a.text, b.text);
+        assert_ne!(a.text, b.text);
     }
 
     #[test]
-    fn an_attribute_argument_literal_is_canonical_unlike_a_macro_argument() {
+    fn an_attribute_argument_literal_stays_opaque() {
         let attr = canonicalize("#[my_attr(label = 0x10)]\nfn f() {}");
-        assert_eq!(
+        assert_ne!(
             attr.text,
             canonicalize("#[my_attr(label = 16)]\nfn f() {}").text
         );

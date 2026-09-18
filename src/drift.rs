@@ -42,11 +42,12 @@ fn is_comma(tree: &TokenTree) -> bool {
 
 /// Rewrite every literal token in `stream` to its canonical decimal spelling.
 ///
-/// Descends into groups, except the token tree of a macro call, where
-/// the spelling of a literal can be observable.
+/// Skips the token tree of a macro call and of an attribute, both of
+/// which a procedural macro receives verbatim, so the spelling of a
+/// literal inside them can be observable.
 pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
     let mut out = Vec::new();
-    let mut after_bang = false;
+    let mut opaque = false;
     for tree in stream {
         let tree = match tree {
             TokenTree::Literal(lit) => {
@@ -56,7 +57,7 @@ pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
                     Err(_) => TokenTree::Literal(lit),
                 }
             }
-            TokenTree::Group(group) if !after_bang => {
+            TokenTree::Group(group) if !opaque => {
                 let span = group.span();
                 let mut rebuilt = Group::new(group.delimiter(), canonical_literals(group.stream()));
                 rebuilt.set_span(span);
@@ -64,7 +65,7 @@ pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
             }
             other => other,
         };
-        after_bang = matches!(&tree, TokenTree::Punct(p) if p.as_char() == '!');
+        opaque = matches!(&tree, TokenTree::Punct(p) if matches!(p.as_char(), '!' | '#'));
         out.push(tree);
     }
     out.into_iter().collect()
