@@ -300,7 +300,8 @@ pub struct Group {
 /// Outcome of a scan.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Report {
-    /// Doctests scanned, allowed ones included.
+    /// Doctests scanned, allowed ones included, counting a block shared by
+    /// several items once.
     pub total: usize,
     /// Distinct canonical forms among non-allowed doctests.
     pub unique: usize,
@@ -322,12 +323,26 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 
 /// Group doctests by canonical form, dropping allowed sites, blocks under
 /// `min_tokens`, and groups under `threshold`.
+///
+/// Blocks sharing a file and line are one doc block reached through several
+/// items, so only the first by item path is kept.
 #[must_use]
 pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
-    let total = blocks.len();
+    let mut by_site: BTreeMap<(&str, u32), &DocTest> = BTreeMap::new();
+    for block in blocks {
+        by_site
+            .entry((block.file.as_str(), block.line))
+            .and_modify(|kept| {
+                if block.item < kept.item {
+                    *kept = block;
+                }
+            })
+            .or_insert(block);
+    }
+    let total = by_site.len();
     let mut unique: BTreeSet<String> = BTreeSet::new();
     let mut by_hash: BTreeMap<String, (bool, usize, Vec<DocTest>)> = BTreeMap::new();
-    for block in blocks {
+    for block in by_site.into_values() {
         if block.allow {
             continue;
         }
@@ -399,8 +414,8 @@ mod tests {
         let file = dir.join("config.toml");
         std::fs::write(&file, "threshold = 10\n").unwrap();
         let targets = vec![
-            scan_target("alpha", "src/lib.rs", &[], "one"),
-            scan_target("beta", "src/lib.rs", &[], "two"),
+            scan_target("alpha", "alpha/src/lib.rs", &[], "one"),
+            scan_target("beta", "beta/src/lib.rs", &[], "two"),
         ];
         // The file value applies through the infallible entry point.
         let report =
@@ -465,13 +480,62 @@ mod tests {
     }
 
     #[test]
+    fn one_doc_block_shared_by_several_items_is_not_a_duplicate() {
+        let shared = "use dioxus::prelude::*;\nlet value = use_signal(|| 0);";
+        let blocks = vec![
+            dt(
+                "docs/rules_of_hooks.md",
+                97,
+                "hooks::use_context",
+                shared,
+                false,
+            ),
+            dt(
+                "docs/rules_of_hooks.md",
+                97,
+                "hooks::use_callback",
+                shared,
+                false,
+            ),
+            dt(
+                "docs/rules_of_hooks.md",
+                97,
+                "hooks::use_coroutine",
+                shared,
+                false,
+            ),
+        ];
+        let report = group(&blocks, 2, 0);
+        assert_eq!(report.total, 1);
+        assert_eq!(report.unique, 1);
+        assert_eq!(report.groups, Vec::new());
+    }
+
+    #[test]
+    fn shared_doc_block_keeps_grouping_against_a_real_copy() {
+        let shared = "let x = 1;\nassert_eq!(x, 1);";
+        let blocks = vec![
+            dt("docs/guide.md", 12, "crate::beta", shared, false),
+            dt("docs/guide.md", 12, "crate::alpha", shared, false),
+            dt("src/lib.rs", 40, "crate::copy", shared, false),
+        ];
+        let report = group(&blocks, 2, 0);
+        assert_eq!(report.total, 2);
+        assert_eq!(report.groups.len(), 1);
+        let sites = &report.groups[0].sites;
+        assert_eq!(sites.len(), 2);
+        assert_eq!(sites[0].item, "crate::alpha");
+        assert_eq!(sites[1].item, "crate::copy");
+    }
+
+    #[test]
     fn run_targets_groups_alpha_equivalent_doctests() {
         let mk = |name: &str, body: &str| {
             let src = format!("/// ```\n/// {body}\n/// ```\npub fn f() {{}}\n");
             TargetScan {
                 name: name.to_string(),
                 files: vec![SourceFile {
-                    path: "src/lib.rs".to_string(),
+                    path: format!("{name}/src/lib.rs"),
                     segments: Vec::new(),
                     parsed: match syn::parse_str(&src) {
                         Ok(parsed) => parsed,
@@ -503,8 +567,8 @@ mod tests {
     #[test]
     fn run_targets_applies_threshold_and_package() {
         let targets = vec![
-            scan_target("alpha", "src/lib.rs", &[], "one"),
-            scan_target("beta", "src/lib.rs", &[], "two"),
+            scan_target("alpha", "alpha/src/lib.rs", &[], "one"),
+            scan_target("beta", "beta/src/lib.rs", &[], "two"),
         ];
         let narrow = Dejadoc::default()
             .threshold(3)
