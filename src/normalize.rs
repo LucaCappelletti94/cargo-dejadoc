@@ -66,11 +66,11 @@ fn without_crate_attrs(body: &str) -> Cow<'_, str> {
 }
 
 /// Parse `body` the way rustdoc compiles it, wrapped in `fn main` when
-/// it declares none, with any bare `extern crate` dropped.
+/// it declares none, with the bare `extern crate` lines rustdoc would
+/// add itself dropped.
 fn parse_as_crate(body: &str) -> Option<syn::File> {
     let is_main = |item: &syn::Item| matches!(item, syn::Item::Fn(f) if f.sig.ident == "main");
-    let bare_extern =
-        |item: &syn::Item| matches!(item, syn::Item::ExternCrate(e) if e.rename.is_none());
+    let bare_extern = |item: &syn::Item| matches!(item, syn::Item::ExternCrate(e) if e.rename.is_none() && e.attrs.is_empty());
     let mut file = match syn::parse_str::<syn::File>(body) {
         Ok(file) if file.items.iter().any(is_main) => file,
         _ => {
@@ -363,6 +363,16 @@ mod tests {
     }
 
     #[test]
+    fn one_tuple_after_a_keyword_keeps_its_comma() {
+        let a = canonicalize("struct S;\ntrait T {}\nimpl T for (S,) {}");
+        let b = canonicalize("struct S;\ntrait T {}\nimpl T for (S) {}");
+        assert_ne!(a.text, b.text);
+        let c = canonicalize("fn f<T>() where (T,): Copy {}");
+        let d = canonicalize("fn f<T>() where (T): Copy {}");
+        assert_ne!(c.text, d.text);
+    }
+
+    #[test]
     fn trailing_comma_vec_macro_merges() {
         let a = canonicalize("vec![1, 2]");
         let b = canonicalize("vec![1, 2,]");
@@ -549,6 +559,13 @@ mod tests {
         let with_ec = canonicalize("# extern crate foo;\nfoo::run();");
         let without_ec = canonicalize("foo::run();");
         assert_eq!(with_ec.text, without_ec.text);
+    }
+
+    #[test]
+    fn an_attributed_extern_crate_stays() {
+        let a = canonicalize("#[macro_use]\nextern crate foo;\nbar!();");
+        let b = canonicalize("bar!();");
+        assert_ne!(a.text, b.text);
     }
 
     #[test]
@@ -752,6 +769,23 @@ mod tests {
     fn alpha_inline_mod_items_renamed() {
         let a = canonicalize("mod m { pub fn f() {} }\nfn main() { m::f(); }\n");
         let b = canonicalize("mod n { pub fn g() {} }\nfn main() { n::g(); }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_module_used_above_its_definition() {
+        let a = canonicalize("fn main() { m::f(); }\nmod m { pub fn f() {} }\n");
+        let b = canonicalize("fn main() { n::g(); }\nmod n { pub fn g() {} }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_nested_module_used_above_its_definition() {
+        let a = canonicalize(
+            "fn main() { m::inner::f(); }\nmod m { pub mod inner { pub fn f() {} } }\n",
+        );
+        let b =
+            canonicalize("fn main() { n::deep::g(); }\nmod n { pub mod deep { pub fn g() {} } }\n");
         assert_eq!(a.text, b.text);
     }
 
@@ -1138,6 +1172,37 @@ mod tests {
     fn alpha_free_name_in_format_string_stays_distinct() {
         let a = canonicalize("println!(\"{free_name}\")\n");
         let b = canonicalize("println!(\"{other_free}\")\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_value_literal_is_not_a_format_string() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{}\", \"{x}\");\n");
+        let b = canonicalize("let y = 1;\nprintln!(\"{}\", \"{y}\");\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn write_format_operand_is_the_second_argument() {
+        let a = canonicalize("let x = 1;\nwrite!(out, \"{x}\").unwrap();\n");
+        let b = canonicalize("let y = 1;\nwrite!(out, \"{y}\").unwrap();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn assert_eq_message_is_the_third_argument() {
+        let a = canonicalize("let x = 1;\nassert_eq!(x, 1, \"{x}\");\n");
+        let b = canonicalize("let y = 1;\nassert_eq!(y, 1, \"{y}\");\n");
+        assert_eq!(a.text, b.text);
+        let c = canonicalize("let x = 1;\nassert_eq!(\"{x}\", 1);\n");
+        let d = canonicalize("let y = 1;\nassert_eq!(\"{y}\", 1);\n");
+        assert_ne!(c.text, d.text);
+    }
+
+    #[test]
+    fn an_unknown_macro_keeps_its_literals() {
+        let a = canonicalize("let x = 1;\nmy_log!(\"{x}\");\n");
+        let b = canonicalize("let y = 1;\nmy_log!(\"{y}\");\n");
         assert_ne!(a.text, b.text);
     }
 

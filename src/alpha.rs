@@ -180,20 +180,23 @@ impl Renamer {
     }
 
     /// Rewrite macro arguments as expressions when they parse, so binders
-    /// inside them are visited, else token by token.
+    /// inside them are visited, else token by token. The literal at
+    /// `format_at` is a format string whose inline arguments rename too.
     fn rewrite_macro_tokens(
         &mut self,
         tokens: proc_macro2::TokenStream,
+        format_at: Option<usize>,
     ) -> proc_macro2::TokenStream {
         let Ok(mut args) = syn::parse2::<MacroArgs>(tokens.clone()) else {
             return self.rename_tokens(tokens);
         };
-        for expr in args.iter_mut() {
+        for (index, expr) in args.iter_mut().enumerate() {
             self.visit_expr_mut(expr);
-            if let syn::Expr::Lit(syn::ExprLit {
-                lit: syn::Lit::Str(lit),
-                ..
-            }) = expr
+            if Some(index) == format_at
+                && let syn::Expr::Lit(syn::ExprLit {
+                    lit: syn::Lit::Str(lit),
+                    ..
+                }) = expr
             {
                 *lit = rewrite_format_str(self, lit);
             }
@@ -241,6 +244,18 @@ impl quote::ToTokens for MacroArgs {
             Self::List(exprs) => exprs.to_tokens(tokens),
             Self::Repeat(exprs) => exprs.to_tokens(tokens),
         }
+    }
+}
+
+/// Index of the format string among the arguments of a std macro.
+fn format_operand(path: &syn::Path) -> Option<usize> {
+    let name = path.segments.last()?.ident.to_string();
+    match name.as_str() {
+        "print" | "println" | "eprint" | "eprintln" | "format" | "format_args" | "panic"
+        | "unreachable" | "todo" | "unimplemented" => Some(0),
+        "write" | "writeln" | "assert" | "debug_assert" => Some(1),
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => Some(2),
+        _ => None,
     }
 }
 
@@ -425,6 +440,7 @@ fn fn_param_names<'a>(inputs: impl Iterator<Item = &'a syn::FnArg>) -> Vec<Strin
 
 /// Pre-bind item names so a use may precede its definition, skipping
 /// `macro_rules!` and `use`, which are visible only after their line.
+/// A module's items go into its own frame, saved under its canon.
 fn prebind<'a>(renamer: &mut Renamer, items: impl Iterator<Item = &'a syn::Item>) {
     for item in items {
         let (ns, ident) = match item {
@@ -439,7 +455,17 @@ fn prebind<'a>(renamer: &mut Renamer, items: impl Iterator<Item = &'a syn::Item>
             syn::Item::Mod(i) => (Ns::Type, &i.ident),
             _ => continue,
         };
-        renamer.bind(ns, &ident.to_string());
+        let canon = renamer.bind(ns, &ident.to_string());
+        if let syn::Item::Mod(syn::ItemMod {
+            content: Some((_, items)),
+            ..
+        }) = item
+        {
+            renamer.push();
+            prebind(renamer, items.iter());
+            let frame = renamer.frames.pop().expect("a scope frame");
+            renamer.mod_frames.insert(canon, frame);
+        }
     }
 }
 
@@ -817,8 +843,8 @@ impl VisitMut for Renamer {
             self.visit_attribute_mut(attr);
         }
         if let Some((_, items)) = &mut item.content {
-            self.push();
-            prebind(self, items.iter());
+            let frame = self.mod_frames.remove(&canon).unwrap_or_else(Frame::new);
+            self.frames.push(frame);
             for sub_item in items.iter_mut() {
                 syn::visit_mut::visit_item_mut(self, sub_item);
             }
@@ -923,23 +949,24 @@ impl VisitMut for Renamer {
 
     fn visit_path_mut(&mut self, path: &mut syn::Path) {
         // Only the first segment may name a local binder, and a leading
-        // colon always names an extern crate. A local module resolves
-        // the second segment through its saved frame.
+        // colon always names an extern crate. Each later segment resolves
+        // through the saved frame of the local module before it.
         if path.leading_colon.is_none()
-            && let Some(first) = path.segments.first()
-            && let Some(canon) = self.lookup(&[Ns::Value, Ns::Type], &first.ident.to_string())
+            && let Some(first) = path.segments.first_mut()
+            && let Some(mut canon) = self.lookup(&[Ns::Value, Ns::Type], &first.ident.to_string())
         {
-            let second = path.segments.get(1).and_then(|seg| {
-                let frame = self.mod_frames.get(&canon)?;
-                let name = seg.ident.to_string();
-                frame
-                    .lookup(Ns::Value, &name)
-                    .or_else(|| frame.lookup(Ns::Type, &name))
-                    .cloned()
-            });
-            path.segments[0].ident = Ident::new(&canon, path.segments[0].ident.span());
-            if let Some(canon) = second {
-                path.segments[1].ident = Ident::new(&canon, path.segments[1].ident.span());
+            first.ident = Ident::new(&canon, first.ident.span());
+            for segment in path.segments.iter_mut().skip(1) {
+                let name = segment.ident.to_string();
+                let Some(next) = self.mod_frames.get(&canon).and_then(|frame| {
+                    frame
+                        .lookup(Ns::Value, &name)
+                        .or_else(|| frame.lookup(Ns::Type, &name))
+                }) else {
+                    break;
+                };
+                canon = next.clone();
+                segment.ident = Ident::new(&canon, segment.ident.span());
             }
         }
         for segment in &mut path.segments {
@@ -967,7 +994,8 @@ impl VisitMut for Renamer {
                 first.ident = Ident::new(&canon, first.ident.span());
             }
         }
-        mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens));
+        let format_at = format_operand(&mac.path);
+        mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
     }
 
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {

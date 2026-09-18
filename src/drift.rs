@@ -25,10 +25,7 @@ pub(crate) fn strip_trailing_commas(stream: TokenStream) -> TokenStream {
                 TokenTree::Group(rebuilt)
             }
             TokenTree::Ident(ident) => {
-                after_callee = !matches!(
-                    ident.to_string().as_str(),
-                    "return" | "break" | "yield" | "in" | "if" | "while" | "match"
-                );
+                after_callee = !is_keyword(&ident.to_string());
                 TokenTree::Ident(ident)
             }
             other => {
@@ -39,6 +36,51 @@ pub(crate) fn strip_trailing_commas(stream: TokenStream) -> TokenStream {
         out.push(tree);
     }
     out.into_iter().collect()
+}
+
+/// True for the Rust keywords, none of which is a callee.
+fn is_keyword(ident: &str) -> bool {
+    matches!(
+        ident,
+        "as" | "async"
+            | "await"
+            | "break"
+            | "const"
+            | "continue"
+            | "crate"
+            | "dyn"
+            | "else"
+            | "enum"
+            | "extern"
+            | "false"
+            | "fn"
+            | "for"
+            | "if"
+            | "impl"
+            | "in"
+            | "let"
+            | "loop"
+            | "match"
+            | "mod"
+            | "move"
+            | "mut"
+            | "pub"
+            | "ref"
+            | "return"
+            | "self"
+            | "Self"
+            | "static"
+            | "struct"
+            | "super"
+            | "trait"
+            | "true"
+            | "type"
+            | "unsafe"
+            | "use"
+            | "where"
+            | "while"
+            | "yield"
+    )
 }
 
 /// `stream` without its last comma, unless the parenthesised group is a
