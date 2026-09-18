@@ -44,27 +44,54 @@ jobs:
 
 Review mode reports only the duplicates your pull request introduces, comparing each site against a scan of the base commit. Comments land on the copies to remove, a kept copy never gets one. Each comment links the copy that survives and GitHub renders those lines right in the comment, long ones collapsed behind a show link. The link points at the base commit for pre-existing copies and at the first added copy for groups the pull request created, and the removal suggestion deletes the copy together with an empty line left behind. Sites GitHub cannot anchor get permalinks in the review body. Set `only-new: false` to also report duplicates that predate the pull request.
 
-Forks run with a read-only `GITHUB_TOKEN`, the action skips the review and the job passes. To review forks, trigger on `pull_request_target` and check out the pull request head as below, a trigger that runs with write access, so read [GitHub's guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target) before opting the checkout in with `allow-unsafe-pr-checkout`.
+Every run also writes the report to the job summary and one annotation per copy to remove, which GitHub anchors to the line in the diff. Annotations are workflow output rather than API calls, so they need no token and a fork pull request shows the findings whatever the token allows. The `--github` flag prints them from the command line too, next to the usual report.
+
+Forks run with a read-only `GITHUB_TOKEN`, so the review itself cannot be posted, the annotations and the summary carry the findings and the job passes. The removal suggestion is the part a fork loses, since only a review comment can offer one. To keep it, prepare the review in the unprivileged run and post it from a second workflow that never checks out the pull request head.
 
 ```yaml
-on: pull_request_target
+on: pull_request
 jobs:
   dejadoc:
     runs-on: ubuntu-latest
-    permissions:
-      pull-requests: write
     steps:
-      - uses: actions/checkout@v7
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          allow-unsafe-pr-checkout: true
+      - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: LucaCappelletti94/cargo-dejadoc@v1
         with:
           pr-number: ${{ github.event.pull_request.number }}
+          mode: prepare
+          payload: dejadoc-payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+          if-no-files-found: ignore
 ```
 
-On a private repository, the setting **Send write tokens to workflows from pull requests** under Settings > Actions > General does the same without changing the trigger.
+```yaml
+on:
+  workflow_run:
+    workflows: [dejadoc]
+    types: [completed]
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          mode: post
+          payload: dejadoc-payload
+```
+
+The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token. `pull_request_target` grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
 
 The library builds the same report in memory.
 

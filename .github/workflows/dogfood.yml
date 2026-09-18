@@ -20,6 +20,8 @@ jobs:
           cwd: tests/fixtures/dupws
           pr-number: ${{ github.event.pull_request.number }}
           dry-run: ${{ github.event_name == 'push' }}
+          # The fixture duplicates are deliberate, so they are not flagged on this repository's own diffs.
+          annotations: false
       - name: Check the posting behavior
         env:
           GH_TOKEN: ${{ github.token }}
@@ -73,6 +75,48 @@ jobs:
               ;;
             *)
               echo "unexpected post status: $status"
+              exit 1
+              ;;
+          esac
+
+  payload:
+    name: Prepare a review payload without posting it
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./
+        with:
+          cwd: tests/fixtures/dupws
+          pr-number: ${{ github.event.pull_request.number }}
+          mode: prepare
+          payload: dejadoc-payload
+          only-new: false
+          annotations: false
+      - name: Check the prepared payload
+        run: |
+          set -euo pipefail
+          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          jq -e '.pr != "" and (.head_sha | length) == 40' dejadoc-payload/review.json > /dev/null \
+            || { echo "the payload metadata is incomplete"; exit 1; }
+          case "$status" in
+            prepared)
+              rows="$(wc -l < dejadoc-payload/comments.ndjson)"
+              [ "$rows" = "4" ] || { echo "expected one row per removable copy, got $rows"; exit 1; }
+              jq -e 'select(.path | startswith("tests/fixtures/dupws/")) | .line >= .start_line and (.body | contains("```suggestion"))' \
+                dejadoc-payload/comments.ndjson > /dev/null \
+                || { echo "a payload row is malformed"; exit 1; }
+              echo "the prepared payload holds one postable comment per removable copy"
+              ;;
+            skipped-nodiff)
+              [ ! -s dejadoc-payload/comments.ndjson ] \
+                || { echo "a skipped payload must hold no comment"; exit 1; }
+              echo "the fixture files are not in this pull request diff, the payload is empty as expected"
+              ;;
+            *)
+              echo "unexpected prepare status: $status"
               exit 1
               ;;
           esac

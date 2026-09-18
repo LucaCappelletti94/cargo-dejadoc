@@ -67,6 +67,42 @@ pub fn json(report: &Report) -> String {
     serde_json::to_string(report).expect("Report serializes to JSON")
 }
 
+/// Render the report as GitHub workflow annotations, one per copy to
+/// remove. They need no token, so a fork pull request still shows them
+/// anchored in the diff.
+#[must_use]
+pub fn annotations(report: &Report, no_fail: bool) -> String {
+    let level = if no_fail { "warning" } else { "error" };
+    let mut out = String::new();
+    for group in &report.groups {
+        let Some((kept, copies)) = group.sites.split_first() else {
+            continue;
+        };
+        for copy in copies {
+            let _ = writeln!(
+                &mut out,
+                "::{level} file={},line={},title=dejadoc::{} duplicates the doctest of {} at {}:{}, group {}",
+                copy.file.as_str(),
+                copy.line,
+                escape(&copy.item),
+                escape(&kept.item),
+                escape(kept.file.as_str()),
+                kept.line,
+                group.id
+            );
+        }
+    }
+    out
+}
+
+/// A workflow command message, with the characters that would end it or
+/// its properties percent encoded.
+fn escape(text: &str) -> String {
+    text.replace('%', "%25")
+        .replace('\r', "%0D")
+        .replace('\n', "%0A")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -186,5 +222,62 @@ mod tests {
             human(&report, false),
             "4 doctests, 2 unique, 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n"
         );
+    }
+
+    #[test]
+    fn annotations_mark_every_copy_but_the_first() {
+        let out = annotations(&report(), false);
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines.len(), 1);
+        assert_eq!(
+            lines[0],
+            "::error file=src/b.rs,line=97,title=dejadoc::m::b duplicates the doctest of m::a at src/a.rs:14, group ab12cd34"
+        );
+    }
+
+    #[test]
+    fn annotations_warn_when_the_run_cannot_fail() {
+        let out = annotations(&report(), true);
+        assert!(out.starts_with("::warning file=src/b.rs,line=97,"), "{out}");
+    }
+
+    #[test]
+    fn annotations_are_empty_without_duplicates() {
+        let clean = Report {
+            total: 3,
+            unique: 3,
+            groups: Vec::new(),
+        };
+        assert_eq!(annotations(&clean, false), "");
+    }
+
+    #[test]
+    fn annotations_skip_a_group_without_sites() {
+        let mut empty = report();
+        empty.groups[0].sites.clear();
+        assert_eq!(annotations(&empty, false), "");
+    }
+
+    #[test]
+    fn annotations_mark_every_later_site_of_a_larger_group() {
+        let mut three = report();
+        three.groups[0]
+            .sites
+            .push(site("src/c.rs", 3, "m::c", "fn f() {}", &[]));
+        let out = annotations(&three, false);
+        assert_eq!(out.lines().count(), 2);
+        assert!(out.contains("file=src/c.rs,line=3,"), "{out}");
+        assert!(
+            out.lines().all(|l| l.contains("of m::a at src/a.rs:14")),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn annotations_escape_the_message() {
+        let mut odd = report();
+        odd.groups[0].sites[0].item = "m::a%weird".into();
+        let out = annotations(&odd, false);
+        assert!(out.contains("of m::a%25weird at"), "{out}");
     }
 }

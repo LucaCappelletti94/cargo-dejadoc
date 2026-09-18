@@ -144,6 +144,28 @@ fn binary_runs_end_to_end() {
 }
 
 #[test]
+fn binary_prints_annotations_beside_the_report() {
+    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let out = Command::new(bin)
+        .current_dir(FIXTURE)
+        .arg("dejadoc")
+        .arg("--github")
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(out.status.code(), Some(1));
+    let text = String::from_utf8(out.stdout).expect("utf8 output");
+    assert!(text.contains("9 doctests, 4 unique"), "{text}");
+    let marks: Vec<&str> = text.lines().filter(|l| l.starts_with("::")).collect();
+    assert_eq!(marks.len(), 4, "{text}");
+    assert!(
+        marks
+            .iter()
+            .all(|l| l.starts_with("::error file=") && l.contains("title=dejadoc::")),
+        "{text}"
+    );
+}
+
+#[test]
 fn package_named_dejadoc_is_not_filtered() {
     // Only the cargo subcommand token at position 1 is stripped; a flag
     // value that happens to be "dejadoc" must survive to clap.
