@@ -47,11 +47,20 @@ inputs:
     description: Annotate each copy to remove, which needs no token
     required: false
     default: 'true'
+  mode:
+    description: "review posts the findings in one job, prepare writes the payload for a later job, post consumes it"
+    required: false
+    default: 'review'
+  payload:
+    description: Directory holding the prepared review, written by prepare and read by post
+    required: false
+    default: ''
 
 runs:
   using: 'composite'
   steps:
     - name: Install dejadoc
+      if: ${{ inputs.mode != 'post' }}
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -105,6 +114,7 @@ runs:
 
     - name: Scan for duplicated doctests
       id: scan
+      if: ${{ inputs.mode != 'post' }}
       shell: bash
       working-directory: ${{ inputs.cwd }}
       env:
@@ -161,7 +171,7 @@ runs:
         fi
 
     - name: Scan the base commit
-      if: ${{ inputs.pr-number != '' && inputs.only-new == 'true' }}
+      if: ${{ inputs.pr-number != '' && inputs.only-new == 'true' && inputs.mode != 'post' }}
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -199,8 +209,8 @@ runs:
           echo "dejadoc: the base scan failed, the full report is reviewed"
         fi
 
-    - name: Post the findings as a pull request review
-      if: ${{ steps.scan.outputs.found == 'true' && (inputs.pr-number != '' || inputs.dry-run == 'true') }}
+    - name: Review the findings on the pull request
+      if: ${{ inputs.mode == 'post' || (steps.scan.outputs.found == 'true' && (inputs.pr-number != '' || inputs.dry-run == 'true')) }}
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -208,6 +218,8 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         CWD: ${{ inputs.cwd }}
         ANNOTATIONS: ${{ inputs.annotations }}
+        MODE: ${{ inputs.mode }}
+        PAYLOAD: ${{ inputs.payload }}
       run: |
         # No set -e here. Each step checks its own status and writes an outcome file, so a
         # failed api call degrades to a skipped review instead of aborting the run.
@@ -220,9 +232,29 @@ runs:
         body="$RUNNER_TEMP/dejadoc-review.md"
         status="$RUNNER_TEMP/dejadoc-post-status"
         inline_file="$RUNNER_TEMP/dejadoc-inline.tsv"
+        mode="$MODE"
+        payload="${PAYLOAD:-$RUNNER_TEMP/dejadoc-payload}"
+        comments="$payload/comments.ndjson"
+        meta="$payload/review.json"
+        mkdir -p "$payload"
+        failed_sites=''
+        out_of_range=''
         onlynew=0
         [ -s "$base_report" ] && onlynew=1
         base_sha="$(cat "$RUNNER_TEMP/dejadoc-base-sha" 2>/dev/null || echo '')"
+        # Post mode consumes a payload another job prepared, so it reads no
+        # source tree and skips straight to the api calls.
+        if [ "$mode" = "post" ]; then
+          if [ ! -s "$meta" ]; then
+            echo "dejadoc: the prepared review is missing from $payload"
+            echo "failed" > "$status"
+            exit 1
+          fi
+          pr="$(jq -r '.pr' "$meta")"
+          head_sha="$(jq -r '.head_sha' "$meta")"
+          out_of_range="$(jq -r '.out_of_range' "$meta")"
+          findings="$(jq -r '.findings' "$meta")"
+        else
         # The head SHA and changed file list, empty when there is no pull request.
         head_sha=''
         changed_files=''
@@ -389,9 +421,6 @@ runs:
             printf '%s' "$RUNNER_TEMP/dejadoc-base/$1"
           fi
         }
-        readonly=0
-        failed_sites=''
-        out_of_range=''
         rendered=''
         findings=''
         # One pass builds every comment, live posts them, the dry run renders them.
@@ -474,34 +503,14 @@ runs:
             rendered+="$comment"$'\n\n'
             continue
           fi
-          fields=(-F "start_line=$line" -F "line=$delete_end" -f start_side=RIGHT -f side=RIGHT)
-          if ! err="$(gh api "repos/$repo/pulls/$pr/comments" \
-            -f "commit_id=$head_sha" -f "path=$p" "${fields[@]}" \
-            -f "body=$comment" 2>&1)"; then
-            if printf '%s' "$err" | grep -qE 'HTTP 403|"status": "403"'; then
-              readonly=1
-              break
-            fi
-            printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
-            printf '%s\n' "$err" | sed 's/^/dejadoc: /'
-            if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
-              out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line" "$close_line")  $item"$'\n'
-            else
-              failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
-            fi
-          fi
+          # One row per comment, so a later job can post it without the
+          # source tree it was computed from.
+          jq -cn --arg path "$p" --arg start "$line" --arg stop "$delete_end" \
+            --arg group "$g" --arg item "$item" --arg close "$close_line" --arg body "$comment" \
+            '{path: $path, start_line: ($start | tonumber), line: ($stop | tonumber),
+              group: $group, item: $item, close_line: ($close | tonumber), body: $body}' \
+            >> "$comments"
         done < "$inline_file"
-
-        # The reported copies in the run summary, beside the whole scan the
-        # scan step wrote there.
-        if [ -n "$findings" ] && [ "$dry" != "true" ]; then
-          {
-            echo
-            echo '#### Copies to remove'
-            echo
-            printf '%s' "$findings"
-          } >> "$GITHUB_STEP_SUMMARY"
-        fi
 
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then
@@ -544,7 +553,7 @@ runs:
           exit 0
         fi
 
-        if [ ! -s "$inline_file" ]; then
+        if [ ! -s "$inline_file" ] && [ "$mode" != "post" ]; then
           if [ "$onlynew" = "1" ]; then
             echo "dejadoc: no duplicate was introduced by this pull request, the review is not posted"
             echo "skipped-existing" > "$status"
@@ -555,10 +564,54 @@ runs:
           exit 0
         fi
 
+          jq -n --arg pr "$pr" --arg head "$head_sha" --arg oor "$out_of_range" --arg f "$findings" \
+            '{pr: $pr, head_sha: $head, out_of_range: $oor, findings: $f}' > "$meta"
+        fi
+        # The reported copies in the run summary, beside the whole scan the
+        # scan step wrote there.
+        if [ -n "$findings" ] && [ "$dry" != "true" ]; then
+          {
+            echo
+            echo '#### Copies to remove'
+            echo
+            printf '%s' "$findings"
+          } >> "$GITHUB_STEP_SUMMARY"
+        fi
+        if [ "$mode" = "prepare" ]; then
+          echo "dejadoc: the review is prepared in $payload for a later job"
+          echo "prepared" > "$status"
+          exit 0
+        fi
+
         readonly_notice() {
           echo "dejadoc: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
           echo "dejadoc: the annotations and the run summary carry the findings, the removal suggestion needs a review comment"
         }
+        # The first post is the permission probe.
+        readonly=0
+        while IFS= read -r row; do
+          [ -n "$row" ] || continue
+          p="$(printf '%s' "$row" | jq -r '.path')"
+          line="$(printf '%s' "$row" | jq -r '.start_line')"
+          if ! err="$(printf '%s' "$row" | jq -r '.body' | gh api "repos/$repo/pulls/$pr/comments" \
+            -f "commit_id=$head_sha" -f "path=$p" \
+            -F "start_line=$line" -F "line=$(printf '%s' "$row" | jq -r '.line')" \
+            -f start_side=RIGHT -f side=RIGHT -F 'body=@-' 2>&1)"; then
+            if printf '%s' "$err" | grep -qE 'HTTP 403|"status": "403"'; then
+              readonly=1
+              break
+            fi
+            item="$(printf '%s' "$row" | jq -r '.item')"
+            g="$(printf '%s' "$row" | jq -r '.group')"
+            printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
+            printf '%s\n' "$err" | sed 's/^/dejadoc: /'
+            if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
+              out_of_range="$out_of_range- group $g  $(printf '`%s:%s`' "$p" "$line")  $item"$'\n'
+            else
+              failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
+            fi
+          fi
+        done < "$comments"
         if [ "$readonly" = "1" ]; then
           readonly_notice
           echo "skipped-readonly" > "$status"

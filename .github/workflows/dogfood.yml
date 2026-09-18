@@ -78,3 +78,35 @@ jobs:
               exit 1
               ;;
           esac
+
+  payload:
+    name: Prepare a review payload without posting it
+    runs-on: ubuntu-latest
+    if: ${{ github.event_name == 'pull_request' }}
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ./
+        with:
+          cwd: tests/fixtures/dupws
+          pr-number: ${{ github.event.pull_request.number }}
+          mode: prepare
+          payload: dejadoc-payload
+          only-new: false
+          annotations: false
+      - name: Check the payload and the post mode guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          [ "$status" = "prepared" ] || { echo "expected a prepared payload, got $status"; exit 1; }
+          jq -e '.pr != "" and (.head_sha | length) == 40' dejadoc-payload/review.json > /dev/null \
+            || { echo "the payload metadata is incomplete"; exit 1; }
+          rows="$(wc -l < dejadoc-payload/comments.ndjson)"
+          [ "$rows" = "4" ] || { echo "expected one row per removable copy, got $rows"; exit 1; }
+          jq -e 'select(.path | startswith("tests/fixtures/dupws/")) | .line >= .start_line and (.body | contains("```suggestion"))' \
+            dejadoc-payload/comments.ndjson > /dev/null \
+            || { echo "a payload row is malformed"; exit 1; }
+          echo "the prepared payload holds one postable comment per removable copy"

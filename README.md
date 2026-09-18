@@ -46,9 +46,52 @@ Review mode reports only the duplicates your pull request introduces, comparing 
 
 Every run also writes the report to the job summary and one annotation per copy to remove, which GitHub anchors to the line in the diff. Annotations are workflow output rather than API calls, so they need no token and a fork pull request shows the findings whatever the token allows. The `--github` flag prints them from the command line too, next to the usual report.
 
-Forks run with a read-only `GITHUB_TOKEN`, so the review itself cannot be posted, the annotations and the summary carry the findings and the job passes. The removal suggestion is the part a fork loses, since only a review comment can offer one. To post reviews on forks as well, keep the `pull_request` trigger and let a second workflow post from the base branch, as [GitHub's guidance](https://docs.github.com/en/actions/reference/security/securely-using-pull_request_target) describes, or on a private repository enable **Send write tokens to workflows from pull requests** under Settings > Actions > General.
+Forks run with a read-only `GITHUB_TOKEN`, so the review itself cannot be posted, the annotations and the summary carry the findings and the job passes. The removal suggestion is the part a fork loses, since only a review comment can offer one. To keep it, prepare the review in the unprivileged run and post it from a second workflow that never checks out the pull request head.
 
-`pull_request_target` also grants write access, and the action still accepts it, but the recipe means checking out the pull request head in a privileged job, so it is not the path this README recommends.
+```yaml
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          mode: prepare
+          payload: dejadoc-payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+          if-no-files-found: ignore
+```
+
+```yaml
+on:
+  workflow_run:
+    workflows: [dejadoc]
+    types: [completed]
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          mode: post
+          payload: dejadoc-payload
+```
+
+The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token. `pull_request_target` grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
 
 The library builds the same report in memory.
 
