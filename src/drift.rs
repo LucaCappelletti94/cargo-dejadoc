@@ -5,91 +5,32 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
-use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
+use proc_macro2::{Group, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;
 
-/// Drop the trailing comma of every group, keeping the one that makes
-/// a one-tuple.
+/// Drop the trailing comma of every token group. A one-tuple keeps its
+/// meaning because the fold of redundant parentheses already separates
+/// it from the parenthesised expression of the same element.
 pub(crate) fn strip_trailing_commas(stream: TokenStream) -> TokenStream {
-    let mut out = Vec::new();
-    let mut after_callee = false;
-    for tree in stream {
-        let tree = match tree {
+    stream
+        .into_iter()
+        .map(|tree| match tree {
             TokenTree::Group(group) => {
-                let call = after_callee && group.delimiter() == Delimiter::Parenthesis;
-                let inner = strip_last_comma(strip_trailing_commas(group.stream()), &group, call);
+                let inner = strip_last_comma(strip_trailing_commas(group.stream()));
                 let mut rebuilt = Group::new(group.delimiter(), inner);
                 rebuilt.set_span(group.span());
-                after_callee = true;
                 TokenTree::Group(rebuilt)
             }
-            TokenTree::Ident(ident) => {
-                after_callee = !is_keyword(&ident.to_string());
-                TokenTree::Ident(ident)
-            }
-            other => {
-                after_callee = false;
-                other
-            }
-        };
-        out.push(tree);
-    }
-    out.into_iter().collect()
+            other => other,
+        })
+        .collect()
 }
 
-/// True for the Rust keywords, none of which is a callee.
-fn is_keyword(ident: &str) -> bool {
-    matches!(
-        ident,
-        "as" | "async"
-            | "await"
-            | "break"
-            | "const"
-            | "continue"
-            | "crate"
-            | "dyn"
-            | "else"
-            | "enum"
-            | "extern"
-            | "false"
-            | "fn"
-            | "for"
-            | "if"
-            | "impl"
-            | "in"
-            | "let"
-            | "loop"
-            | "match"
-            | "mod"
-            | "move"
-            | "mut"
-            | "pub"
-            | "ref"
-            | "return"
-            | "self"
-            | "Self"
-            | "static"
-            | "struct"
-            | "super"
-            | "trait"
-            | "true"
-            | "type"
-            | "unsafe"
-            | "use"
-            | "where"
-            | "while"
-            | "yield"
-    )
-}
-
-/// `stream` without its last comma, unless the parenthesised group is a
-/// one-tuple rather than a single-argument call.
-fn strip_last_comma(stream: TokenStream, group: &Group, call: bool) -> TokenStream {
+/// `stream` without its last comma.
+fn strip_last_comma(stream: TokenStream) -> TokenStream {
     let mut tokens: Vec<TokenTree> = stream.into_iter().collect();
-    let commas = tokens.iter().filter(|tree| is_comma(tree)).count();
-    let one_tuple = group.delimiter() == Delimiter::Parenthesis && !call && commas == 1;
-    if tokens.last().is_some_and(is_comma) && !one_tuple {
+    if tokens.last().is_some_and(is_comma) {
         tokens.pop();
     }
     tokens.into_iter().collect()
@@ -108,7 +49,7 @@ pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
     let mut after_bang = false;
     for tree in stream {
         let tree = match tree {
-            TokenTree::Literal(lit) if !after_bang => {
+            TokenTree::Literal(lit) => {
                 let span = lit.span();
                 match syn::parse_str::<syn::Lit>(&lit.to_string()) {
                     Ok(parsed) => canon_one_lit(parsed, span),
@@ -154,26 +95,24 @@ fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
 }
 
 /// Canonical decimal string for a float's digit part, text only so the
-/// canonical form never depends on the feature set.
+/// canonical form never depends on the feature set. `syn` has already
+/// dropped the underscores, a `+` exponent sign and an upper case `E`.
 fn canon_float_str(s: &str) -> String {
-    let stripped = s.replace('_', "");
-    let (mantissa, exponent) = match stripped.split_once(['e', 'E']) {
+    let (mantissa, exponent) = match s.split_once('e') {
         Some((mantissa, exponent)) => (mantissa, Some(exponent)),
-        None => (stripped.as_str(), None),
+        None => (s, None),
     };
     let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
     let fraction = fraction.trim_end_matches('0');
-    let mut out = String::with_capacity(stripped.len());
+    let mut out = String::with_capacity(s.len());
     out.push_str(whole);
     out.push('.');
     out.push_str(if fraction.is_empty() { "0" } else { fraction });
     if let Some(exponent) = exponent {
         out.push('e');
-        let (sign, digits) = match exponent.split_at_checked(1) {
-            Some(("-", digits)) => ("-", digits),
-            Some(("+", digits)) => ("", digits),
-            _ => ("", exponent),
-        };
+        let (sign, digits) = exponent
+            .strip_prefix('-')
+            .map_or(("", exponent), |digits| ("-", digits));
         out.push_str(sign);
         let digits = digits.trim_start_matches('0');
         out.push_str(if digits.is_empty() { "0" } else { digits });
@@ -516,8 +455,9 @@ fn hoist_uses<T>(
 }
 
 /// True when every attribute on `item` would be removed by
-/// `strip_inert_attrs`, meaning the item can be safely hoisted without
-/// keeping any attribute that might reference a local binding.
+/// `strip_inert_attrs`, meaning hoisting it cannot move an attribute
+/// that references a local binding. `use` items never reach here,
+/// `hoist_uses` has already taken them.
 fn item_has_only_inert_attrs(item: &syn::Item) -> bool {
     let attrs: &[syn::Attribute] = match item {
         syn::Item::Const(v) => &v.attrs,
@@ -526,7 +466,6 @@ fn item_has_only_inert_attrs(item: &syn::Item) -> bool {
         syn::Item::Fn(v) => &v.attrs,
         syn::Item::ForeignMod(v) => &v.attrs,
         syn::Item::Impl(v) => &v.attrs,
-        syn::Item::Macro(v) => &v.attrs,
         syn::Item::Mod(v) => &v.attrs,
         syn::Item::Static(v) => &v.attrs,
         syn::Item::Struct(v) => &v.attrs,
@@ -534,7 +473,6 @@ fn item_has_only_inert_attrs(item: &syn::Item) -> bool {
         syn::Item::TraitAlias(v) => &v.attrs,
         syn::Item::Type(v) => &v.attrs,
         syn::Item::Union(v) => &v.attrs,
-        syn::Item::Use(v) => &v.attrs,
         _ => return true,
     };
     attrs.iter().all(is_inert_attr)

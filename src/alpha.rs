@@ -391,7 +391,6 @@ fn rewrite_pat_bindings(renamer: &mut Renamer, pat: &mut syn::Pat) {
             }
         }
         syn::Pat::Reference(reference) => rewrite_pat_bindings(renamer, &mut reference.pat),
-        syn::Pat::Paren(paren) => rewrite_pat_bindings(renamer, &mut paren.pat),
         syn::Pat::Type(type_pat) => rewrite_pat_bindings(renamer, &mut type_pat.pat),
         syn::Pat::Guard(guard) => rewrite_pat_bindings(renamer, &mut guard.pat),
         _ => {}
@@ -435,7 +434,6 @@ fn pattern_names(pat: &syn::Pat, out: &mut Vec<String>) {
             }
         }
         syn::Pat::Reference(reference) => pattern_names(&reference.pat, out),
-        syn::Pat::Paren(paren) => pattern_names(&paren.pat, out),
         syn::Pat::Type(type_pat) => pattern_names(&type_pat.pat, out),
         syn::Pat::Guard(guard) => pattern_names(&guard.pat, out),
         _ => {}

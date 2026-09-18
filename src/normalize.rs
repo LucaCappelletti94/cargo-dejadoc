@@ -395,6 +395,20 @@ mod tests {
     }
 
     #[test]
+    fn macro_in_an_impl_item_delimiter_merges() {
+        let a = canonicalize("struct S;\nimpl S { my_items! {1} }");
+        let b = canonicalize("struct S;\nimpl S { my_items!(1); }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_in_a_trait_item_delimiter_merges() {
+        let a = canonicalize("trait T { my_items! {1} }");
+        let b = canonicalize("trait T { my_items!(1); }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn item_level_macro_without_ident_merges() {
         let a = canonicalize("fn main() {}\nfoo! { x }");
         let b = canonicalize("fn main() {}\nfoo!(x);");
@@ -510,6 +524,21 @@ mod tests {
     #[test]
     fn char_unicode_escape_and_literal_agree() {
         assert_eq!(canonicalize(r"'\u{41}'").text, canonicalize("'A'").text);
+    }
+
+    #[test]
+    fn exponent_sign_and_padding_agree() {
+        assert_eq!(canonicalize("1.0e-03").text, canonicalize("1.0e-3").text);
+        assert_eq!(canonicalize("1.0e+3").text, canonicalize("1.0e3").text);
+        assert_ne!(canonicalize("1.0e-3").text, canonicalize("1.0e3").text);
+    }
+
+    #[test]
+    fn byte_and_c_literals_agree_with_their_escapes() {
+        assert_eq!(canonicalize(r"b'\x41'").text, canonicalize("b'A'").text);
+        assert_eq!(canonicalize(r#"br"a""#).text, canonicalize(r#"b"a""#).text);
+        assert_eq!(canonicalize(r#"cr"a""#).text, canonicalize(r#"c"a""#).text);
+        assert_ne!(canonicalize(r#"b"a""#).text, canonicalize(r#"b"b""#).text);
     }
 
     #[test]
@@ -848,6 +877,56 @@ fn f() {}"#,
         let a = canonicalize("let _p = P;\nstruct P;");
         let b = canonicalize("struct P;\nlet _p = P;");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn every_hoistable_item_kind_moves() {
+        const ITEMS: &[&str] = &[
+            "const C: u8 = 1;",
+            "enum E { A }",
+            "extern crate foo as bar;",
+            "fn g() {}",
+            "extern \"C\" { fn cf(); }",
+            "impl S {}",
+            "mod md {}",
+            "static ST: u8 = 1;",
+            "struct S;",
+            "trait T {}",
+            "trait TA = T;",
+            "type Ty = u8;",
+            "union U { n: u8 }",
+            "use a::b;",
+        ];
+        for item in ITEMS {
+            let front = canonicalize(&format!("#[allow(unused)]\n{item}\nlet _x = 1;\n"));
+            let back = canonicalize(&format!("let _x = 1;\n#[allow(unused)]\n{item}\n"));
+            assert_eq!(front.text, back.text, "{item}");
+        }
+    }
+
+    #[test]
+    fn an_item_with_a_live_attribute_keeps_its_place() {
+        const ITEMS: &[&str] = &[
+            "const C: u8 = 1;",
+            "enum E { A }",
+            "extern crate foo as bar;",
+            "fn g() {}",
+            "extern \"C\" { fn cf(); }",
+            "impl S {}",
+            "m! {}",
+            "mod md {}",
+            "static ST: u8 = 1;",
+            "struct S;",
+            "trait T {}",
+            "trait TA = T;",
+            "type Ty = u8;",
+            "union U { n: u8 }",
+        ];
+        for item in ITEMS {
+            let front = canonicalize(&format!("#[cfg(unix)]\n{item}\nlet _x = 1;\n"));
+            let back = canonicalize(&format!("let _x = 1;\n#[cfg(unix)]\n{item}\n"));
+            assert_ne!(front.text, back.text, "{item}");
+        }
     }
 
     #[test]
@@ -1938,6 +2017,9 @@ fn f() {}"#,
         assert_eq!(a.text, b.text);
         let c = canonicalize("trait Pino = Clone;\nfn f<T: Copy>() {}\n");
         assert_ne!(a.text, c.text);
+        let forward_pino = canonicalize("fn f<T: Pino>() {}\ntrait Pino = Clone;\n");
+        let forward_abete = canonicalize("fn f<T: Abete>() {}\ntrait Abete = Clone;\n");
+        assert_eq!(forward_pino.text, forward_abete.text);
     }
 
     #[test]
