@@ -53,6 +53,10 @@ pub fn human(report: &Report, verbose: bool) -> String {
             out.push('\n');
         }
     }
+    out.push('\n');
+    out.push_str(
+        "Remove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n",
+    );
     out
 }
 
@@ -156,7 +160,7 @@ mod tests {
     fn human_group_section_without_code() {
         assert_eq!(
             human(&report(), false),
-            "34 doctests, 12 unique, 1 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a   (no_run)\n  src/b.rs:97  m::b\n"
+            "34 doctests, 12 unique, 1 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a   (no_run)\n  src/b.rs:97  m::b\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
         );
     }
 
@@ -220,7 +224,7 @@ mod tests {
         };
         assert_eq!(
             human(&report, false),
-            "4 doctests, 2 unique, 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n"
+            "4 doctests, 2 unique, 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
         );
     }
 
