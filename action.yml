@@ -159,6 +159,12 @@ runs:
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
             "${gate[@]}" "$@" > "$out" || status=$?
+          # The scan runs in cwd, GitHub resolves an annotation path from the
+          # repository root. In-place sed differs between GNU and BSD.
+          if [ -n "$CWD" ] && [ "$CWD" != "." ]; then
+            sed "s|^::\\([a-z]*\\) file=|::\\1 file=${CWD%/}/|" "$out" > "$out.rooted"
+            mv "$out.rooted" "$out"
+          fi
           cat "$out"
           {
             echo '### dejadoc'
