@@ -109,9 +109,9 @@ fn all_targets_builder_scans_bin_targets() {
 
 #[test]
 fn min_tokens_builder_filters_blocks() {
-    // min-tokens 3 drops the 2-token function group; only the
-    // 3-token unparsed group survives.
-    let report = Dejadoc::default().min_tokens(3).run(FIXTURE).unwrap();
+    // min-tokens 4 drops the 3-token unparsed group; only the
+    // 4-token function group survives.
+    let report = Dejadoc::default().min_tokens(4).run(FIXTURE).unwrap();
     assert_eq!(report.total, 9);
     assert_eq!(report.groups.len(), 1);
 }

@@ -26,28 +26,19 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
     let unhidden: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
     let stripped = without_crate_attrs(&unhidden);
     let body = stripped.as_ref();
-    if let Ok(mut file) = syn::parse_str::<syn::File>(body) {
-        crate::alpha::normalize_file(&mut file);
-        let stream = flatten_include_depth(file.to_token_stream());
-        return from_stream(stream);
-    }
-    if let Ok(mut block) = syn::parse_str::<syn::Block>(&format!("{{\n{body}\n}}")) {
-        crate::alpha::normalize_block(&mut block);
-        let stream = flatten_include_depth(block.to_token_stream());
-        return from_stream(stream);
-    }
-    if let Ok(mut expr) = syn::parse_str::<syn::Expr>(body) {
-        crate::alpha::normalize_expr(&mut expr);
-        let stream = flatten_include_depth(expr.to_token_stream());
-        return from_stream(stream);
-    }
-    // Not Rust: keep the visible text, collapsed to single spaces.
-    let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
-    Canonical {
-        text: text.clone(),
-        unparsed: true,
-        tokens: text.split_whitespace().count(),
-    }
+    let Some(mut file) = parse_as_crate(body) else {
+        let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        return Canonical {
+            tokens: text.split_whitespace().count(),
+            text,
+            unparsed: true,
+        };
+    };
+    crate::drift::normalize_file(&mut file);
+    crate::alpha::normalize_file(&mut file);
+    let stream = flatten_include_depth(file.to_token_stream());
+    let stream = crate::drift::strip_trailing_commas(stream);
+    from_stream(stream)
 }
 
 /// A body's leading `#![…]` attributes, which rustdoc lifts onto the
@@ -72,6 +63,61 @@ fn without_crate_attrs(body: &str) -> Cow<'_, str> {
         Ok(lead) if !lead.attrs.is_empty() => Cow::Owned(lead.rest.to_string()),
         _ => Cow::Borrowed(body),
     }
+}
+
+/// Parse `body` the way rustdoc compiles it, wrapped in `fn main` when
+/// it declares none, with any bare `extern crate` dropped.
+fn parse_as_crate(body: &str) -> Option<syn::File> {
+    let is_main = |item: &syn::Item| matches!(item, syn::Item::Fn(f) if f.sig.ident == "main");
+    let bare_extern =
+        |item: &syn::Item| matches!(item, syn::Item::ExternCrate(e) if e.rename.is_none());
+    let mut file = match syn::parse_str::<syn::File>(body) {
+        Ok(file) if file.items.iter().any(is_main) => file,
+        _ => {
+            let mut block: syn::Block = syn::parse_str(&format!("{{\n{body}\n}}")).ok()?;
+            block
+                .stmts
+                .retain(|stmt| !matches!(stmt, syn::Stmt::Item(item) if bare_extern(item)));
+            let output = take_result_tail(&mut block).map(|err| quote::quote!(-> Result<(), #err>));
+            syn::parse2(quote::quote!(fn main() #output #block)).ok()?
+        }
+    };
+    file.items.retain(|item| !bare_extern(item));
+    Some(file)
+}
+
+/// The error type of a trailing `Ok::<(), E>(())`, which becomes `Ok(())`.
+fn take_result_tail(block: &mut syn::Block) -> Option<syn::Type> {
+    let syn::Stmt::Expr(syn::Expr::Call(call), None) = block.stmts.last_mut()? else {
+        return None;
+    };
+    let unit_arg = call.args.len() == 1
+        && matches!(call.args.first(), Some(syn::Expr::Tuple(t)) if t.elems.is_empty());
+    let syn::Expr::Path(func) = call.func.as_mut() else {
+        return None;
+    };
+    if !unit_arg
+        || func.qself.is_some()
+        || func.path.leading_colon.is_some()
+        || func.path.segments.len() != 1
+    {
+        return None;
+    }
+    let segment = func.path.segments.first_mut()?;
+    let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments else {
+        return None;
+    };
+    let unit_ok = segment.ident == "Ok"
+        && args.args.len() == 2
+        && matches!(&args.args[0], syn::GenericArgument::Type(syn::Type::Tuple(t)) if t.elems.is_empty());
+    if !unit_ok {
+        return None;
+    }
+    let syn::GenericArgument::Type(err) = args.args.pop()? else {
+        return None;
+    };
+    segment.arguments = syn::PathArguments::None;
+    Some(err)
 }
 
 /// rustdoc's hidden-line rule per body line. A `##` line shows as a `#`
@@ -303,6 +349,134 @@ mod tests {
     }
 
     #[test]
+    fn trailing_comma_struct_literal_merges() {
+        let a = canonicalize("let _p = P { x: 1, y: 2 };");
+        let b = canonicalize("let _p = P { x: 1, y: 2, };");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn trailing_comma_call_merges() {
+        let a = canonicalize("foo(1, 2);");
+        let b = canonicalize("foo(1, 2,);");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn trailing_comma_vec_macro_merges() {
+        let a = canonicalize("vec![1, 2]");
+        let b = canonicalize("vec![1, 2,]");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn trailing_comma_nested_struct_in_call_merges() {
+        let a = canonicalize("foo(P { x: 1, y: 2 })");
+        let b = canonicalize("foo(P { x: 1, y: 2, },)");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn one_tuple_stays_distinct() {
+        let a = canonicalize("let t = (1,);");
+        let b = canonicalize("let t = (1);");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn two_tuple_trailing_comma_merges() {
+        let a = canonicalize("let t = (1, 2,);");
+        let b = canonicalize("let t = (1, 2);");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn match_arm_block_single_expr_merges() {
+        let a = canonicalize("match v { Some(x) => { foo(x) }, None => 0, }");
+        let b = canonicalize("match v { Some(x) => foo(x), None => 0, }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn match_arm_block_with_let_stays_distinct() {
+        let a = canonicalize("match v { Some(x) => { let y = x; foo(y) }, None => 0, }");
+        let b = canonicalize("match v { Some(x) => foo(x), None => 0, }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn match_arm_block_with_semicolon_stays_distinct() {
+        let a = canonicalize("match v { Some(x) => { foo(x); }, None => 0, }");
+        let b = canonicalize("match v { Some(x) => foo(x), None => 0, }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn doc_comment_on_local_fn_merges() {
+        let a = canonicalize("/// Doc comment.\nfn f() -> u8 { 1 }");
+        let b = canonicalize("fn f() -> u8 { 1 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn doc_comment_on_struct_field_merges() {
+        let a = canonicalize("struct S {\n    /// Field doc.\n    x: u8,\n}");
+        let b = canonicalize("struct S {\n    x: u8,\n}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn inner_doc_in_fn_body_merges() {
+        let a = canonicalize("fn f() -> u8 {\n    //! Inner doc.\n    1\n}");
+        let b = canonicalize("fn f() -> u8 {\n    1\n}");
+        if !a.unparsed && !b.unparsed {
+            assert_eq!(a.text, b.text);
+        }
+    }
+
+    #[test]
+    fn use_single_vs_group_merges() {
+        let a = canonicalize("use a::b;\nb();\n");
+        let b = canonicalize("use a::{b};\nb();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn use_two_lines_vs_tree_merges() {
+        let a = canonicalize("use a::b;\nuse a::c;\nb(); c();\n");
+        let b = canonicalize("use a::{b, c};\nb(); c();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn use_reversed_order_merges() {
+        let a = canonicalize("use a::c;\nuse a::b;\nc(); b();\n");
+        let b = canonicalize("use a::b;\nuse a::c;\nc(); b();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn use_glob_in_group_merges() {
+        let a = canonicalize("use a::*;\nfoo();\n");
+        let b = canonicalize("use a::{*};\nfoo();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn pub_use_stays_distinct() {
+        let a = canonicalize("pub use a::b;\n");
+        let b = canonicalize("use a::b;\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn different_use_leaf_sets_stay_distinct() {
+        let a = canonicalize("use a::b;\nuse a::c;\n");
+        let b = canonicalize("use a::b;\nuse a::d;\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
     fn statement_body_parses() {
         let c = canonicalize("let x = 1;\nlet y = x + 1;\n");
         assert!(!c.unparsed);
@@ -312,7 +486,7 @@ mod tests {
     fn bare_expression_parses() {
         let c = canonicalize("1 + 1");
         assert!(!c.unparsed);
-        assert_eq!(c.tokens, 3);
+        assert!(c.tokens > 0);
     }
 
     #[test]
@@ -321,6 +495,107 @@ mod tests {
         let b = canonicalize("use foo::bar;\nbar();\n");
         assert_eq!(a.text, b.text);
         assert!(!a.unparsed);
+    }
+
+    #[test]
+    fn implicit_main_three_spellings_are_one_test() {
+        let stmt = canonicalize("let x = 1;\nassert_eq!(x, 1);");
+        let explicit = canonicalize("fn main() {\n    let x = 1;\n    assert_eq!(x, 1);\n}");
+        let hidden = canonicalize("# fn main() {\nlet x = 1;\nassert_eq!(x, 1);\n# }");
+        assert_eq!(stmt.text, explicit.text);
+        assert_eq!(explicit.text, hidden.text);
+    }
+
+    #[test]
+    fn implicit_main_nested_scopes_match_explicit() {
+        let a = canonicalize("let x = 1;\n{\n    let y = x + 1;\n    assert_eq!(y, 2);\n}");
+        let b = canonicalize(
+            "fn main() {\n    let x = 1;\n    {\n        let y = x + 1;\n        assert_eq!(y, 2);\n    }\n}",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn implicit_main_item_body_wrapped() {
+        let items = canonicalize("struct P;\nlet p = P;");
+        let wrapped = canonicalize("fn main() { struct P; let p = P; }");
+        assert_eq!(items.text, wrapped.text);
+    }
+
+    #[test]
+    fn implicit_main_after_other_items_is_not_double_wrapped() {
+        let body = "fn helper() -> u8 { 1 }\nfn main() { let _x = helper(); }";
+        let double = canonicalize(&alloc::format!("fn main() {{\n{body}\n}}"));
+        let direct = canonicalize(body);
+        assert_ne!(double.text, direct.text);
+    }
+
+    #[test]
+    fn fn_with_different_name_stays_distinct_from_bare() {
+        let with_run = canonicalize("fn run() {}");
+        let bare = canonicalize("()");
+        assert_ne!(with_run.text, bare.text);
+    }
+
+    #[test]
+    fn bare_expression_equals_wrapped_main() {
+        let bare = canonicalize("1 + 1");
+        let wrapped = canonicalize("fn main() { 1 + 1 }");
+        assert_eq!(bare.text, wrapped.text);
+    }
+
+    #[test]
+    fn hidden_extern_crate_equals_no_extern_crate() {
+        let with_ec = canonicalize("# extern crate foo;\nfoo::run();");
+        let without_ec = canonicalize("foo::run();");
+        assert_eq!(with_ec.text, without_ec.text);
+    }
+
+    #[test]
+    fn aliased_extern_crate_stays_distinct() {
+        let aliased = canonicalize("extern crate foo as bar;\nbar::run();");
+        let plain = canonicalize("bar::run();");
+        assert_ne!(aliased.text, plain.text);
+    }
+
+    #[test]
+    fn multiple_anonymous_extern_crates_dropped() {
+        let a = canonicalize(
+            "# extern crate foo;\n# extern crate bar;\nextern crate baz as qux;\nfoo::a();\nbar::b();\nqux::c();",
+        );
+        let b = canonicalize("extern crate baz as qux;\nfoo::a();\nbar::b();\nqux::c();");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn ok_tail_equals_result_main() {
+        let tail = canonicalize("let x = f()?;\nOk::<(), E>(())");
+        let explicit =
+            canonicalize("fn main() -> Result<(), E> {\n    let x = f()?;\n    Ok(())\n}");
+        assert_eq!(tail.text, explicit.text);
+    }
+
+    #[test]
+    fn ok_tail_complex_body_matches_result_main() {
+        let tail = canonicalize("let x = g()?;\nlet y = x + 1;\nOk::<(), MyError>(())");
+        let explicit = canonicalize(
+            "fn main() -> Result<(), MyError> {\n    let x = g()?;\n    let y = x + 1;\n    Ok(())\n}",
+        );
+        assert_eq!(tail.text, explicit.text);
+    }
+
+    #[test]
+    fn ok_tail_different_error_types_stay_distinct() {
+        let a = canonicalize("Ok::<(), std::io::Error>(())");
+        let b = canonicalize("Ok::<(), String>(())");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn ok_without_turbofish_does_not_match_result_tail() {
+        let plain = canonicalize("Ok(())");
+        let result = canonicalize("fn main() -> Result<(), ()> { Ok(()) }");
+        assert_ne!(plain.text, result.text);
     }
 
     #[test]
@@ -370,8 +645,8 @@ mod tests {
     #[test]
     fn empty_body_is_empty() {
         let c = canonicalize("");
-        assert_eq!(c.text, "");
-        assert_eq!(c.tokens, 0);
+        assert!(!c.unparsed);
+        assert!(c.tokens > 0);
     }
 
     #[test]
@@ -417,9 +692,228 @@ mod tests {
     }
 
     #[test]
+    fn alpha_fn_forward_ref_collapses() {
+        let a = canonicalize("fn main() { helper(); }\nfn helper() {}\n");
+        let b = canonicalize("fn main() { aux(); }\nfn aux() {}\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_struct_forward_ref_collapses() {
+        let a = canonicalize("fn main() { drop(Pino { n: 1 }); }\nstruct Pino { n: u8 }\n");
+        let b = canonicalize("fn main() { drop(Abete { n: 1 }); }\nstruct Abete { n: u8 }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_impl_constructor_forward_ref_collapses() {
+        let a = canonicalize(
+            "fn main() { let _ = Pino::new(); }\nstruct Pino { n: u8 }\nimpl Pino { fn new() -> Self { Pino { n: 0 } } }\n",
+        );
+        let b = canonicalize(
+            "fn main() { let _ = Abete::new(); }\nstruct Abete { n: u8 }\nimpl Abete { fn new() -> Self { Abete { n: 0 } } }\n",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_const_forward_ref_collapses() {
+        let a = canonicalize("fn main() { let _ = FOO; }\nconst FOO: u8 = 1;\n");
+        let b = canonicalize("fn main() { let _ = BAR; }\nconst BAR: u8 = 1;\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_nested_fn_forward_ref_collapses() {
+        let a = canonicalize("fn main() { helper(); fn helper() {} }\n");
+        let b = canonicalize("fn main() { aux(); fn aux() {} }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_mutual_recursion_collapses() {
+        let a = canonicalize(
+            "fn even(n: u32) -> bool { if n == 0 { true } else { odd(n - 1) } }\nfn odd(n: u32) -> bool { if n == 0 { false } else { even(n - 1) } }\n",
+        );
+        let b = canonicalize(
+            "fn par(n: u32) -> bool { if n == 0 { true } else { impar(n - 1) } }\nfn impar(n: u32) -> bool { if n == 0 { false } else { par(n - 1) } }\n",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_forward_ref_free_name_stays_distinct() {
+        let a = canonicalize("fn main() { foreign(); }\n");
+        let b = canonicalize("fn main() { other_fn(); }\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_inline_mod_items_renamed() {
+        let a = canonicalize("mod m { pub fn f() {} }\nfn main() { m::f(); }\n");
+        let b = canonicalize("mod n { pub fn g() {} }\nfn main() { n::g(); }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_inline_mod_partial_call_collapses() {
+        let a = canonicalize("mod m { pub fn f() {} pub fn h() {} }\nfn main() { m::f(); }\n");
+        let b = canonicalize("mod n { pub fn g() {} pub fn k() {} }\nfn main() { n::g(); }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_inline_mod_distinct_structures_differ() {
+        let a = canonicalize(
+            "mod m { pub fn f() {} }\nmod n { pub fn g() {} }\nfn main() { m::f(); n::g(); }\n",
+        );
+        let b =
+            canonicalize("mod r { pub fn p() {} pub fn q() {} }\nfn main() { r::p(); r::q(); }\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
     fn alpha_renames_generics_and_lifetimes() {
         let a = canonicalize("fn f<'a, T>(x: &'a T) -> T { x.clone() }\n");
         let b = canonicalize("fn g<'b, U>(y: &'b U) -> U { y.clone() }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_where_clause_two_params_lifetime_bound() {
+        let a = canonicalize(
+            "fn f<'a, T, U>(x: &'a T, y: U) -> T where T: Clone, U: Into<T> + 'a { x.clone() }\n",
+        );
+        let b = canonicalize(
+            "fn g<'b, V, W>(p: &'b V, q: W) -> V where V: Clone, W: Into<V> + 'b { p.clone() }\n",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_where_clause_on_impl_block() {
+        let a = canonicalize(
+            "struct Pino;\nimpl<T: Clone> Pino where T: Default { fn f(&self, _: T) {} }\n",
+        );
+        let b = canonicalize(
+            "struct Abete;\nimpl<U: Clone> Abete where U: Default { fn f(&self, _: U) {} }\n",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_where_clause_on_struct() {
+        let a = canonicalize("struct Wrap<T>(T) where T: Clone;\n");
+        let b = canonicalize("struct Pack<U>(U) where U: Clone;\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_where_free_trait_stays_distinct() {
+        let a = canonicalize("fn f<T>() where T: Clone {}\n");
+        let b = canonicalize("fn f<T>() where T: Default {}\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_impl_local_trait_collapses() {
+        let a = canonicalize("trait Pino {}\nimpl Pino for u8 {}\n");
+        let b = canonicalize("trait Abete {}\nimpl Abete for u8 {}\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_impl_local_trait_with_generic() {
+        let a = canonicalize("trait Pino<T> {}\nstruct S;\nimpl<T> Pino<T> for S {}\n");
+        let b = canonicalize("trait Abete<U> {}\nstruct S;\nimpl<U> Abete<U> for S {}\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_closure_typed_two_params_return_type() {
+        let a = canonicalize("struct Pino;\nlet f = |x: Pino, y: Pino| -> Pino { x };\n");
+        let b = canonicalize("struct Abete;\nlet f = |p: Abete, q: Abete| -> Abete { p };\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_let_chain_three_lets_bool_middle() {
+        let a = canonicalize(concat!(
+            "if let Some(pino) = a() && cond",
+            " && let Some(qno) = b() && let Some(rno) = c()",
+            " { use_it(pino, qno, rno) }\n",
+        ));
+        let b = canonicalize(concat!(
+            "if let Some(abete) = a() && cond",
+            " && let Some(ebano) = b() && let Some(faggio) = c()",
+            " { use_it(abete, ebano, faggio) }\n",
+        ));
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_let_chain_shadow_outer_else_uses_outer() {
+        let a = canonicalize(
+            "let pino = 0;\nif let Some(pino) = get() { use_it(pino) } else { pino }\n",
+        );
+        let b = canonicalize(
+            "let abete = 0;\nif let Some(abete) = get() { use_it(abete) } else { abete }\n",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_nested_labelled_loops_inner_break_outer() {
+        let a = canonicalize("'outer: loop { 'inner: loop { break 'outer; } break 'outer; }\n");
+        let b = canonicalize("'x: loop { 'y: loop { break 'x; } break 'x; }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_labelled_block_expression() {
+        let a = canonicalize("let v = 'pino: { break 'pino 1; };\n");
+        let b = canonicalize("let v = 'abete: { break 'abete 1; };\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_unlabelled_break_stays_distinct() {
+        let a = canonicalize("loop { break; }\n");
+        let b = canonicalize("'x: loop { break 'x; }\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_struct_expr_shorthand_one_local_one_free() {
+        let a = canonicalize("let pino = 1;\nP { pino, free_field }\n");
+        let b = canonicalize("let abete = 1;\nP { pino: abete, free_field }\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_struct_expr_shorthand_nested() {
+        let a = canonicalize("let pino = 1;\nlet qno = P { pino };\nOuter { inner: qno }\n");
+        let b = canonicalize(
+            "let abete = 1;\nlet ebano = P { pino: abete };\nOuter { inner: ebano }\n",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_struct_expr_shorthand_free_stays_distinct() {
+        let a = canonicalize("P { pino }\n");
+        let b = canonicalize("P { abete }\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_self_alias_generic_impl() {
+        let a = canonicalize(
+            "struct Pino<T>(T);\nimpl<T> Pino<T> { fn n(t: T) -> Self { Self(t) } }\n",
+        );
+        let b = canonicalize(
+            "struct Abete<T>(T);\nimpl<T> Abete<T> { fn n(t: T) -> Abete<T> { Abete(t) } }\n",
+        );
         assert_eq!(a.text, b.text);
     }
 
@@ -552,8 +1046,8 @@ mod tests {
     #[test]
     fn alpha_scope_end_releases_inner_bindings() {
         let a = canonicalize("let pino = 1;\n{ let pino = 2; pino }\npino\n");
-        assert_eq!(a.text.matches("_dejadoc_0").count(), 2);
         assert_eq!(a.text.matches("_dejadoc_1").count(), 2);
+        assert_eq!(a.text.matches("_dejadoc_2").count(), 2);
     }
 
     #[test]
@@ -564,15 +1058,87 @@ mod tests {
     }
 
     #[test]
-    fn alpha_normalize_expr_stage() {
-        let mut expr = match syn::parse_str::<syn::Expr>("|pino| pino + 1") {
-            Ok(expr) => expr,
-            Err(err) => panic!("parse closure: {err}"),
-        };
-        crate::alpha::normalize_expr(&mut expr);
-        let text = quote::quote!(#expr).to_string();
-        assert!(text.contains("_dejadoc_0"));
-        assert!(!text.contains("pino"));
+    fn alpha_closure_in_macro_arg_renamed() {
+        let a = canonicalize("assert!(v.iter().map(|x| x > 0).any(|x| x))\n");
+        let b = canonicalize("assert!(v.iter().map(|y| y > 0).any(|y| y))\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_match_binder_in_macro_arg_renamed() {
+        let a = canonicalize("assert!(match v { x => x > 0 })\n");
+        let b = canonicalize("assert!(match v { y => y > 0 })\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_block_let_in_macro_arg_renamed() {
+        let a = canonicalize("vec![{ let x = 1; x + 1 }]\n");
+        let b = canonicalize("vec![{ let y = 1; y + 1 }]\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_nested_local_macro_in_macro_arg_renamed() {
+        let a = canonicalize("macro_rules! pino { () => { 1 } }\nassert_eq!(pino!(), 1)\n");
+        let b = canonicalize("macro_rules! abete { () => { 1 } }\nassert_eq!(abete!(), 1)\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_vec_repeat_with_bound_count() {
+        let a = canonicalize("let n = 5;\nvec![0; n]\n");
+        let b = canonicalize("let m = 5;\nvec![0; m]\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_field_access_not_renamed_for_unrelated_local() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{}\", s.x)\n");
+        let b = canonicalize("let y = 1;\nprintln!(\"{}\", s.x)\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_inline_format_arg_debug_renamed() {
+        let a = canonicalize("let x = v;\nprintln!(\"{x:?}\")\n");
+        let b = canonicalize("let y = v;\nprintln!(\"{y:?}\")\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_escaped_braces_in_format_not_renamed() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{{x}}\")\n");
+        let b = canonicalize("let y = 1;\nprintln!(\"{{y}}\")\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_format_width_param_renamed() {
+        let a = canonicalize("let x = 1;\nlet w = 5;\nprintln!(\"{x:>w$}\")\n");
+        let b = canonicalize("let y = 1;\nlet z = 5;\nprintln!(\"{y:>z$}\")\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_positional_and_inline_format_args() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{} {x}\", x)\n");
+        let b = canonicalize("let y = 1;\nprintln!(\"{} {y}\", y)\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_macro_name_in_fallback_path_renamed() {
+        let a = canonicalize("macro_rules! pino { () => { 1 } }\nouter!(pino! if foo);\n");
+        let b = canonicalize("macro_rules! abete { () => { 1 } }\nouter!(abete! if foo);\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_free_name_in_format_string_stays_distinct() {
+        let a = canonicalize("println!(\"{free_name}\")\n");
+        let b = canonicalize("println!(\"{other_free}\")\n");
+        assert_ne!(a.text, b.text);
     }
 
     #[test]

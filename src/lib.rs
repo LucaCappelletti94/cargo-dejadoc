@@ -20,6 +20,7 @@ mod cfg;
 mod config;
 #[cfg(feature = "std")]
 mod discover;
+mod drift;
 pub mod extract;
 mod fence;
 mod normalize;
