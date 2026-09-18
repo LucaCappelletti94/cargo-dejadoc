@@ -467,6 +467,7 @@ fn prebind<'a>(renamer: &mut Renamer, items: impl Iterator<Item = &'a syn::Item>
             syn::Item::Union(i) => (Ns::Type, &i.ident),
             syn::Item::Type(i) => (Ns::Type, &i.ident),
             syn::Item::Trait(i) => (Ns::Type, &i.ident),
+            syn::Item::TraitAlias(i) => (Ns::Type, &i.ident),
             syn::Item::Mod(i) => (Ns::Type, &i.ident),
             _ => continue,
         };
@@ -769,6 +770,20 @@ impl VisitMut for Renamer {
         self.pop();
     }
 
+    fn visit_item_trait_alias_mut(&mut self, item: &mut syn::ItemTraitAlias) {
+        let name = item.ident.to_string();
+        let canon = self.bind_or_reuse(Ns::Type, &name);
+        item.ident = Ident::new(&canon, item.ident.span());
+        begin_generics(self, &mut item.generics);
+        for attr in &mut item.attrs {
+            self.visit_attribute_mut(attr);
+        }
+        for bound in &mut item.bounds {
+            syn::visit_mut::visit_type_param_bound_mut(self, bound);
+        }
+        self.pop();
+    }
+
     fn visit_item_impl_mut(&mut self, item: &mut syn::ItemImpl) {
         self.push();
         if let Some(name) = single_segment_type_name(&item.self_ty)
@@ -870,6 +885,16 @@ impl VisitMut for Renamer {
 
     fn visit_expr_closure_mut(&mut self, closure: &mut syn::ExprClosure) {
         self.push();
+        for param in closure
+            .lifetimes
+            .iter_mut()
+            .flat_map(|bound| bound.lifetimes.iter_mut())
+        {
+            if let syn::GenericParam::Lifetime(lifetime) = param {
+                let canon = self.bind(Ns::Lifetime, &lifetime.lifetime.ident.to_string());
+                lifetime.lifetime.ident = Ident::new(&canon, lifetime.lifetime.ident.span());
+            }
+        }
         let mut names = Vec::new();
         for input in &closure.inputs {
             pattern_names(input, &mut names);

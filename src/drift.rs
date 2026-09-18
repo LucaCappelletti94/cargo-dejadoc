@@ -2,7 +2,7 @@
 
 use alloc::boxed::Box;
 use alloc::format;
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 
 use proc_macro2::{Delimiter, Group, TokenStream, TokenTree};
@@ -99,6 +99,84 @@ fn is_comma(tree: &TokenTree) -> bool {
     matches!(tree, TokenTree::Punct(p) if p.as_char() == ',')
 }
 
+/// Rewrite every literal token in `stream` to its canonical decimal spelling.
+///
+/// Descends into groups so literals inside macro arguments are also rewritten.
+pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
+    stream
+        .into_iter()
+        .map(|tree| match tree {
+            TokenTree::Literal(lit) => {
+                let span = lit.span();
+                match syn::parse_str::<syn::Lit>(&lit.to_string()) {
+                    Ok(parsed) => canon_one_lit(parsed, span),
+                    Err(_) => TokenTree::Literal(lit),
+                }
+            }
+            TokenTree::Group(group) => {
+                let span = group.span();
+                let inner = canonical_literals(group.stream());
+                let mut rebuilt = Group::new(group.delimiter(), inner);
+                rebuilt.set_span(span);
+                TokenTree::Group(rebuilt)
+            }
+            other => other,
+        })
+        .collect()
+}
+
+fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
+    let rebuilt = match lit {
+        syn::Lit::Int(i) => {
+            let s = format!("{}{}", i.base10_digits(), i.suffix());
+            syn::Lit::Int(syn::LitInt::new(&s, span))
+        }
+        syn::Lit::Float(f) => {
+            let digits = canon_float_str(f.base10_digits());
+            syn::Lit::Float(syn::LitFloat::new(&format!("{digits}{}", f.suffix()), span))
+        }
+        syn::Lit::Str(s) => syn::Lit::Str(syn::LitStr::new(&s.value(), span)),
+        syn::Lit::ByteStr(b) => syn::Lit::ByteStr(syn::LitByteStr::new(&b.value(), span)),
+        syn::Lit::CStr(c) => syn::Lit::CStr(syn::LitCStr::new(c.value().as_c_str(), span)),
+        syn::Lit::Char(c) => syn::Lit::Char(syn::LitChar::new(c.value(), span)),
+        syn::Lit::Byte(b) => syn::Lit::Byte(syn::LitByte::new(b.value(), span)),
+        other => other,
+    };
+    rebuilt
+        .to_token_stream()
+        .into_iter()
+        .next()
+        .expect("rebuilt literal produces at least one token")
+}
+
+/// Canonical decimal string for a float's digit part, text only so the
+/// canonical form never depends on the feature set.
+fn canon_float_str(s: &str) -> String {
+    let stripped = s.replace('_', "");
+    let (mantissa, exponent) = match stripped.split_once(['e', 'E']) {
+        Some((mantissa, exponent)) => (mantissa, Some(exponent)),
+        None => (stripped.as_str(), None),
+    };
+    let (whole, fraction) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let fraction = fraction.trim_end_matches('0');
+    let mut out = String::with_capacity(stripped.len());
+    out.push_str(whole);
+    out.push('.');
+    out.push_str(if fraction.is_empty() { "0" } else { fraction });
+    if let Some(exponent) = exponent {
+        out.push('e');
+        let (sign, digits) = match exponent.split_at_checked(1) {
+            Some(("-", digits)) => ("-", digits),
+            Some(("+", digits)) => ("", digits),
+            _ => ("", exponent),
+        };
+        out.push_str(sign);
+        let digits = digits.trim_start_matches('0');
+        out.push_str(if digits.is_empty() { "0" } else { digits });
+    }
+    out
+}
+
 /// Fold arm braces, doc attributes, and `use` shapes in place.
 pub(crate) fn normalize_file(file: &mut syn::File) {
     Drift.visit_file_mut(file);
@@ -136,7 +214,10 @@ impl VisitMut for Drift {
             },
             |u| syn::Stmt::Item(syn::Item::Use(u)),
         );
+        hoist_block_items(&mut block.stmts);
         syn::visit_mut::visit_block_mut(self, block);
+        drop_empty_stmts(&mut block.stmts);
+        fold_tail_return(&mut block.stmts);
     }
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
@@ -144,10 +225,37 @@ impl VisitMut for Drift {
         syn::visit_mut::visit_arm_mut(self, arm);
     }
 
+    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        syn::visit_mut::visit_expr_mut(self, expr);
+        fold_paren_expr(expr);
+        if let syn::Expr::Closure(closure) = expr {
+            unwrap_single_expr_block(&mut closure.body);
+        }
+    }
+
+    fn visit_pat_mut(&mut self, pat: &mut syn::Pat) {
+        syn::visit_mut::visit_pat_mut(self, pat);
+        fold_paren_pat(pat);
+    }
+
+    fn visit_type_mut(&mut self, ty: &mut syn::Type) {
+        syn::visit_mut::visit_type_mut(self, ty);
+        fold_paren_type(ty);
+    }
+
+    fn visit_return_type_mut(&mut self, rt: &mut syn::ReturnType) {
+        syn::visit_mut::visit_return_type_mut(self, rt);
+        if let syn::ReturnType::Type(_, ty) = rt
+            && matches!(ty.as_ref(), syn::Type::Tuple(t) if t.elems.is_empty())
+        {
+            *rt = syn::ReturnType::Default;
+        }
+    }
+
     fn visit_stmt_mut(&mut self, stmt: &mut syn::Stmt) {
         match stmt {
-            syn::Stmt::Macro(v) => strip_doc_attrs(&mut v.attrs),
-            syn::Stmt::Local(v) => strip_doc_attrs(&mut v.attrs),
+            syn::Stmt::Macro(v) => strip_inert_attrs(&mut v.attrs),
+            syn::Stmt::Local(v) => strip_inert_attrs(&mut v.attrs),
             _ => {}
         }
         syn::visit_mut::visit_stmt_mut(self, stmt);
@@ -155,17 +263,17 @@ impl VisitMut for Drift {
 
     fn visit_item_mut(&mut self, item: &mut syn::Item) {
         if let Some(attrs) = item_attrs(item) {
-            strip_doc_attrs(attrs);
+            strip_inert_attrs(attrs);
         }
         syn::visit_mut::visit_item_mut(self, item);
     }
 
     fn visit_impl_item_mut(&mut self, item: &mut syn::ImplItem) {
         match item {
-            syn::ImplItem::Const(v) => strip_doc_attrs(&mut v.attrs),
-            syn::ImplItem::Fn(v) => strip_doc_attrs(&mut v.attrs),
-            syn::ImplItem::Type(v) => strip_doc_attrs(&mut v.attrs),
-            syn::ImplItem::Macro(v) => strip_doc_attrs(&mut v.attrs),
+            syn::ImplItem::Const(v) => strip_inert_attrs(&mut v.attrs),
+            syn::ImplItem::Fn(v) => strip_inert_attrs(&mut v.attrs),
+            syn::ImplItem::Type(v) => strip_inert_attrs(&mut v.attrs),
+            syn::ImplItem::Macro(v) => strip_inert_attrs(&mut v.attrs),
             _ => {}
         }
         syn::visit_mut::visit_impl_item_mut(self, item);
@@ -173,29 +281,71 @@ impl VisitMut for Drift {
 
     fn visit_trait_item_mut(&mut self, item: &mut syn::TraitItem) {
         match item {
-            syn::TraitItem::Const(v) => strip_doc_attrs(&mut v.attrs),
-            syn::TraitItem::Fn(v) => strip_doc_attrs(&mut v.attrs),
-            syn::TraitItem::Type(v) => strip_doc_attrs(&mut v.attrs),
-            syn::TraitItem::Macro(v) => strip_doc_attrs(&mut v.attrs),
+            syn::TraitItem::Const(v) => strip_inert_attrs(&mut v.attrs),
+            syn::TraitItem::Fn(v) => strip_inert_attrs(&mut v.attrs),
+            syn::TraitItem::Type(v) => strip_inert_attrs(&mut v.attrs),
+            syn::TraitItem::Macro(v) => strip_inert_attrs(&mut v.attrs),
             _ => {}
         }
         syn::visit_mut::visit_trait_item_mut(self, item);
     }
 
     fn visit_field_mut(&mut self, field: &mut syn::Field) {
-        strip_doc_attrs(&mut field.attrs);
+        strip_inert_attrs(&mut field.attrs);
         syn::visit_mut::visit_field_mut(self, field);
     }
 
     fn visit_variant_mut(&mut self, variant: &mut syn::Variant) {
-        strip_doc_attrs(&mut variant.attrs);
+        strip_inert_attrs(&mut variant.attrs);
         syn::visit_mut::visit_variant_mut(self, variant);
+    }
+
+    fn visit_expr_macro_mut(&mut self, node: &mut syn::ExprMacro) {
+        normalize_macro_delim(&mut node.mac);
+        syn::visit_mut::visit_expr_macro_mut(self, node);
+    }
+
+    fn visit_stmt_macro_mut(&mut self, node: &mut syn::StmtMacro) {
+        normalize_macro_delim(&mut node.mac);
+        node.semi_token.get_or_insert_with(Default::default);
+        syn::visit_mut::visit_stmt_macro_mut(self, node);
+    }
+
+    fn visit_type_macro_mut(&mut self, node: &mut syn::TypeMacro) {
+        normalize_macro_delim(&mut node.mac);
+        syn::visit_mut::visit_type_macro_mut(self, node);
+    }
+
+    fn visit_item_macro_mut(&mut self, node: &mut syn::ItemMacro) {
+        if node.ident.is_none() {
+            normalize_macro_delim(&mut node.mac);
+            node.semi_token.get_or_insert_with(Default::default);
+        }
+        syn::visit_mut::visit_item_macro_mut(self, node);
+    }
+
+    fn visit_impl_item_macro_mut(&mut self, node: &mut syn::ImplItemMacro) {
+        normalize_macro_delim(&mut node.mac);
+        node.semi_token.get_or_insert_with(Default::default);
+        syn::visit_mut::visit_impl_item_macro_mut(self, node);
+    }
+
+    fn visit_trait_item_macro_mut(&mut self, node: &mut syn::TraitItemMacro) {
+        normalize_macro_delim(&mut node.mac);
+        node.semi_token.get_or_insert_with(Default::default);
+        syn::visit_mut::visit_trait_item_macro_mut(self, node);
     }
 }
 
 /// An arm body `{ expr }` becomes `expr`, the form rustfmt writes.
 fn unwrap_arm_block(arm: &mut syn::Arm) {
-    let syn::Expr::Block(block) = arm.body.as_mut() else {
+    unwrap_single_expr_block(&mut arm.body);
+}
+
+/// A closure or arm body `{ expr }` becomes `expr` when the block holds
+/// exactly one tail expression and carries no label or attributes.
+fn unwrap_single_expr_block(body: &mut Box<syn::Expr>) {
+    let syn::Expr::Block(block) = body.as_mut() else {
         return;
     };
     if block.label.is_some()
@@ -205,12 +355,87 @@ fn unwrap_arm_block(arm: &mut syn::Arm) {
         return;
     }
     if let Some(syn::Stmt::Expr(expr, None)) = block.block.stmts.pop() {
-        *arm.body = expr;
+        **body = expr;
     }
 }
 
-fn strip_doc_attrs(attrs: &mut Vec<syn::Attribute>) {
-    attrs.retain(|attr| !attr.path().is_ident("doc"));
+/// Remove every bare empty statement from `stmts`.
+fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
+    stmts.retain(|stmt| {
+        !matches!(
+            stmt,
+            syn::Stmt::Expr(syn::Expr::Verbatim(v), Some(_)) if v.is_empty()
+        )
+    });
+}
+
+/// Replace a tail `return expr;` with `expr` as the tail expression.
+fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
+    let n = stmts.len();
+    if n == 0 {
+        return;
+    }
+    let is_valued_tail_return =
+        matches!(&stmts[n - 1], syn::Stmt::Expr(syn::Expr::Return(r), Some(_)) if r.expr.is_some());
+    if !is_valued_tail_return {
+        return;
+    }
+    let last = stmts.remove(n - 1);
+    if let syn::Stmt::Expr(syn::Expr::Return(mut ret), Some(_)) = last
+        && let Some(inner) = ret.expr.take()
+    {
+        stmts.push(syn::Stmt::Expr(*inner, None));
+    }
+}
+
+/// Remove a no-attribute `Expr::Paren` wrapper, leaving the inner expression.
+fn fold_paren_expr(expr: &mut syn::Expr) {
+    if !matches!(expr, syn::Expr::Paren(p) if p.attrs.is_empty()) {
+        return;
+    }
+    let dummy = syn::Expr::Verbatim(proc_macro2::TokenStream::new());
+    if let syn::Expr::Paren(paren) = core::mem::replace(expr, dummy) {
+        *expr = *paren.expr;
+    }
+}
+
+/// Remove a no-attribute `Pat::Paren` wrapper, leaving the inner pattern.
+fn fold_paren_pat(pat: &mut syn::Pat) {
+    if !matches!(pat, syn::Pat::Paren(p) if p.attrs.is_empty()) {
+        return;
+    }
+    let dummy = syn::Pat::Verbatim(proc_macro2::TokenStream::new());
+    if let syn::Pat::Paren(paren) = core::mem::replace(pat, dummy) {
+        *pat = *paren.pat;
+    }
+}
+
+/// Remove a `Type::Paren` wrapper, leaving the inner type.
+fn fold_paren_type(ty: &mut syn::Type) {
+    if !matches!(ty, syn::Type::Paren(_)) {
+        return;
+    }
+    let dummy = syn::Type::Verbatim(proc_macro2::TokenStream::new());
+    if let syn::Type::Paren(paren) = core::mem::replace(ty, dummy) {
+        *ty = *paren.elem;
+    }
+}
+
+/// True for attributes that carry no program meaning for doctests: doc
+/// comments and lint-level directives.
+fn is_inert_attr(attr: &syn::Attribute) -> bool {
+    let p = attr.path();
+    p.is_ident("doc")
+        || p.is_ident("allow")
+        || p.is_ident("expect")
+        || p.is_ident("warn")
+        || p.is_ident("deny")
+        || p.is_ident("forbid")
+}
+
+/// Drop inert attributes from the list.
+fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
+    attrs.retain(|attr| !is_inert_attr(attr));
 }
 
 fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
@@ -273,6 +498,78 @@ fn hoist_uses<T>(
     list.extend(rest);
 }
 
+/// True when every attribute on `item` would be removed by
+/// `strip_inert_attrs`, meaning the item can be safely hoisted without
+/// keeping any attribute that might reference a local binding.
+fn item_has_only_inert_attrs(item: &syn::Item) -> bool {
+    let attrs: &[syn::Attribute] = match item {
+        syn::Item::Const(v) => &v.attrs,
+        syn::Item::Enum(v) => &v.attrs,
+        syn::Item::ExternCrate(v) => &v.attrs,
+        syn::Item::Fn(v) => &v.attrs,
+        syn::Item::ForeignMod(v) => &v.attrs,
+        syn::Item::Impl(v) => &v.attrs,
+        syn::Item::Macro(v) => &v.attrs,
+        syn::Item::Mod(v) => &v.attrs,
+        syn::Item::Static(v) => &v.attrs,
+        syn::Item::Struct(v) => &v.attrs,
+        syn::Item::Trait(v) => &v.attrs,
+        syn::Item::TraitAlias(v) => &v.attrs,
+        syn::Item::Type(v) => &v.attrs,
+        syn::Item::Union(v) => &v.attrs,
+        syn::Item::Use(v) => &v.attrs,
+        _ => return true,
+    };
+    attrs.iter().all(is_inert_attr)
+}
+
+/// Hoist non-`use`, non-`macro_rules!` item statements that appear before
+/// the first `macro_rules!` definition in a block to the front, right
+/// after the sorted `use` items placed there by `hoist_uses`.
+///
+/// Only items whose attributes are all inert are hoisted. An item with a
+/// non-inert attribute may have an argument that references a local
+/// binding; hoisting it before that binding changes the visit order and
+/// breaks alpha renaming.
+///
+/// Items in that region move to the front in their original relative order
+/// among items. Non-item statements follow them in their original relative
+/// order. Everything from the first `Stmt::Item(Item::Macro)` onward is
+/// untouched, because `macro_rules!` visibility is sequential.
+fn hoist_block_items(stmts: &mut Vec<syn::Stmt>) {
+    let use_count = stmts.partition_point(|s| matches!(s, syn::Stmt::Item(syn::Item::Use(_))));
+
+    let rel_macro = stmts[use_count..]
+        .iter()
+        .position(|s| matches!(s, syn::Stmt::Item(syn::Item::Macro(_))));
+    let hoist_end = use_count + rel_macro.unwrap_or(stmts.len() - use_count);
+
+    if hoist_end == use_count {
+        return;
+    }
+
+    let tail = stmts.split_off(hoist_end);
+    let region = stmts.split_off(use_count);
+
+    let mut items = Vec::new();
+    let mut rest = Vec::new();
+    for stmt in region {
+        let hoistable = match &stmt {
+            syn::Stmt::Item(item) => item_has_only_inert_attrs(item),
+            _ => false,
+        };
+        if hoistable {
+            items.push(stmt);
+        } else {
+            rest.push(stmt);
+        }
+    }
+
+    stmts.extend(items);
+    stmts.extend(rest);
+    stmts.extend(tail);
+}
+
 /// Split `tree` into its leaf paths, `a::{self}` becoming `a`.
 fn flatten_use_tree(prefix: &[syn::Ident], tree: syn::UseTree, out: &mut Vec<syn::UseTree>) {
     match tree {
@@ -307,4 +604,13 @@ fn path_tree(prefix: &[syn::Ident], leaf: syn::UseTree) -> syn::UseTree {
             tree: Box::new(path_tree(rest, leaf)),
         }),
     }
+}
+
+/// Rewrite the outer delimiter of a macro call to parentheses.
+fn normalize_macro_delim(mac: &mut syn::Macro) {
+    if matches!(mac.delimiter, syn::MacroDelimiter::Paren(_)) {
+        return;
+    }
+    let span = *mac.delimiter.span();
+    mac.delimiter = syn::MacroDelimiter::Paren(syn::token::Paren { span });
 }

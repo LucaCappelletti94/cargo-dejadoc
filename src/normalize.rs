@@ -38,6 +38,7 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
     crate::alpha::normalize_file(&mut file);
     let stream = flatten_include_depth(file.to_token_stream());
     let stream = crate::drift::strip_trailing_commas(stream);
+    let stream = crate::drift::canonical_literals(stream);
     from_stream(stream)
 }
 
@@ -109,7 +110,8 @@ fn take_result_tail(block: &mut syn::Block) -> Option<syn::Type> {
     };
     let unit_ok = segment.ident == "Ok"
         && args.args.len() == 2
-        && matches!(&args.args[0], syn::GenericArgument::Type(syn::Type::Tuple(t)) if t.elems.is_empty());
+        && matches!(&args.args[0], syn::GenericArgument::Type(syn::Type::Tuple(t)) if t.elems.is_empty())
+        && matches!(&args.args[1], syn::GenericArgument::Type(_));
     if !unit_ok {
         return None;
     }
@@ -341,11 +343,219 @@ mod tests {
     }
 
     #[test]
+    fn macro_call_bracket_and_paren_merge() {
+        let a = canonicalize("vec![1, 2]");
+        let b = canonicalize("vec!(1, 2)");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_call_all_three_delimiters_merge() {
+        let bracket = canonicalize("vec![1, 2];");
+        let paren = canonicalize("vec!(1, 2);");
+        let brace = canonicalize("vec! {1, 2}");
+        assert_eq!(bracket.text, paren.text);
+        assert_eq!(paren.text, brace.text);
+    }
+
+    #[test]
+    fn statement_macro_brace_merges_with_paren() {
+        let a = canonicalize("println! {\"hello\"}");
+        let b = canonicalize("println!(\"hello\");");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_in_type_position_delimiter_merges() {
+        let a = canonicalize("type T = my_type![u32];");
+        let b = canonicalize("type T = my_type!(u32);");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_in_pattern_position_delimiter_merges() {
+        let a = canonicalize("match 42u8 { my_pat![42] => 1u8, _ => 2u8 }");
+        let b = canonicalize("match 42u8 { my_pat!(42) => 1u8, _ => 2u8 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn item_level_macro_without_ident_merges() {
+        let a = canonicalize("fn main() {}\nfoo! { x }");
+        let b = canonicalize("fn main() {}\nfoo!(x);");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn nested_macro_outer_delimiter_merges() {
+        let a = canonicalize("outer![inner!(x)]");
+        let b = canonicalize("outer!(inner!(x))");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_argument_bracket_group_survives() {
+        let a = canonicalize("foo![arr[0]]");
+        let b = canonicalize("foo!(arr[0])");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_rules_inner_delimiter_stays_distinct() {
+        let a = canonicalize("fn main() {}\nmacro_rules! m { ([$a:expr]) => { $a }; }");
+        let b = canonicalize("fn main() {}\nmacro_rules! m { (($a:expr)) => { $a }; }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_calls_with_different_args_stay_distinct() {
+        let a = canonicalize("foo!(1)");
+        let b = canonicalize("foo!(2)");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_call_vs_plain_call_stays_distinct() {
+        let a = canonicalize("foo!(x)");
+        let b = canonicalize("foo(x)");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_rules_body_delimiter_stays_distinct() {
+        let a = canonicalize("fn main() {}\nmacro_rules! m { ($a:expr) => { [$a] }; }");
+        let b = canonicalize("fn main() {}\nmacro_rules! m { ($a:expr) => { ($a) }; }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
     fn comment_and_whitespace_drift_collapses() {
         let a = canonicalize("fn main() { }\n// a comment");
         let b = canonicalize("fn main(){}  /* other */  \n");
         assert_eq!(a.text, b.text);
         assert_eq!(a.tokens, b.tokens);
+    }
+
+    #[test]
+    fn integer_underscore_and_plain_agree() {
+        assert_eq!(canonicalize("1_000").text, canonicalize("1000").text);
+    }
+
+    #[test]
+    fn integer_hex_and_decimal_agree() {
+        assert_eq!(canonicalize("0x1F").text, canonicalize("31").text);
+    }
+
+    #[test]
+    fn integer_binary_and_decimal_agree() {
+        assert_eq!(canonicalize("0b1010").text, canonicalize("10").text);
+    }
+
+    #[test]
+    fn integer_octal_and_decimal_agree() {
+        assert_eq!(canonicalize("0o17").text, canonicalize("15").text);
+    }
+
+    #[test]
+    fn integer_suffixed_across_radices_agree() {
+        assert_eq!(canonicalize("0x1u8").text, canonicalize("1u8").text);
+    }
+
+    #[test]
+    fn float_trailing_dot_and_dot_zero_agree() {
+        assert_eq!(canonicalize("1.").text, canonicalize("1.0").text);
+    }
+
+    #[test]
+    fn float_trailing_zeros_agree() {
+        assert_eq!(canonicalize("1.50").text, canonicalize("1.500").text);
+        assert_eq!(canonicalize("1.50").text, canonicalize("1.5").text);
+    }
+
+    #[test]
+    fn float_exponent_form_stays_distinct() {
+        assert_ne!(canonicalize("1e3").text, canonicalize("1000.0").text);
+        assert_eq!(canonicalize("1.0E+03").text, canonicalize("1.0e3").text);
+    }
+
+    #[test]
+    fn char_unicode_escape_and_literal_agree() {
+        assert_eq!(canonicalize(r"'\u{41}'").text, canonicalize("'A'").text);
+    }
+
+    #[test]
+    fn char_longer_unicode_escape_and_literal_agree() {
+        assert_eq!(canonicalize(r"'\u{0041}'").text, canonicalize("'A'").text);
+    }
+
+    #[test]
+    fn raw_string_and_escaped_string_agree() {
+        assert_eq!(
+            canonicalize(r#"r"hello""#).text,
+            canonicalize(r#""hello""#).text
+        );
+    }
+
+    #[test]
+    fn raw_string_hash_counts_agree() {
+        assert_eq!(
+            canonicalize(r##"r#"a"#"##).text,
+            canonicalize(r###"r##"a"##"###).text,
+        );
+    }
+
+    #[test]
+    fn integer_literal_in_macro_args_merges() {
+        let a = canonicalize("assert_eq!(1_000, 1000);");
+        let b = canonicalize("assert_eq!(1000, 1000);");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn integer_literal_in_nested_macro_merges() {
+        let a = canonicalize("vec![vec![0x01, 0x02]]");
+        let b = canonicalize("vec![vec![1, 2]]");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn string_literal_in_attribute_value_merges() {
+        let a = canonicalize(r#"#[my_attr(label = r"same")] fn f() {}"#);
+        let b = canonicalize(r#"#[my_attr(label = "same")] fn f() {}"#);
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn different_integers_stay_distinct() {
+        assert_ne!(canonicalize("1").text, canonicalize("2").text);
+    }
+
+    #[test]
+    fn different_hex_values_stay_distinct() {
+        assert_ne!(canonicalize("0x10").text, canonicalize("0x20").text);
+    }
+
+    #[test]
+    fn different_strings_stay_distinct() {
+        assert_ne!(
+            canonicalize(r#""hello""#).text,
+            canonicalize(r#""world""#).text
+        );
+    }
+
+    #[test]
+    fn different_chars_stay_distinct() {
+        assert_ne!(canonicalize("'a'").text, canonicalize("'b'").text);
+    }
+
+    #[test]
+    fn suffixed_and_unsuffixed_integer_stay_distinct() {
+        assert_ne!(canonicalize("1u8").text, canonicalize("1").text);
+    }
+
+    #[test]
+    fn different_float_values_stay_distinct() {
+        assert_ne!(canonicalize("1.0").text, canonicalize("2.0").text);
     }
 
     #[test]
@@ -507,6 +717,123 @@ mod tests {
         let a = canonicalize("enum E {\n    /// Doc\n    A,\n}");
         let b = canonicalize("enum E { A }");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn lint_attr_on_fn_merges() {
+        let a = canonicalize("#[allow(unused)]\nfn f() {}");
+        let b = canonicalize("fn f() {}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn lint_attr_on_struct_field_merges() {
+        let a = canonicalize("struct S {\n    #[allow(dead_code)]\n    x: u8,\n}");
+        let b = canonicalize("struct S { x: u8 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn lint_attr_on_stmt_merges() {
+        let a = canonicalize("#[allow(unused_variables)]\nlet x = 1;");
+        let b = canonicalize("let x = 1;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn lint_attr_on_impl_item_merges() {
+        let a = canonicalize(
+            "struct S;\nimpl S {\n    #[allow(clippy::unused_self)]\n    fn f(&self) {}\n}",
+        );
+        let b = canonicalize("struct S;\nimpl S { fn f(&self) {} }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn two_lint_attrs_on_one_item_merges() {
+        let a = canonicalize("#[allow(unused)]\n#[warn(dead_code)]\nfn f() {}");
+        let b = canonicalize("fn f() {}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn expect_attr_merges() {
+        let a = canonicalize(
+            r#"#[expect(unused, reason = "demo")]
+fn f() {}"#,
+        );
+        let b = canonicalize("fn f() {}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn hidden_lint_attr_merges() {
+        let a = canonicalize("# #[allow(unused)]\nfn f() {}");
+        let b = canonicalize("fn f() {}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn cfg_attr_stays_distinct() {
+        let a = canonicalize("#[cfg(unix)]\nfn f() {}");
+        let b = canonicalize("fn f() {}");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn derive_attr_stays_distinct() {
+        let a = canonicalize("#[derive(Debug)]\nstruct S;");
+        let b = canonicalize("struct S;");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn repr_attr_stays_distinct() {
+        let a = canonicalize("#[repr(C)]\nstruct S { x: u8 }");
+        let b = canonicalize("struct S { x: u8 }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn unknown_attr_stays_distinct() {
+        let a = canonicalize("#[my_attr]\nfn f() {}");
+        let b = canonicalize("fn f() {}");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn struct_declared_after_use_merges() {
+        let a = canonicalize("let _p = P;\nstruct P;");
+        let b = canonicalize("struct P;\nlet _p = P;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn fn_declared_after_call_merges() {
+        let a = canonicalize("f();\nfn f() {}");
+        let b = canonicalize("fn f() {}\nf();");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn two_items_reversed_merges() {
+        let a = canonicalize("struct B;\nstruct A;");
+        let b = canonicalize("struct A;\nstruct B;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn use_and_item_either_order_merges() {
+        let a = canonicalize("use core::fmt;\nstruct S;");
+        let b = canonicalize("struct S;\nuse core::fmt;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn macro_rules_not_hoisted_past() {
+        let a = canonicalize("m!();\nmacro_rules! m { () => {} }");
+        let b = canonicalize("macro_rules! m { () => {} }\nm!();");
+        assert_ne!(a.text, b.text);
     }
 
     #[test]
@@ -681,6 +1008,14 @@ mod tests {
     }
 
     #[test]
+    fn an_ok_tail_with_a_lifetime_argument_keeps_it() {
+        let a = canonicalize("let x = f()?;\nOk::<(), 'a>(())");
+        let b = canonicalize("let x = f()?;\nOk::<()>(())");
+        assert_ne!(a.text, b.text);
+        assert!(a.text.contains('\''));
+    }
+
+    #[test]
     fn only_the_exact_ok_tail_becomes_a_result_main() {
         for (tail, call) in [
             ("Ok::<(), E>(1)", "Ok(1)"),
@@ -757,6 +1092,146 @@ mod tests {
         let a = canonicalize("1 + 1;");
         let b = canonicalize("1 + 1");
         assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn paren_expr_folds() {
+        let a = canonicalize("(1 + 2)");
+        let b = canonicalize("1 + 2");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn double_paren_folds() {
+        let a = canonicalize("((1 + 2))");
+        let b = canonicalize("1 + 2");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn paren_precedence_preserved() {
+        let a = canonicalize("(1 + 2) * 3");
+        let b = canonicalize("1 + 2 * 3");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn expr_paren_vs_one_tuple_stays_distinct() {
+        let a = canonicalize("let _ = (1,);");
+        let b = canonicalize("let _ = (1);");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn paren_in_pattern_folds() {
+        let a = canonicalize("let (x) = 1;");
+        let b = canonicalize("let x = 1;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn one_tuple_pattern_stays_distinct() {
+        let a = canonicalize("let (x,) = (1,);");
+        let b = canonicalize("let (x) = (1,);");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn paren_in_type_folds() {
+        let a = canonicalize("fn f(x: (u8)) -> (u8) { x }");
+        let b = canonicalize("fn f(x: u8) -> u8 { x }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn one_tuple_type_stays_distinct() {
+        let a = canonicalize("fn f(_: (u8,)) {}");
+        let b = canonicalize("fn f(_: (u8)) {}");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn closure_body_block_unwraps() {
+        let a = canonicalize("|x| { x + 1 }");
+        let b = canonicalize("|x| x + 1");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn nested_closure_block_unwraps() {
+        let a = canonicalize("|| { || { 1 + 2 } }");
+        let b = canonicalize("|| || 1 + 2");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn closure_two_stmts_block_stays() {
+        let a = canonicalize("|x| { let y = x; y }");
+        let b = canonicalize("|x| x");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn return_tail_folds() {
+        let a = canonicalize("fn f() { return 1; }");
+        let b = canonicalize("fn f() { 1 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn return_tail_in_closure_block_folds() {
+        let a = canonicalize("|x| { return x + 1; }");
+        let b = canonicalize("|x| x + 1");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn early_return_stays() {
+        let a = canonicalize("fn f() { return 1; g(); }");
+        let b = canonicalize("fn f() { 1; g(); }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn bare_return_stays() {
+        let a = canonicalize("fn f() { return; }");
+        let b = canonicalize("fn f() {}");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn unit_return_type_folds_fn() {
+        let a = canonicalize("fn f() -> () {}");
+        let b = canonicalize("fn f() {}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn unit_return_type_folds_closure() {
+        let a = canonicalize("|| -> () { 1 }");
+        let b = canonicalize("|| 1");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn non_unit_return_type_stays() {
+        let a = canonicalize("fn f() -> u8 { 1 }");
+        let b = canonicalize("fn f() { 1 }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn double_semicolon_at_end_folds() {
+        let a = canonicalize("fn f() { g();; }");
+        let b = canonicalize("fn f() { g(); }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn double_semicolon_in_middle_folds() {
+        let a = canonicalize("fn f() { g();; h(); }");
+        let b = canonicalize("fn f() { g(); h(); }");
+        assert_eq!(a.text, b.text);
     }
 
     #[test]
@@ -933,6 +1408,15 @@ mod tests {
         let a = canonicalize("fn f<'a, T>(x: &'a T) -> T { x.clone() }\n");
         let b = canonicalize("fn g<'b, U>(y: &'b U) -> U { y.clone() }\n");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_closure_higher_ranked_lifetimes() {
+        let a = canonicalize("let f = for<'a> |x: &'a i32| x;");
+        let b = canonicalize("let f = for<'b> |x: &'b i32| x;");
+        assert_eq!(a.text, b.text);
+        let c = canonicalize("let f = for<'a> |x: &'static i32| x;");
+        assert_ne!(a.text, c.text);
     }
 
     #[test]
@@ -1403,6 +1887,15 @@ mod tests {
         let a = canonicalize("trait Pino {}\n");
         let b = canonicalize("trait Abete {}\n");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_local_trait_alias() {
+        let a = canonicalize("trait Pino = Clone;\nfn f<T: Pino>() {}\n");
+        let b = canonicalize("trait Abete = Clone;\nfn f<T: Abete>() {}\n");
+        assert_eq!(a.text, b.text);
+        let c = canonicalize("trait Pino = Clone;\nfn f<T: Copy>() {}\n");
+        assert_ne!(a.text, c.text);
     }
 
     #[test]
