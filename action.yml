@@ -217,6 +217,7 @@ runs:
         [ -n "$CWD" ] && dir="$dir/$CWD"
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
+        [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
         # Threshold 1 inventories every base doctest, a group the pull request
         # completes from a single existing copy must still be reported.
         if ! (cd "$dir" && cargo dejadoc \
@@ -306,9 +307,10 @@ runs:
             def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
             { keys: [.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(sp)"],
               keep: (reduce .groups[] as $gr ({};
-                .[$gr.hash] = (($gr.sites[0] | sp) + ":" + ($gr.sites[0].line | tostring)))) }' "$base_report")"
+                .[$gr.hash] = (($gr.sites[0] | sp) + ":" + ($gr.sites[0].line | tostring)))),
+              keep_end: (reduce .groups[] as $gr ({}; .[$gr.hash] = ($gr.sites[0].end // null))) }' "$base_report")"
         else
-          base_json='{"keys": [], "keep": {}}'
+          base_json='{"keys": [], "keep": {}, "keep_end": {}}'
         fi
 
         # Sites to comment on. In only-new mode a site must be introduced by this
@@ -326,16 +328,17 @@ runs:
               | (.sites | length) as $n
               | .hash as $h
               | ((.sites[0] | spath) + ":" + (.sites[0].line | tostring)) as $first
+              | (.sites[0].end // null) as $fend
               | ($base.keep[$h] // "") as $basekeep
               | ([ .sites[] | ([$h, .item, (spath)] | join("\t")) ]) as $ks
               | [ .sites | to_entries[]
                   | (([$h, .value.item, (.value | spath)] | join("\t")) as $k
                      | (([ $ks[: .key ][] | select(. == $k) ] | length) + 1) as $idx
                      | ([ $base.keys[] | select(. == $k) ] | length) as $bcount
-                     | { g: $g, c: (.key + 1), n: $n, first: $first, s: .value,
+                     | { g: $g, c: (.key + 1), n: $n, first: $first, fend: $fend, s: .value,
                          p: (.value | spath),
                          isNew: ($idx > $bcount),
-                         basekeep: $basekeep }) ] as $rows
+                         basekeep: $basekeep, bend: ($base.keep_end[$h] // null) }) ] as $rows
               | ($rows | map(select(.isNew)) | length) as $knew
               | $rows[] | . + { knew: $knew }
           ]
@@ -345,7 +348,8 @@ runs:
           | select(if $onlynew_mode then $row.isNew else true end)
           | [$row.p, (.s.line | tostring), .s.item, (.g | tostring), (.c | tostring),
              (.n | tostring), .first, (if .isNew then "1" else "0" end),
-             (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring)]
+             (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring),
+             (.s.end // "-" | tostring), (.fend // "-" | tostring), (.bend // "-" | tostring)]
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
@@ -367,11 +371,6 @@ runs:
             "$(uri "$sites")"
         }
         support_link='[❤️ Support dejadoc](https://github.com/sponsors/LucaCappelletti94)'
-        # The line closing the doctest opened at line $2 of file $1, empty
-        # when no closing fence is found, the live posting eligibility.
-        close_line_of() {
-          awk -v l="$2" 'NR > l && $0 ~ /^[[:space:]]*(\/\/\/|\/\/!|\/\/)?[[:space:]]*```[[:space:]]*$/ { print NR; exit }' "$1" 2>/dev/null
-        }
         # A permalink to lines $3 to $4 of path $2 at commit $1, GitHub shows
         # and highlights those lines. Without a sha it falls back to plain text.
         blob_link() {
@@ -388,14 +387,6 @@ runs:
           else
             printf '`%s:%s`' "$2" "$label"
           fi
-        }
-        # The line ending the doctest block started at line $2 of path $1,
-        # read from file $3 when given, from the head tree otherwise.
-        block_end() {
-          local f
-          f="$1"
-          [ -n "${3:-}" ] && f="$3"
-          close_line_of "$f" "$2"
         }
         # The bare permalink url GitHub expands into a code preview of the
         # cited lines, empty when no commit is known.
@@ -433,22 +424,22 @@ runs:
             printf '%s' "$1"
           fi
         }
-        # Base tree file for a repo-relative path, empty when the tree is absent.
-        base_file() {
-          if [ -f "$RUNNER_TEMP/dejadoc-base/$1" ]; then
-            printf '%s' "$RUNNER_TEMP/dejadoc-base/$1"
-          fi
-        }
         rendered=''
         findings=''
         # One pass builds every comment, live posts them, the dry run renders them.
-        declare -A seen_first=()
-        while IFS=$'\t' read -r p line item g c n first new basekeep knew; do
+        # The end line of each block comes from the report, `-` when the crate has
+        # none, a block spanning an include or an escaped literal, or an older binary.
+        declare -A seen_first=() seen_first_end=()
+        while IFS=$'\t' read -r p line item g c n first new basekeep knew end fend bend; do
           [ -n "$p" ] || continue
           site="$p:$line"
           [ "$basekeep" = "-" ] && basekeep=''
+          [ "$end" = "-" ] && end=''
+          [ "$fend" = "-" ] && fend=''
+          [ "$bend" = "-" ] && bend=''
           if [ "$new" = "1" ] && [ -z "${seen_first[$g]:-}" ]; then
             seen_first[$g]="$site"
+            seen_first_end[$g]="$end"
           fi
           if [ "$onlynew" = "1" ]; then
             if [ -n "$basekeep" ] || [ "$site" != "${seen_first[$g]}" ]; then removable=1; else removable=0; fi
@@ -458,7 +449,11 @@ runs:
             removable=0
           fi
           keepat="$first"
-          [ "$new" = "1" ] && keepat="${seen_first[$g]:-$first}"
+          keepat_end="$fend"
+          if [ "$new" = "1" ]; then
+            keepat="${seen_first[$g]:-$first}"
+            keepat_end="${seen_first_end[$g]:-$fend}"
+          fi
           # Comments only land on copies the author should act on, a kept
           # copy stays silent.
           [ "$removable" = "1" ] || continue
@@ -471,7 +466,7 @@ runs:
               "$p" "$line" "$item" "$keep" "$g"
             findings="$findings- \`$p:$line\`  $item, duplicates \`$keep\`"$'\n'
           fi
-          close_line="$(close_line_of "$p" "$line")"
+          close_line="$end"
           if [ -z "$close_line" ]; then
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             continue
@@ -490,7 +485,7 @@ runs:
             if [ -n "$basekeep" ]; then
               bp="${basekeep%:*}"
               bl="${basekeep##*:}"
-              ce="$(block_end "$bp" "$bl" "$(base_file "$bp")")"
+              ce="$bend"
               url="$(blob_url "$base_sha" "$bp" "$bl" "$ce")"
               pv_s="$bl"
               pv_e="$ce"
@@ -498,7 +493,7 @@ runs:
             else
               kp="${keepat%:*}"
               kl="${keepat##*:}"
-              ce="$(block_end "$kp" "$kl")"
+              ce="$keepat_end"
               url="$(blob_url "$head_sha" "$kp" "$kl" "$ce")"
               pv_s="$kl"
               pv_e="$ce"
@@ -507,7 +502,7 @@ runs:
           else
             fp="${first%:*}"
             fl="${first##*:}"
-            ce="$(block_end "$fp" "$fl")"
+            ce="$fend"
             url="$(blob_url "$head_sha" "$fp" "$fl" "$ce")"
             pv_s="$fl"
             pv_e="$ce"

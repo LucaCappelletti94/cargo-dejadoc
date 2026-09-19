@@ -12,7 +12,7 @@ pub mod util;
 /// ```
 pub fn alpha_fn() {}
 
-/// Formatting variant of the same doctest.
+/// Formatting variant of the same doctest, blank lines inside the fence.
 /// ```
 ///
 ///     fn shared() { }   // trailing comment

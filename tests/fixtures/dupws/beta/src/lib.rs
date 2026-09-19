@@ -5,10 +5,9 @@
 /// ```
 pub fn beta_fn() {}
 
-/// Unparseable body shared with alpha.
-/// ```
-/// @ nope nope
-/// ```
+/// Unparseable body shared with alpha, as an indented block.
+///
+///     @ nope nope
 pub fn beta_unparsed() {}
 
 pub mod util;
