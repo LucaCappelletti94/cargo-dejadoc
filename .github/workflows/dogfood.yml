@@ -26,10 +26,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # The check branch adds exactly two copies and its review must post on both.
+          EXPECTED_ROWS: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && '2' || '' }}
         run: |
           status="$(cat "$RUNNER_TEMP/dejadoc-post-status" 2>/dev/null || echo missing)"
           body="$RUNNER_TEMP/dejadoc-review.md"
           repo="$GITHUB_REPOSITORY"
+          if [ -n "$EXPECTED_ROWS" ] && [ "$status" != "posted" ]; then
+            echo "the check branch adds new copies, so the review must post, got $status"
+            exit 1
+          fi
           case "$status" in
             dry-run)
               [ -f "$body" ] || { echo "the review body is missing"; exit 1; }
@@ -59,6 +65,8 @@ jobs:
               if api_retry 3 5 "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/'; then
                 rows="$(api_retry 6 10 "repos/$repo/pulls/$n/comments" --jq '.[] | select(.user.login == "github-actions[bot]") | select(.path | startswith("tests/fixtures/")) | "\(.path)\t\(.start_line)\t\(.line)"')"
                 [ -n "$rows" ] || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
+                posted="$(printf '%s\n' "$rows" | wc -l)"
+                [ -z "$EXPECTED_ROWS" ] || [ "$posted" = "$EXPECTED_ROWS" ] || { echo "expected $EXPECTED_ROWS live comments, got $posted"; exit 1; }
                 # Each suggestion deletes one whole block, from its opening line to its
                 # closing fence, or the single indented line, plus one blank line after it.
                 while IFS=$'\t' read -r p s e; do
