@@ -10,14 +10,14 @@ permissions:
 
 jobs:
   dogfood:
-    name: Dogfood the action on the dupws fixture
+    name: Dogfood the action on the fixture
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./
         with:
-          cwd: tests/fixtures/dupws
+          cwd: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && 'tests/fixtures/apicheck' || 'tests/fixtures/dupws' }}
           pr-number: ${{ github.event.pull_request.number }}
           dry-run: ${{ github.event_name == 'push' }}
           # The fixture duplicates are deliberate, so they are not flagged on this repository's own diffs.
@@ -26,10 +26,16 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
+          # The check branch adds exactly two copies and its review must post on both.
+          EXPECTED_ROWS: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && '2' || '' }}
         run: |
           status="$(cat "$RUNNER_TEMP/dejadoc-post-status" 2>/dev/null || echo missing)"
           body="$RUNNER_TEMP/dejadoc-review.md"
           repo="$GITHUB_REPOSITORY"
+          if [ -n "$EXPECTED_ROWS" ] && [ "$status" != "posted" ]; then
+            echo "the check branch adds new copies, so the review must post, got $status"
+            exit 1
+          fi
           case "$status" in
             dry-run)
               [ -f "$body" ] || { echo "the review body is missing"; exit 1; }
@@ -56,10 +62,29 @@ jobs:
                 done
                 return 1
               }
-              if api_retry 3 5 "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/dupws/'; then
-                api_retry 6 10 "repos/$repo/pulls/$n/comments" --jq '.[] | .path' \
-                  | grep -q '^tests/fixtures/dupws/' || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
-                echo "verified inline dejadoc comments on the fixture files of pull request $n"
+              if api_retry 3 5 "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/'; then
+                rows="$(api_retry 6 10 "repos/$repo/pulls/$n/comments" --jq '.[] | select(.user.login == "github-actions[bot]") | select(.path | startswith("tests/fixtures/")) | "\(.path)\t\(.start_line)\t\(.line)"')"
+                [ -n "$rows" ] || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
+                posted="$(printf '%s\n' "$rows" | wc -l)"
+                [ -z "$EXPECTED_ROWS" ] || [ "$posted" = "$EXPECTED_ROWS" ] || { echo "expected $EXPECTED_ROWS live comments, got $posted"; exit 1; }
+                # Each suggestion deletes one whole block, from its opening line to its
+                # closing fence, or the single indented line, plus one blank line after it.
+                while IFS=$'\t' read -r p s e; do
+                  first="$(sed -n "${s}p" "$p")"
+                  last="$(sed -n "${e}p" "$p")"
+                  [ -z "$(printf '%s' "$last" | sed 's|^///||' | tr -d '[:space:]')" ] && last="$(sed -n "$((e - 1))p" "$p")"
+                  case "$first" in
+                    *'```'*|*'~~~'*) fence="${first##*/// }"; fence="${fence:0:3}" ;;
+                    '///     '*) fence='' ;;
+                    *) echo "comment on $p:$s does not start on a doctest block: $first"; exit 1 ;;
+                  esac
+                  if [ -n "$fence" ]; then
+                    [ "$last" = "/// $fence" ] || { echo "comment on $p:$s-$e does not end on its closing fence: $last"; exit 1; }
+                  else
+                    [ "$last" = "$first" ] || { echo "comment on $p:$s-$e spans past its indented block: $last"; exit 1; }
+                  fi
+                  echo "verified $p:$s-$e deletes exactly one doctest block"
+                done <<< "$rows"
               else
                 echo "the fixture files are not in pull request $n, skipping the inline comment check"
               fi
@@ -89,13 +114,18 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: ./
         with:
-          cwd: tests/fixtures/dupws
+          # The scheduled check branch adds copies to apicheck, dupws stays as the integration tests pin it.
+          cwd: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && 'tests/fixtures/apicheck' || 'tests/fixtures/dupws' }}
           pr-number: ${{ github.event.pull_request.number }}
           mode: prepare
           payload: dejadoc-payload
           only-new: false
           annotations: false
       - name: Check the prepared payload
+        env:
+          # The check branch diff is the one apicheck file with two added copies, an
+          # ordinary pull request touches any subset of the dupws files.
+          EXPECTED_ROWS: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && '2' || '' }}
         run: |
           set -euo pipefail
           status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
@@ -104,8 +134,9 @@ jobs:
           case "$status" in
             prepared)
               rows="$(wc -l < dejadoc-payload/comments.ndjson)"
-              [ "$rows" = "4" ] || { echo "expected one row per removable copy, got $rows"; exit 1; }
-              jq -e 'select(.path | startswith("tests/fixtures/dupws/")) | .line >= .start_line and (.body | contains("```suggestion"))' \
+              [ "$rows" -gt 0 ] || { echo "expected one row per removable copy in the diff, got none"; exit 1; }
+              [ -z "$EXPECTED_ROWS" ] || [ "$rows" = "$EXPECTED_ROWS" ] || { echo "expected $EXPECTED_ROWS rows, got $rows"; exit 1; }
+              jq -e 'select(.path | startswith("tests/fixtures/")) | .line >= .start_line and (.body | contains("```suggestion"))' \
                 dejadoc-payload/comments.ndjson > /dev/null \
                 || { echo "a payload row is malformed"; exit 1; }
               echo "the prepared payload holds one postable comment per removable copy"
