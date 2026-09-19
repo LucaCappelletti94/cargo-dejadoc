@@ -48,19 +48,23 @@ jobs:
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git checkout -b "$branch"
-          # One touch per removable copy, since GitHub only accepts an inline comment on a line the diff shows.
-          sed -i '1s/Helper with a doctest/A helper with a doctest/' tests/fixtures/dupws/alpha/src/util.rs
-          sed -i '15s/Formatting variant of the same doctest/A formatting variant of the same doctest/' tests/fixtures/dupws/alpha/src/lib.rs
-          sed -i '1s/Beta copy of the helper doctest/A beta copy of the helper doctest/' tests/fixtures/dupws/beta/src/util.rs
-          sed -i '8s/Unparseable body shared with alpha/An unparseable body shared with alpha/' tests/fixtures/dupws/beta/src/lib.rs
-          if [ "$(git diff --name-only | wc -l)" != "4" ]; then
-            echo "the fixture touch did not change all four files, a fixture line may have moved"
-            git diff --stat
-            exit 1
-          fi
-          git add tests/fixtures/dupws/alpha/src/util.rs tests/fixtures/dupws/alpha/src/lib.rs \
-            tests/fixtures/dupws/beta/src/util.rs tests/fixtures/dupws/beta/src/lib.rs
-          git commit -m "Touch the fixture for the API check"
+          # Two copies the base does not have, so only-new mode posts on them, one behind
+          # a tilde fence and one indented. The apicheck fixture is not pinned by the
+          # integration tests, dupws is.
+          printf '%s\n' '' \
+            '/// A tilde fenced copy added by the API check.' \
+            '/// ~~~' \
+            '/// fn helper() { }' \
+            '/// ~~~' \
+            'pub fn helper_tilde() {}' \
+            '' \
+            '/// An indented copy added by the API check.' \
+            '///' \
+            '///     @ nope nope' \
+            'pub fn unparsed_indented() {}' \
+            >> tests/fixtures/apicheck/src/lib.rs
+          git add tests/fixtures/apicheck/src/lib.rs
+          git commit -m "Add two doctest copies for the API check"
           git push origin "$branch"
           url="$(gh pr create --head "$branch" --title "dejadoc API check, $(date -u +%F)" --body 'Opened by the scheduled dogfood to exercise the pull request review surface against the GitHub API. It closes itself when the check passes.')"
           echo "number=${url##*/}" >> "$GITHUB_OUTPUT"
