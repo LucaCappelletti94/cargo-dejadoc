@@ -348,7 +348,7 @@ mod tests {
         let root = dir.path().join("lib.rs");
         std::fs::write(
             &root,
-            "#[cfg_attr(unix, allow(dead_code), path = \"other.rs\")]\npub mod renamed;\n",
+            "#[cfg_attr(unix, doc = \"d.rs\", path = \"other.rs\")]\npub mod renamed;\n",
         )
         .unwrap();
         std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
