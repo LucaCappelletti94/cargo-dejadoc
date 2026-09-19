@@ -23,7 +23,7 @@ Different paths, methods, string literals or macro arguments do separate bodies.
 
 ```
 cargo dejadoc -v         # each group with its sites and code
-cargo dejadoc --json     # {total, unique, groups: [{id, tokens, unparsed, sites: [{file, line, item, info, code}]}]}
+cargo dejadoc --json     # {total, unique, groups: [{id, tokens, unparsed, sites: [{file, line, end, item, info, code}]}]}
 ```
 
 `-p <member>`, `--all-targets`, `-t <sites>`, `--min-tokens <n>`, `--no-fail`, `--github` for workflow annotations.

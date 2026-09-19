@@ -30,6 +30,16 @@ struct DocSource {
     lines: Vec<u32>,
     /// File of each text line; one entry per text line.
     files: Vec<String>,
+    /// Whether each text line sits on its own source line, false inside an escaped-newline literal.
+    exact: Vec<bool>,
+}
+
+/// One `doc = …` value's text, before merging.
+struct Part {
+    text: String,
+    line: u32,
+    file: String,
+    exact: bool,
 }
 
 /// Extract doctest blocks from one parsed source file, under the item path
@@ -345,7 +355,7 @@ fn doc_sources(
     file: &str,
     read_include: &IncludeRead<'_>,
 ) -> Vec<DocSource> {
-    let mut parts: Vec<(String, u32, String)> = Vec::new();
+    let mut parts: Vec<Part> = Vec::new();
     for attr in attrs {
         let line = line_of(attr.pound_token.span);
         if attr.path().is_ident("doc") {
@@ -371,7 +381,7 @@ fn doc_sources(
 
 /// Push the doc text of one `doc = …` value.
 fn push_doc_expr(
-    parts: &mut Vec<(String, u32, String)>,
+    parts: &mut Vec<Part>,
     value: &Expr,
     line: u32,
     file: &str,
@@ -380,7 +390,7 @@ fn push_doc_expr(
     match value {
         Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
-        }) => parts.push((doc_value(&s.value()), line, file.to_string())),
+        }) => push_literal(parts, s, line, file),
         Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
             if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
                 push_include(parts, file, read_include, &s.value());
@@ -390,9 +400,7 @@ fn push_doc_expr(
             if let Ok(concat) = parse2::<ConcatParts>(mac.tokens.clone()) {
                 for part in concat.0 {
                     match part {
-                        ConcatPart::Lit(s) => {
-                            parts.push((doc_value(&s.value()), line, file.to_string()));
-                        }
+                        ConcatPart::Lit(s) => push_literal(parts, &s, line, file),
                         ConcatPart::Include(s) => {
                             push_include(parts, file, read_include, &s.value());
                         }
@@ -404,30 +412,45 @@ fn push_doc_expr(
     }
 }
 
-fn push_include(
-    parts: &mut Vec<(String, u32, String)>,
-    file: &str,
-    read: &IncludeRead<'_>,
-    p: &str,
-) {
+/// A literal spanning fewer source lines than its text has carries escaped newlines.
+fn push_literal(parts: &mut Vec<Part>, s: &LitStr, line: u32, file: &str) {
+    let text = doc_value(&s.value());
+    let span = s.span();
+    let physical = span.end().line.saturating_sub(span.start().line) + 1;
+    let exact = text.lines().count() <= physical;
+    parts.push(Part {
+        text,
+        line,
+        file: file.to_string(),
+        exact,
+    });
+}
+
+fn push_include(parts: &mut Vec<Part>, file: &str, read: &IncludeRead<'_>, p: &str) {
     if let Some((path, text)) = read(file, p) {
-        parts.push((text, 1, path));
+        parts.push(Part {
+            text,
+            line: 1,
+            file: path,
+            exact: true,
+        });
     }
 }
 
 /// Merge all parts of one item's doc stream into a single source.
-fn merge_parts(parts: Vec<(String, u32, String)>) -> Vec<DocSource> {
+fn merge_parts(parts: Vec<Part>) -> Vec<DocSource> {
     let mut out: Vec<DocSource> = Vec::new();
-    let mut prev: Option<(u32, String)> = None;
-    for (text, line, file) in parts {
-        let lines = line_range(&text, line);
-        let files = vec![file.clone(); lines.len()];
+    let mut prev: Option<(u32, String, bool)> = None;
+    for part in parts {
+        let lines = line_range(&part.text, part.line);
+        let files = vec![part.file.clone(); lines.len()];
+        let exact = vec![part.exact; lines.len()];
         if let Some(last) = out.last_mut() {
             // The separator '\n' after a part that ended a line (or is
             // empty) adds one blank text line; attribute it to the
             // previous part's file and line.
             if last.text.is_empty() || last.text.ends_with('\n') {
-                let (pbase, pfile) = prev.unwrap();
+                let (pbase, pfile, pexact) = prev.unwrap();
                 let line = if last.lines.is_empty() {
                     pbase
                 } else {
@@ -435,15 +458,22 @@ fn merge_parts(parts: Vec<(String, u32, String)>) -> Vec<DocSource> {
                 };
                 last.lines.push(line);
                 last.files.push(pfile);
+                last.exact.push(pexact);
             }
             last.text.push('\n');
-            last.text.push_str(&text);
+            last.text.push_str(&part.text);
             last.lines.extend(lines);
             last.files.extend(files);
+            last.exact.extend(exact);
         } else {
-            out.push(DocSource { text, lines, files });
+            out.push(DocSource {
+                text: part.text,
+                lines,
+                files,
+                exact,
+            });
         }
-        prev = Some((line, file));
+        prev = Some((part.line, part.file, part.exact));
     }
     out
 }
@@ -643,9 +673,14 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
             .strip_prefix(root)
             .and_then(|f| f.strip_prefix('/'))
             .unwrap_or(&src.files[f.line]);
+        let spanned = src.files[f.end] == src.files[f.line]
+            && src.lines[f.end] >= src.lines[f.line]
+            && src.exact[f.line]
+            && src.exact[f.end];
         out.push(DocTest {
             file: lexical(file),
             line: src.lines[f.line],
+            end: spanned.then(|| src.lines[f.end]),
             item: item.to_string(),
             info,
             code: f.code,
@@ -792,7 +827,25 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    /// Extracted doctests with `end` cleared, the whole-struct tests
+    /// below pin everything else and `spans` pins `end`.
     fn run(src: &str) -> Vec<DocTest> {
+        let parsed = syn::parse_file(src).unwrap();
+        let mut out = extract(
+            "mycrate",
+            "/root/src/lib.rs",
+            &parsed,
+            "/root",
+            &|_f: &str, _p: &str| None,
+        );
+        for dt in &mut out {
+            dt.end = None;
+        }
+        out
+    }
+
+    /// The source line span of every doctest in `src`.
+    fn spans(src: &str) -> Vec<(u32, Option<u32>)> {
         let parsed = syn::parse_file(src).unwrap();
         extract(
             "mycrate",
@@ -801,17 +854,98 @@ mod tests {
             "/root",
             &|_f: &str, _p: &str| None,
         )
+        .into_iter()
+        .map(|dt| (dt.line, dt.end))
+        .collect()
+    }
+
+    fn to(mut d: DocTest, end: u32) -> DocTest {
+        d.end = Some(end);
+        d
     }
 
     fn dt(file: &str, line: u32, item: &str, info: &[&str], code: &str, allow: bool) -> DocTest {
         DocTest {
             file: file.to_string(),
             line,
+            end: None,
             item: item.into(),
             info: info.iter().map(ToString::to_string).collect(),
             code: code.into(),
             allow,
         }
+    }
+
+    #[test]
+    fn backtick_fence_span_ends_at_the_closer() {
+        let src = "/// intro\n/// ```\n/// let x = 1;\n/// let y = 2;\n/// ```\n/// outro\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(2, Some(5))]);
+    }
+
+    #[test]
+    fn tilde_and_long_fence_spans_end_at_their_closer() {
+        let src = "/// ~~~\n/// let x = 1;\n/// ~~~\n///\n/// ````\n/// let y = 2;\n/// ````\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(1, Some(3)), (5, Some(7))]);
+    }
+
+    #[test]
+    fn indented_block_span_ends_at_the_last_code_line() {
+        let src = "/// intro\n///\n///     let x = 1;\n///     let y = 2;\n///\n/// outro\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(3, Some(4))]);
+    }
+
+    #[test]
+    fn block_doc_span_follows_the_star_margin() {
+        let src = "/**\n * A.\n *\n * ```\n * let x = 1;\n * ```\n */\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(4, Some(6))]);
+    }
+
+    #[test]
+    fn escaped_literal_lines_have_no_span() {
+        let src = "#[doc = \"```\\nlet x = 1;\\n```\"]\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(1, None)]);
+    }
+
+    #[test]
+    fn unterminated_fence_span_ends_on_the_last_doc_line() {
+        let src = "/// ```\n/// let x = 1;\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(1, Some(2))]);
+    }
+
+    #[test]
+    fn block_doc_fence_closing_on_the_last_doc_line_spans_to_it() {
+        let src = "/** ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(1, Some(3))]);
+    }
+
+    #[test]
+    fn raw_doc_attribute_spans_the_literal_lines() {
+        let src = "#[doc = r\"\n```\nlet x = 1;\n```\n\"]\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(2, Some(4))]);
+    }
+
+    #[test]
+    fn include_str_block_spans_the_included_file() {
+        let src = "#[doc = include_str!(\"../docs/guide.md\")]\npub fn f() {}\n";
+        let parsed = syn::parse_file(src).unwrap();
+        let dts = extract(
+            "mycrate",
+            "/root/src/lib.rs",
+            &parsed,
+            "/root",
+            &|_f: &str, _p: &str| {
+                Some((
+                    "/root/docs/guide.md".to_string(),
+                    "intro\n\n```\nlet x = 1;\n```\n".to_string(),
+                ))
+            },
+        );
+        assert_eq!(
+            dts.iter()
+                .map(|d| (d.file.as_str(), d.line, d.end))
+                .collect::<Vec<_>>(),
+            vec![("docs/guide.md", 3, Some(5))]
+        );
     }
 
     #[test]
@@ -1322,13 +1456,16 @@ mod tests {
         );
         assert_eq!(
             dts,
-            vec![dt(
-                "src/doc.md",
-                3,
-                "mycrate::f",
-                &[],
-                "let from = include;",
-                false
+            vec![to(
+                dt(
+                    "src/doc.md",
+                    3,
+                    "mycrate::f",
+                    &[],
+                    "let from = include;",
+                    false
+                ),
+                5
             )]
         );
     }
@@ -1355,13 +1492,9 @@ mod tests {
         );
         assert_eq!(
             dts,
-            vec![dt(
-                "src/doc.md",
-                1,
-                "mycrate::f",
-                &[],
-                "fn main() {}",
-                false
+            vec![to(
+                dt("src/doc.md", 1, "mycrate::f", &[], "fn main() {}", false),
+                3
             )]
         );
     }
@@ -1391,8 +1524,8 @@ mod tests {
         assert_eq!(
             dts,
             vec![
-                dt("src/doc.md", 1, "mycrate::f", &[], "", false),
-                dt("src/doc.md", 3, "mycrate::f", &[], "", false),
+                to(dt("src/doc.md", 1, "mycrate::f", &[], "", false), 1),
+                to(dt("src/doc.md", 3, "mycrate::f", &[], "", false), 3),
             ]
         );
     }
@@ -1523,6 +1656,37 @@ pub fn raw() {}
             &dir.path().to_string_lossy(),
             &fs_read(&src),
         );
+        // Both fences sit in `lib.rs`, so the span covers the include
+        // attribute between them.
+        assert_eq!(
+            dts,
+            vec![to(
+                dt("src/lib.rs", 1, "mycrate::f", &[], "fn main() {}", false),
+                3
+            )]
+        );
+    }
+
+    #[test]
+    fn fence_closing_inside_an_include_has_no_span() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(src.join("doc.md"), "fn main() {}\n```\n").unwrap();
+        std::fs::write(
+            src.join("lib.rs"),
+            "/// ```\n#[doc = include_str!(\"doc.md\")]\npub fn f() {}\n",
+        )
+        .unwrap();
+        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
+        let parsed = syn::parse_file(&code).unwrap();
+        let dts = extract(
+            "mycrate",
+            &src.join("lib.rs").to_string_lossy(),
+            &parsed,
+            &dir.path().to_string_lossy(),
+            &fs_read(&src),
+        );
         assert_eq!(
             dts,
             vec![dt(
@@ -1582,7 +1746,10 @@ pub fn raw() {}
             &dir.path().to_string_lossy(),
             &|_f: &str, _p: &str| None,
         );
-        assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
+        assert_eq!(
+            dts,
+            vec![to(dt("src/lib.rs", 3, "mycrate::f", &[], "", false), 3)]
+        );
     }
 
     #[test]
