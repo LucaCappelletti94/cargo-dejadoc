@@ -1,4 +1,4 @@
-/// Helper with a doctest, backtick fenced.
+/// A helper with a doctest, backtick fenced.
 /// ```
 /// fn helper() { }
 /// ```

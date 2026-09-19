@@ -1,4 +1,4 @@
-/// Beta copy of the helper doctest, tilde fenced.
+/// A beta copy of the helper doctest, tilde fenced.
 /// ~~~
 /// fn helper() { }
 /// ~~~
