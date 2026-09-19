@@ -271,6 +271,9 @@ pub struct DocTest {
     pub file: String,
     /// Line of the opening fence, 1-based.
     pub line: u32,
+    /// Line of the closing fence or last indented line, 1-based, `None` when the block
+    /// spans an `include_str!` boundary or an escaped-newline literal.
+    pub end: Option<u32>,
     /// Item path, e.g. `mycrate::parser::parse`.
     pub item: String,
     /// Doctest attributes such as `no_run` and `should_panic`.
@@ -385,6 +388,7 @@ mod tests {
         DocTest {
             file: file.to_string(),
             line,
+            end: None,
             item: item.to_string(),
             info: Vec::new(),
             code: code.to_string(),

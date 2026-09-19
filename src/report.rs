@@ -119,6 +119,7 @@ mod tests {
         DocTest {
             file: file.to_string(),
             line,
+            end: None,
             item: item.to_string(),
             info: info.iter().map(ToString::to_string).collect(),
             code: code.to_string(),
@@ -189,10 +190,11 @@ mod tests {
         let first = &group["sites"][0];
         assert_eq!(
             first.as_object().unwrap().keys().collect::<Vec<_>>(),
-            vec!["code", "file", "info", "item", "line"]
+            vec!["code", "end", "file", "info", "item", "line"]
         );
         assert_eq!(first["file"], "src/a.rs");
         assert_eq!(first["line"], 14);
+        assert_eq!(first["end"], serde_json::Value::Null);
         assert_eq!(first["item"], "m::a");
         assert_eq!(first["info"][0], "no_run");
     }

@@ -89,13 +89,16 @@ pub(crate) fn module_tree(
 ) -> crate::Result<Vec<(PathBuf, syn::File, Vec<String>)>> {
     let mut out = Vec::new();
     let mut visited = BTreeSet::new();
-    collect(&target.src, &[], &mut out, &mut visited)?;
+    collect(&target.src, &[], true, &mut out, &mut visited)?;
     Ok(out)
 }
 
+/// `mod_rs` marks a crate root, a `mod.rs` or a `#[path]` file, whose children sit
+/// beside it, every other file keeps them under a directory named after it.
 fn collect(
     file: &std::path::Path,
     prefix: &[String],
+    mod_rs: bool,
     out: &mut Vec<(PathBuf, syn::File, Vec<String>)>,
     visited: &mut BTreeSet<PathBuf>,
 ) -> crate::Result<()> {
@@ -118,33 +121,28 @@ fn collect(
         }
     };
     let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-    // A file module with a companion directory keeps its child modules
-    // there; `#[path]` in that file is still relative to `dir`.
     let base = match file.file_stem() {
-        Some(stem) if dir.join(stem).is_dir() => dir.join(stem),
+        Some(stem) if !mod_rs => dir.join(stem),
         _ => dir.to_path_buf(),
     };
     let mut children = Vec::new();
-    mod_decls(&parsed.items, dir, &base, &mut children);
+    mod_decls(&parsed.items, dir, &base, prefix, &mut children);
     out.push((file.to_path_buf(), parsed, prefix.to_vec()));
-    for (child, name) in children {
-        let mut sub = prefix.to_vec();
-        sub.push(name);
-        collect(&child, &sub, out, visited)?;
+    for (child, sub, mod_rs) in children {
+        collect(&child, &sub, mod_rs, out, visited)?;
     }
     Ok(())
 }
 
-/// Collect the `mod name;` files and their module names, at every nesting
-/// depth, skipping modules whose `cfg` fails. `dir` is the directory
-/// containing the defining file (explicit `#[path]` resolves against it).
-/// `base` is the implicit child directory (the companion directory for a
-/// file module).
+/// The `mod name;` files at every nesting depth whose `cfg` holds, each with its module
+/// path. `dir` is for explicit `#[path]`, `base` for implicit children, an inline module
+/// adds its name to both and to the path.
 fn mod_decls(
     items: &[syn::Item],
     dir: &std::path::Path,
     base: &std::path::Path,
-    out: &mut Vec<(PathBuf, String)>,
+    prefix: &[String],
+    out: &mut Vec<(PathBuf, Vec<String>, bool)>,
 ) {
     use syn::Item;
 
@@ -155,35 +153,37 @@ fn mod_decls(
         if !crate::cfg::allows(&moditem.attrs) {
             continue;
         }
-        if let Some((_, children)) = &moditem.content {
-            mod_decls(children, dir, base, out);
-            continue;
-        }
         // Raw identifiers keep their name in the module path.
         let name = moditem
             .ident
             .to_string()
             .trim_start_matches("r#")
             .to_string();
-        match resolve_mod_path(dir, base, &name, &moditem.attrs) {
-            Some(path) if path.exists() => out.push((path, name)),
-            Some(path) => eprintln!("dejadoc: missing module file {}", path.display()),
+        let mut segments = prefix.to_vec();
+        segments.push(name);
+        let name = segments.last().unwrap();
+        if let Some((_, children)) = &moditem.content {
+            let inner = base.join(name);
+            mod_decls(children, &inner, &inner, &segments, out);
+            continue;
+        }
+        match resolve_mod_path(dir, base, name, &moditem.attrs) {
+            Some((path, mod_rs)) if path.exists() => out.push((path, segments, mod_rs)),
+            Some((path, _)) => eprintln!("dejadoc: missing module file {}", path.display()),
             None => {}
         }
     }
 }
 
-/// File for `mod name;` in `dir`. A top-level `#[path = "…"]` wins, as it
-/// does for rustc. Otherwise the first existing `path` from a
-/// `#[cfg_attr(…, path = "…")]` is used, since cfg is not evaluated.
-/// Explicit paths resolve against `dir`. The plain fallback resolves against
-/// `base`.
+/// File for `mod name;` and whether it is a mod-rs file. A top-level `#[path]` first, then
+/// the first `cfg_attr` path whose predicate holds, both against `dir`, then `name.rs` or
+/// `name/mod.rs` under `base`.
 fn resolve_mod_path(
     dir: &std::path::Path,
     base: &std::path::Path,
     name: &str,
     attrs: &[syn::Attribute],
-) -> Option<PathBuf> {
+) -> Option<(PathBuf, bool)> {
     use syn::{Expr, ExprLit, Lit, Meta};
 
     if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("path")) {
@@ -196,49 +196,43 @@ fn resolve_mod_path(
         else {
             return None;
         };
-        return Some(dir.join(s.value()));
+        return Some((dir.join(s.value()), true));
     }
-    let candidates: Vec<PathBuf> = attrs
-        .iter()
-        .filter(|a| a.path().is_ident("cfg_attr"))
-        .filter_map(|a| {
-            let Meta::List(list) = &a.meta else {
-                return None;
-            };
-            Some(cfg_attr_paths(&list.tokens))
-        })
-        .flatten()
-        .map(|p| dir.join(p))
-        .collect();
-    if let Some(path) = candidates.into_iter().find(|p| p.exists()) {
-        return Some(path);
+    if let Some(path) = attrs.iter().find_map(cfg_attr_path) {
+        return Some((dir.join(path), true));
     }
     let plain = base.join(format!("{name}.rs"));
     if plain.exists() {
-        return Some(plain);
+        return Some((plain, false));
     }
-    Some(base.join(name).join("mod.rs"))
+    Some((base.join(name).join("mod.rs"), true))
 }
 
-/// The `path = "…"` values inside a `cfg_attr` attribute's tokens.
-fn cfg_attr_paths(tokens: &proc_macro2::TokenStream) -> Vec<String> {
-    let trees = tokens.clone().into_iter().collect::<Vec<_>>();
-    let mut out = Vec::new();
-    for window in trees.windows(3) {
-        if matches!(
-            (&window[0], &window[1]),
-            (
-                proc_macro2::TokenTree::Ident(id),
-                proc_macro2::TokenTree::Punct(eq)
-            ) if id == "path" && eq.as_char() == '='
-        ) {
-            let text = window[2].to_string();
-            if let Ok(s) = syn::parse_str::<syn::LitStr>(&text) {
-                out.push(s.value());
-            }
-        }
+/// The `path = "…"` value of a `cfg_attr` whose predicate holds.
+fn cfg_attr_path(attr: &syn::Attribute) -> Option<String> {
+    use syn::{Expr, ExprLit, Lit, Meta, Token, punctuated::Punctuated};
+
+    if !attr.path().is_ident("cfg_attr") {
+        return None;
     }
-    out
+    let Meta::List(list) = &attr.meta else {
+        return None;
+    };
+    let metas = list
+        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        .ok()?;
+    if !metas.first().is_some_and(crate::cfg::holds) {
+        return None;
+    }
+    metas.iter().skip(1).find_map(|meta| match meta {
+        Meta::NameValue(nv) if nv.path.is_ident("path") => match &nv.value {
+            Expr::Lit(ExprLit {
+                lit: Lit::Str(s), ..
+            }) => Some(s.value()),
+            _ => None,
+        },
+        _ => None,
+    })
 }
 
 #[cfg(test)]
@@ -281,38 +275,57 @@ mod tests {
         let result = module_tree(&target(&root)).unwrap();
         assert_eq!(files(result).len(), 2);
     }
+    fn names(result: Vec<(PathBuf, syn::File, Vec<String>)>) -> Vec<String> {
+        files(result)
+            .into_iter()
+            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+            .collect()
+    }
+
     #[test]
-    fn cfg_attr_path_resolves() {
+    fn cfg_attr_path_resolves_when_its_predicate_holds() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("lib.rs");
         std::fs::write(
             &root,
-            "#[cfg_attr(a, path = \"other.rs\")]\npub mod renamed;\n",
+            "#[cfg_attr(unix, path = \"other.rs\")]\npub mod renamed;\n",
         )
         .unwrap();
         std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
         let result = module_tree(&target(&root)).unwrap();
-        assert_eq!(files(result).len(), 2);
+        assert_eq!(names(result), vec!["lib.rs", "other.rs"]);
     }
 
     #[test]
-    fn cfg_attr_path_takes_the_existing_candidate() {
+    fn cfg_attr_path_takes_the_holding_predicate_not_the_first_file() {
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("lib.rs");
         std::fs::write(
             &root,
-            "#[cfg_attr(a, path = \"missing1.rs\")]\n\
-             #[cfg_attr(b, path = \"present.rs\")]\n\
-             pub mod m;\n",
+            "#[cfg_attr(windows, path = \"windows.rs\")]\n\
+             #[cfg_attr(unix, path = \"unix.rs\")]\n\
+             pub mod platform;\n",
         )
         .unwrap();
-        std::fs::write(dir.path().join("present.rs"), "pub fn g() {}\n").unwrap();
+        std::fs::write(dir.path().join("windows.rs"), "pub fn w() {}\n").unwrap();
+        std::fs::write(dir.path().join("unix.rs"), "pub fn u() {}\n").unwrap();
         let result = module_tree(&target(&root)).unwrap();
-        let names: Vec<String> = files(result)
-            .into_iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names, vec!["lib.rs", "present.rs"]);
+        assert_eq!(names(result), vec!["lib.rs", "unix.rs"]);
+    }
+
+    #[test]
+    fn cfg_attr_path_with_a_failing_predicate_falls_back_to_the_plain_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(
+            &root,
+            "#[cfg_attr(windows, path = \"windows.rs\")]\npub mod platform;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("windows.rs"), "pub fn w() {}\n").unwrap();
+        std::fs::write(dir.path().join("platform.rs"), "pub fn p() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(names(result), vec!["lib.rs", "platform.rs"]);
     }
 
     #[test]
@@ -321,16 +334,26 @@ mod tests {
         let root = dir.path().join("lib.rs");
         std::fs::write(
             &root,
-            "#[cfg_attr(all(a, b), path = \"other.rs\")]\npub mod renamed;\n",
+            "#[cfg_attr(all(unix, not(windows)), path = \"other.rs\")]\npub mod renamed;\n",
         )
         .unwrap();
         std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
         let result = module_tree(&target(&root)).unwrap();
-        let names: Vec<String> = files(result)
-            .into_iter()
-            .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(names, vec!["lib.rs", "other.rs"]);
+        assert_eq!(names(result), vec!["lib.rs", "other.rs"]);
+    }
+
+    #[test]
+    fn cfg_attr_path_beside_other_attributes_resolves() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(
+            &root,
+            "#[cfg_attr(unix, doc = \"d.rs\", path = \"other.rs\")]\npub mod renamed;\n",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("other.rs"), "pub fn g() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(names(result), vec!["lib.rs", "other.rs"]);
     }
 
     #[test]
@@ -439,13 +462,163 @@ mod tests {
     }
 
     #[test]
-    fn mod_decl_inside_inline_mod_uses_outer_dir() {
+    fn mod_decl_inside_inline_mod_resolves_under_the_inline_directory() {
+        // `lib.rs` with `mod a { mod c; }` loads `a/c.rs`, a stale `c.rs`
+        // beside `lib.rs` is not part of the crate.
         let dir = tempfile::tempdir().unwrap();
         let root = dir.path().join("lib.rs");
         std::fs::write(&root, "pub mod a { pub mod c; }\n").unwrap();
-        std::fs::write(dir.path().join("c.rs"), "pub fn g() {}\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("c.rs"), "pub fn g() {}\n").unwrap();
+        std::fs::write(dir.path().join("c.rs"), "pub fn stale() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let got: Vec<(PathBuf, Vec<String>)> = result
+            .into_iter()
+            .map(|(p, _, segs)| (p.strip_prefix(dir.path()).unwrap().to_path_buf(), segs))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                (PathBuf::from("lib.rs"), vec![]),
+                (
+                    PathBuf::from("a/c.rs"),
+                    vec!["a".to_string(), "c".to_string()]
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn mod_decl_inside_inline_mod_of_a_file_module_nests_under_its_directory() {
+        // `x.rs` with `mod a { mod c; }` loads `x/a/c.rs`.
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod x;\n").unwrap();
+        std::fs::write(dir.path().join("x.rs"), "pub mod a { pub mod c; }\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("x").join("a")).unwrap();
+        std::fs::write(
+            dir.path().join("x").join("a").join("c.rs"),
+            "pub fn g() {}\n",
+        )
+        .unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let paths: Vec<PathBuf> = files(result)
+            .into_iter()
+            .map(|p| p.strip_prefix(dir.path()).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![
+                PathBuf::from("lib.rs"),
+                PathBuf::from("x.rs"),
+                PathBuf::from("x/a/c.rs")
+            ]
+        );
+    }
+
+    #[test]
+    fn nested_inline_mods_stack_their_directories() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a { pub mod b { pub mod c; } }\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a").join("b")).unwrap();
+        std::fs::write(
+            dir.path().join("a").join("b").join("c.rs"),
+            "pub fn g() {}\n",
+        )
+        .unwrap();
         let result = module_tree(&target(&root)).unwrap();
         assert_eq!(files(result).len(), 2);
+    }
+
+    #[test]
+    fn path_attribute_inside_inline_mod_resolves_under_the_inline_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a { #[path = \"other.rs\"] pub mod c; }\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a")).unwrap();
+        std::fs::write(dir.path().join("a").join("other.rs"), "pub fn g() {}\n").unwrap();
+        std::fs::write(dir.path().join("other.rs"), "pub fn stale() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        let paths: Vec<PathBuf> = files(result)
+            .into_iter()
+            .map(|p| p.strip_prefix(dir.path()).unwrap().to_path_buf())
+            .collect();
+        assert_eq!(
+            paths,
+            vec![PathBuf::from("lib.rs"), PathBuf::from("a/other.rs")]
+        );
+    }
+
+    fn rel(dir: &std::path::Path, result: Vec<(PathBuf, syn::File, Vec<String>)>) -> Vec<PathBuf> {
+        files(result)
+            .into_iter()
+            .map(|p| p.strip_prefix(dir).unwrap().to_path_buf())
+            .collect()
+    }
+
+    #[test]
+    fn root_with_a_directory_named_after_it_keeps_children_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod foo;\npub mod lib { pub mod child; }\n").unwrap();
+        std::fs::write(dir.path().join("foo.rs"), "").unwrap();
+        std::fs::create_dir_all(dir.path().join("lib")).unwrap();
+        std::fs::write(dir.path().join("lib").join("child.rs"), "").unwrap();
+        std::fs::write(dir.path().join("lib").join("foo.rs"), "pub fn stale() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(
+            rel(dir.path(), result),
+            vec![
+                PathBuf::from("lib.rs"),
+                PathBuf::from("foo.rs"),
+                PathBuf::from("lib/child.rs")
+            ]
+        );
+    }
+
+    #[test]
+    fn path_loaded_file_keeps_children_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "#[path = \"other.rs\"]\npub mod m;\n").unwrap();
+        std::fs::write(dir.path().join("other.rs"), "pub mod c;\n").unwrap();
+        std::fs::write(dir.path().join("c.rs"), "").unwrap();
+        std::fs::create_dir_all(dir.path().join("other")).unwrap();
+        std::fs::write(dir.path().join("other").join("c.rs"), "pub fn stale() {}\n").unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(
+            rel(dir.path(), result),
+            vec![
+                PathBuf::from("lib.rs"),
+                PathBuf::from("other.rs"),
+                PathBuf::from("c.rs")
+            ]
+        );
+    }
+
+    #[test]
+    fn mod_rs_file_keeps_children_beside_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, "pub mod a;\n").unwrap();
+        std::fs::create_dir_all(dir.path().join("a").join("mod")).unwrap();
+        std::fs::write(dir.path().join("a").join("mod.rs"), "pub mod b;\n").unwrap();
+        std::fs::write(dir.path().join("a").join("b.rs"), "").unwrap();
+        std::fs::write(
+            dir.path().join("a").join("mod").join("b.rs"),
+            "pub fn stale() {}\n",
+        )
+        .unwrap();
+        let result = module_tree(&target(&root)).unwrap();
+        assert_eq!(
+            rel(dir.path(), result),
+            vec![
+                PathBuf::from("lib.rs"),
+                PathBuf::from("a/mod.rs"),
+                PathBuf::from("a/b.rs")
+            ]
+        );
     }
 
     #[test]

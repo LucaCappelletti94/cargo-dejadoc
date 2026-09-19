@@ -23,7 +23,7 @@ Different paths, methods, string literals or macro arguments do separate bodies.
 
 ```
 cargo dejadoc -v         # each group with its sites and code
-cargo dejadoc --json     # {total, unique, groups: [{id, tokens, unparsed, sites: [{file, line, item, info, code}]}]}
+cargo dejadoc --json     # {total, unique, groups: [{id, tokens, unparsed, sites: [{file, line, end, item, info, code}]}]}
 ```
 
 `-p <member>`, `--all-targets`, `-t <sites>`, `--min-tokens <n>`, `--no-fail`, `--github` for workflow annotations.
@@ -43,4 +43,4 @@ The GitHub action comments on each copy to remove with a removal suggestion and 
 
 ## Library
 
-`dejadoc = { version = "0.2", default-features = false, features = ["std"] }`, then `dejadoc::Dejadoc::default().run(".")?` returns the same `Report`.
+`dejadoc = { version = "0.3", default-features = false, features = ["std"] }`, then `dejadoc::Dejadoc::default().run(".")?` returns the same `Report`.
