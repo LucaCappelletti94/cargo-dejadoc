@@ -12,7 +12,7 @@ pub mod util;
 /// ```
 pub fn alpha_fn() {}
 
-/// Formatting variant of the same doctest.
+/// A formatting variant of the same doctest.
 /// ```
 ///
 ///     fn shared() { }   // trailing comment

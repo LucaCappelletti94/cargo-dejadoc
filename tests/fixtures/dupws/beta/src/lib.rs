@@ -5,7 +5,7 @@
 /// ```
 pub fn beta_fn() {}
 
-/// Unparseable body shared with alpha.
+/// An unparseable body shared with alpha.
 /// ```
 /// @ nope nope
 /// ```

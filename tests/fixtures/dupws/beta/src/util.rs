@@ -1,4 +1,4 @@
-/// Beta copy of the helper doctest.
+/// A beta copy of the helper doctest.
 /// ```
 /// fn helper() { }
 /// ```
