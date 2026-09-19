@@ -3,7 +3,6 @@
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
-use alloc::vec;
 use alloc::vec::Vec;
 
 use quote::ToTokens;
@@ -26,20 +25,26 @@ use crate::fence;
 /// (`#[doc = include_str!(…)]` splices other files in).
 struct DocSource {
     text: String,
-    /// 1-based source line of each text line; one entry per text line.
-    lines: Vec<u32>,
-    /// File of each text line; one entry per text line.
-    files: Vec<String>,
-    /// Whether each text line sits on its own source line, false inside an escaped-newline literal.
-    exact: Vec<bool>,
+    /// One entry per text line.
+    origins: Vec<Origin>,
+}
+
+/// Where one doc text line comes from.
+#[derive(Clone)]
+struct Origin {
+    /// 1-based source line.
+    line: u32,
+    file: String,
+    /// Whether the text line sits on its own source line, false inside an escaped-newline literal.
+    exact: bool,
+    /// First and last source line of the attribute the text came from, `(0, 0)` for an include.
+    attr: (u32, u32),
 }
 
 /// One `doc = …` value's text, before merging.
 struct Part {
     text: String,
-    line: u32,
-    file: String,
-    exact: bool,
+    origin: Origin,
 }
 
 /// Extract doctest blocks from one parsed source file, under the item path
@@ -358,9 +363,11 @@ fn doc_sources(
     let mut parts: Vec<Part> = Vec::new();
     for attr in attrs {
         let line = line_of(attr.pound_token.span);
+        let attr_end = attr.bracket_token.span.close().end().line;
+        let bounds = (line, u32::try_from(attr_end).unwrap_or(u32::MAX));
         if attr.path().is_ident("doc") {
             if let Meta::NameValue(nv) = &attr.meta {
-                push_doc_expr(&mut parts, &nv.value, line, file, read_include);
+                push_doc_expr(&mut parts, &nv.value, bounds, file, read_include);
             }
         } else if attr.path().is_ident("cfg_attr")
             && let Meta::List(list) = &attr.meta
@@ -372,7 +379,7 @@ fn doc_sources(
                 _ => None,
             });
             for nv in docs {
-                push_doc_expr(&mut parts, &nv.value, line, file, read_include);
+                push_doc_expr(&mut parts, &nv.value, bounds, file, read_include);
             }
         }
     }
@@ -383,14 +390,14 @@ fn doc_sources(
 fn push_doc_expr(
     parts: &mut Vec<Part>,
     value: &Expr,
-    line: u32,
+    attr: (u32, u32),
     file: &str,
     read_include: &IncludeRead<'_>,
 ) {
     match value {
         Expr::Lit(ExprLit {
             lit: Lit::Str(s), ..
-        }) => push_literal(parts, s, line, file),
+        }) => push_literal(parts, s, attr, file),
         Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("include_str") => {
             if let Ok(s) = parse2::<LitStr>(mac.tokens.clone()) {
                 push_include(parts, file, read_include, &s.value());
@@ -400,7 +407,7 @@ fn push_doc_expr(
             if let Ok(concat) = parse2::<ConcatParts>(mac.tokens.clone()) {
                 for part in concat.0 {
                     match part {
-                        ConcatPart::Lit(s) => push_literal(parts, &s, line, file),
+                        ConcatPart::Lit(s) => push_literal(parts, &s, attr, file),
                         ConcatPart::Include(s) => {
                             push_include(parts, file, read_include, &s.value());
                         }
@@ -413,16 +420,19 @@ fn push_doc_expr(
 }
 
 /// A literal spanning fewer source lines than its text has carries escaped newlines.
-fn push_literal(parts: &mut Vec<Part>, s: &LitStr, line: u32, file: &str) {
+fn push_literal(parts: &mut Vec<Part>, s: &LitStr, attr: (u32, u32), file: &str) {
     let text = doc_value(&s.value());
     let span = s.span();
     let physical = span.end().line.saturating_sub(span.start().line) + 1;
     let exact = text.lines().count() <= physical;
     parts.push(Part {
         text,
-        line,
-        file: file.to_string(),
-        exact,
+        origin: Origin {
+            line: attr.0,
+            file: file.to_string(),
+            exact,
+            attr,
+        },
     });
 }
 
@@ -430,9 +440,12 @@ fn push_include(parts: &mut Vec<Part>, file: &str, read: &IncludeRead<'_>, p: &s
     if let Some((path, text)) = read(file, p) {
         parts.push(Part {
             text,
-            line: 1,
-            file: path,
-            exact: true,
+            origin: Origin {
+                line: 1,
+                file: path,
+                exact: true,
+                attr: (0, 0),
+            },
         });
     }
 }
@@ -440,40 +453,35 @@ fn push_include(parts: &mut Vec<Part>, file: &str, read: &IncludeRead<'_>, p: &s
 /// Merge all parts of one item's doc stream into a single source.
 fn merge_parts(parts: Vec<Part>) -> Vec<DocSource> {
     let mut out: Vec<DocSource> = Vec::new();
-    let mut prev: Option<(u32, String, bool)> = None;
+    let mut prev: Option<Origin> = None;
     for part in parts {
-        let lines = line_range(&part.text, part.line);
-        let files = vec![part.file.clone(); lines.len()];
-        let exact = vec![part.exact; lines.len()];
+        let origins = line_range(&part.text, part.origin.line)
+            .into_iter()
+            .map(|line| Origin {
+                line,
+                ..part.origin.clone()
+            });
         if let Some(last) = out.last_mut() {
             // The separator '\n' after a part that ended a line (or is
             // empty) adds one blank text line; attribute it to the
             // previous part's file and line.
             if last.text.is_empty() || last.text.ends_with('\n') {
-                let (pbase, pfile, pexact) = prev.unwrap();
-                let line = if last.lines.is_empty() {
-                    pbase
-                } else {
-                    *last.lines.last().unwrap() + 1
-                };
-                last.lines.push(line);
-                last.files.push(pfile);
-                last.exact.push(pexact);
+                let mut sep = prev.take().unwrap();
+                if let Some(tail) = last.origins.last() {
+                    sep.line = tail.line + 1;
+                }
+                last.origins.push(sep);
             }
             last.text.push('\n');
             last.text.push_str(&part.text);
-            last.lines.extend(lines);
-            last.files.extend(files);
-            last.exact.extend(exact);
+            last.origins.extend(origins);
         } else {
             out.push(DocSource {
                 text: part.text,
-                lines,
-                files,
-                exact,
+                origins: origins.collect(),
             });
         }
-        prev = Some((part.line, part.file, part.exact));
+        prev = Some(part.origin);
     }
     out
 }
@@ -669,18 +677,23 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
         if !counted {
             continue;
         }
-        let file = src.files[f.line]
+        let (start, stop) = (&src.origins[f.line], &src.origins[f.end]);
+        let file = start
+            .file
             .strip_prefix(root)
             .and_then(|f| f.strip_prefix('/'))
-            .unwrap_or(&src.files[f.line]);
-        let spanned = src.files[f.end] == src.files[f.line]
-            && src.lines[f.end] >= src.lines[f.line]
-            && src.exact[f.line]
-            && src.exact[f.end];
+            .unwrap_or(&start.file);
+        // Deleting the span must take the attribute's opening and closing lines
+        // together or not at all, else a `/** */` or raw literal loses one end.
+        let spanned = stop.file == start.file
+            && stop.line >= start.line
+            && start.exact
+            && stop.exact
+            && (start.line == start.attr.0) == (stop.line == stop.attr.1);
         out.push(DocTest {
             file: lexical(file),
-            line: src.lines[f.line],
-            end: spanned.then(|| src.lines[f.end]),
+            line: start.line,
+            end: spanned.then_some(stop.line),
             item: item.to_string(),
             info,
             code: f.code,
@@ -916,6 +929,49 @@ mod tests {
     fn block_doc_fence_closing_on_the_last_doc_line_spans_to_it() {
         let src = "/** ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
         assert_eq!(spans(src), vec![(1, Some(3))]);
+    }
+
+    #[test]
+    fn block_doc_fence_sharing_only_the_closing_line_has_no_span() {
+        let src = "/**\n * intro\n *\n * ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(4, None)]);
+    }
+
+    #[test]
+    fn block_doc_fence_sharing_only_the_opening_line_has_no_span() {
+        let src = "/** ```\n * let x = 1;\n * ```\n * outro\n */\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(1, None)]);
+    }
+
+    #[test]
+    fn raw_doc_attribute_fence_on_the_attribute_line_has_no_span() {
+        let src = "#[doc = r\"```\nlet x = 1;\n```\n\"]\npub fn f() {}\n";
+        assert_eq!(spans(src), vec![(1, None)]);
+    }
+
+    #[test]
+    fn fence_across_two_inclusions_of_one_file_has_no_span() {
+        let src =
+            "#[doc = include_str!(\"g.md\")]\n#[doc = include_str!(\"g.md\")]\npub fn f() {}\n";
+        let parsed = syn::parse_file(src).unwrap();
+        let dts = extract(
+            "mycrate",
+            "/root/src/lib.rs",
+            &parsed,
+            "/root",
+            &|_f: &str, _p: &str| {
+                Some((
+                    "/root/src/g.md".to_string(),
+                    "```\nintro\n```\n\n```\ntail".to_string(),
+                ))
+            },
+        );
+        // The fence left open at the end of the first copy closes on the
+        // second copy's first line, behind its own opening line.
+        assert_eq!(
+            dts.iter().map(|d| (d.line, d.end)).collect::<Vec<_>>(),
+            vec![(1, Some(3)), (5, None), (3, Some(5))]
+        );
     }
 
     #[test]
