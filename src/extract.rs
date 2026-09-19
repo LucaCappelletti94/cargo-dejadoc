@@ -339,7 +339,7 @@ fn line_of(span: proc_macro2::Span) -> u32 {
 /// Doc text from an item's attributes, `#[doc = "…"]` literals,
 /// `include_str!` files, and `concat!` mixes, assembled into one doc
 /// stream, so fences may straddle include boundaries. A `cfg_attr` doc is
-/// taken when its predicate holds with every feature and cfg on.
+/// taken when its predicate holds under [`crate::cfg`].
 fn doc_sources(
     attrs: &[syn::Attribute],
     file: &str,
@@ -355,7 +355,7 @@ fn doc_sources(
         } else if attr.path().is_ident("cfg_attr")
             && let Meta::List(list) = &attr.meta
             && let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-            && metas.first().is_some_and(cfg_holds)
+            && metas.first().is_some_and(crate::cfg::holds)
         {
             let docs = metas.iter().skip(1).filter_map(|meta| match meta {
                 Meta::NameValue(nv) if nv.path.is_ident("doc") => Some(nv),
@@ -367,26 +367,6 @@ fn doc_sources(
         }
     }
     merge_parts(parts)
-}
-
-/// Whether a cfg predicate holds with every feature and cfg on.
-fn cfg_holds(pred: &Meta) -> bool {
-    let Meta::List(list) = pred else {
-        return true;
-    };
-    if list.path.is_ident("not") {
-        return !list
-            .parse_args::<Meta>()
-            .is_ok_and(|inner| cfg_holds(&inner));
-    }
-    let inner = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated);
-    if list.path.is_ident("all") {
-        inner.is_ok_and(|inner| inner.iter().all(cfg_holds))
-    } else if list.path.is_ident("any") {
-        inner.is_ok_and(|inner| inner.iter().any(cfg_holds))
-    } else {
-        true
-    }
 }
 
 /// Push the doc text of one `doc = …` value.
@@ -1479,10 +1459,11 @@ pub fn raw() {}
     }
 
     #[test]
-    fn cfg_attr_predicate_holds_with_every_cfg_on() {
+    fn cfg_attr_predicate_holds_as_on_the_rustdoc_host() {
         // `all` with a negated feature is false, `any` with one true arm
-        // is true, so only the second fence opens.
-        let src = "#[cfg_attr(all(feature = \"a\", not(feature = \"b\")), doc = \"```\")]\n#[cfg_attr(any(not(doc), feature = \"b\"), doc = \"```\")]\n/// fn main() { }\n/// ```\npub fn gated() {}\n";
+        // is true, `windows` and `test` are off, so only the second fence
+        // opens and the `not(test)` fence closes it.
+        let src = "#[cfg_attr(all(feature = \"a\", not(feature = \"b\")), doc = \"```\")]\n#[cfg_attr(any(not(doc), feature = \"b\"), doc = \"```\")]\n#[cfg_attr(windows, doc = \"```\")]\n#[cfg_attr(test, doc = \"```\")]\n/// fn main() { }\n#[cfg_attr(not(test), doc = \"```\")]\npub fn gated() {}\n";
         assert_eq!(
             run(src),
             vec![dt(
