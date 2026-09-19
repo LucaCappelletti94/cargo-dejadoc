@@ -32,7 +32,7 @@ cargo dejadoc --json     # {total, unique, groups: [{id, tokens, unparsed, sites
 
 1. Keep the site whose item the body calls. A crate level example beats a copy on an item.
 2. At every other site, delete the block and link the kept item, `` See [`crate::parse`] ``, or rewrite it to call or assert something else.
-3. Only when every copy must stay, add `dejadoc` to the fence info of the kept copies, `rust,dejadoc`. rustdoc still runs it.
+3. Only when every copy must stay, open the kept copies with `rust,dejadoc`. rustdoc still runs them.
 4. Rerun until exit `0`.
 
 Trivial recurring bodies are better filtered than allowed. `.dejadoc.toml` at the workspace root takes `threshold` and `min-tokens`, compared against each group's `tokens`.

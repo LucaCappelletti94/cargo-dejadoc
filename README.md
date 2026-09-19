@@ -15,7 +15,7 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token count, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
-To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of its code block. rustdoc ignores the extra word and runs the doctest as before, see the [documentation tests](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html#attributes) reference for the words it does read.
+To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of its code block. rustdoc ignores the word and runs the doctest as before.
 
 ````text
 /// ```rust,dejadoc
@@ -109,7 +109,7 @@ jobs:
           payload: dejadoc-payload
 ```
 
-The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token, the [`workflow_run`](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#workflow_run) pattern [GitHub recommends](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/). [`pull_request_target`](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#pull_request_target) grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
+The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token, the [`workflow_run`](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/) pattern. [`pull_request_target`](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#pull_request_target) grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
 
 </details>
 
@@ -120,7 +120,7 @@ let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 2);
 ```
 
-Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), an [Agent Skills](https://agentskills.io) file that the [skills CLI](https://github.com/vercel-labs/skills) installs for Claude Code, Codex, Cursor and the other agents it supports.
+Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), installed with the [skills CLI](https://github.com/vercel-labs/skills).
 
 ```bash
 npx skills add LucaCappelletti94/cargo-dejadoc
