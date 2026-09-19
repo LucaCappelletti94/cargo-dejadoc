@@ -43,4 +43,4 @@ The GitHub action comments on each copy to remove with a removal suggestion and 
 
 ## Library
 
-`dejadoc = { version = "0.2", default-features = false, features = ["std"] }`, then `dejadoc::Dejadoc::default().run(".")?` returns the same `Report`.
+`dejadoc = { version = "0.3", default-features = false, features = ["std"] }`, then `dejadoc::Dejadoc::default().run(".")?` returns the same `Report`.

@@ -113,7 +113,7 @@ The payload holds the pull request number, the head commit, and one rendered com
 
 </details>
 
-The library builds the same report in memory, so a project's own task runner can gate on it with `dejadoc = { version = "0.2", default-features = false, features = ["std"] }`, which leaves the CLI and its `clap` dependency out. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set.
+The library builds the same report in memory, so a project's own task runner can gate on it with `dejadoc = { version = "0.3", default-features = false, features = ["std"] }`, which leaves the CLI and its `clap` dependency out. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set.
 
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
