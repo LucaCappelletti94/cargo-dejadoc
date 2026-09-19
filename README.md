@@ -17,6 +17,8 @@ Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
 To allow a known copy, add the `dejadoc` token to the fence's info list, as in `rust,dejadoc`. rustdoc runs the doctest and ignores the unknown token, so nothing else about the site changes.
 
+Coding agents get the same guidance from the `dejadoc` skill in `skills/`, installed with `npx skills add LucaCappelletti94/cargo-dejadoc`.
+
 In CI, one workflow covers it. The action installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
 
 ```yaml
