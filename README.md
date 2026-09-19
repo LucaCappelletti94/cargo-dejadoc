@@ -15,11 +15,15 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token count, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
-To allow a known copy, add the `dejadoc` token to the fence's info list, as in `rust,dejadoc`. rustdoc runs the doctest and ignores the unknown token, so nothing else about the site changes.
+To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of its code block. rustdoc ignores the extra word and runs the doctest as before, see the [documentation tests](https://doc.rust-lang.org/rustdoc/write-documentation/documentation-tests.html#attributes) reference for the words it does read.
 
-Coding agents get the same guidance from the `dejadoc` skill in `skills/`, installed with `npx skills add LucaCappelletti94/cargo-dejadoc`.
+````text
+/// ```rust,dejadoc
+/// let parsed = mycrate::parse("1");
+/// ```
+````
 
-In CI, one workflow covers it. The action installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
+In CI, one workflow covers it. The [action](https://github.com/marketplace/actions/dejadoc) installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
 
 ```yaml
 on: pull_request
@@ -54,9 +58,9 @@ jobs:
 
 Review mode reports only the duplicates your pull request introduces, comparing each site against a scan of the base commit. Comments land on the copies to remove, a kept copy never gets one. Each comment links the copy that survives and GitHub renders those lines right in the comment, long ones collapsed behind a show link. The link points at the base commit for pre-existing copies and at the first added copy for groups the pull request created, and the removal suggestion deletes the copy together with an empty line left behind. Sites GitHub cannot anchor get permalinks in the review body.
 
-Every run also writes the report to the job summary and one annotation per copy to remove, which GitHub anchors to the line in the diff. Annotations are workflow output rather than API calls, so they need no token and a fork pull request shows the findings whatever its token allows. The `--github` flag prints them from the command line too, beside the usual report.
+Every run also writes the report to the [job summary](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#adding-a-job-summary) and one [annotation](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#setting-an-error-message) per copy to remove, which GitHub anchors to the line in the diff. Annotations are workflow output rather than API calls, so they need no token and a fork pull request shows the findings whatever its token allows. The `--github` flag prints them from the command line too, beside the usual report.
 
-A fork's `GITHUB_TOKEN` is read-only, so the review cannot be posted there and the job passes on the annotations and the summary alone. Only a review comment can carry the removal suggestion, so keeping that on forks takes two workflows, the unprivileged one preparing the review and a privileged one posting it without ever checking out the pull request head.
+A fork's [`GITHUB_TOKEN`](https://docs.github.com/en/actions/security-for-github-actions/security-guides/automatic-token-authentication#permissions-for-the-github_token) is read-only, so the review cannot be posted there and the job passes on the annotations and the summary alone. Only a review comment can carry the removal suggestion, so keeping that on forks takes two workflows, the unprivileged one preparing the review and a privileged one posting it without ever checking out the pull request head.
 
 <details>
 <summary>Two workflows, so forks keep the removal suggestion</summary>
@@ -105,7 +109,7 @@ jobs:
           payload: dejadoc-payload
 ```
 
-The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token. `pull_request_target` grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
+The payload holds the pull request number, the head commit, and one rendered comment per copy with the lines it covers. The posting job reads only that, so it needs no checkout, no toolchain and no dejadoc install, and untrusted code never runs beside the write token, the [`workflow_run`](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#workflow_run) pattern [GitHub recommends](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/). [`pull_request_target`](https://docs.github.com/en/actions/reference/events-that-trigger-workflows#pull_request_target) grants the same access in one job, and the action still accepts it, but its recipe checks out the pull request head in a privileged job, so it is not the path this README recommends.
 
 </details>
 
@@ -114,4 +118,10 @@ The library builds the same report in memory, so a project's own task runner can
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 2);
+```
+
+Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), an [Agent Skills](https://agentskills.io) file that the [skills CLI](https://github.com/vercel-labs/skills) installs for Claude Code, Codex, Cursor and the other agents it supports.
+
+```bash
+npx skills add LucaCappelletti94/cargo-dejadoc
 ```
