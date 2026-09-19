@@ -325,18 +325,13 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 /// `min_tokens`, and groups under `threshold`.
 ///
 /// Blocks sharing a file and line are one doc block reached through several
-/// items, so only the first by item path is kept.
+/// items, so only the first is kept.
 #[must_use]
 pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     let mut by_site: BTreeMap<(&str, u32), &DocTest> = BTreeMap::new();
     for block in blocks {
         by_site
             .entry((block.file.as_str(), block.line))
-            .and_modify(|kept| {
-                if block.item < kept.item {
-                    *kept = block;
-                }
-            })
             .or_insert(block);
     }
     let total = by_site.len();
@@ -524,7 +519,7 @@ mod tests {
         assert_eq!(report.groups.len(), 1);
         let sites = &report.groups[0].sites;
         assert_eq!(sites.len(), 2);
-        assert_eq!(sites[0].item, "crate::alpha");
+        assert_eq!(sites[0].item, "crate::beta");
         assert_eq!(sites[1].item, "crate::copy");
     }
 
