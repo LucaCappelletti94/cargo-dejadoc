@@ -570,10 +570,11 @@ mod tests {
             .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(narrow.total, 2);
         assert_eq!(narrow.groups, Vec::new());
-        let filtered = Dejadoc::default()
-            .package("beta")
-            .threshold(1)
-            .run_targets("", &targets, &|_f, _i| None);
+        let filtered =
+            Dejadoc::default()
+                .package("beta")
+                .threshold(1)
+                .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(filtered.total, 1);
         assert_eq!(filtered.groups[0].sites[0].file, "beta/src/lib.rs");
     }
