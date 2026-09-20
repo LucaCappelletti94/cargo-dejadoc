@@ -198,7 +198,7 @@ fn flat_literal(lit: &proc_macro2::Literal) -> Option<proc_macro2::Literal> {
     let s = lit.to_string();
     let open = s.find('"')?;
     let prefix = &s[..open];
-    let hashes = prefix.strip_prefix('r').unwrap_or(prefix);
+    let hashes = prefix.trim_start_matches(|c: char| c != '#');
     let close = s.len().checked_sub(1 + hashes.len())?;
     let inner = s.get(open + 1..close)?;
     if !inner.starts_with("../") {
@@ -2123,5 +2123,154 @@ fn f() {}"#,
             "struct Abete { }\nstruct Pino { n: u8 }\nimpl Wrap for <Pino as Inner>::Abete {\n    fn f(self) { let s: Self = Self; }\n}\n",
         );
         assert!(c.text.contains("Self"));
+    }
+
+    #[test]
+    fn a_return_in_a_let_block_is_not_the_fn_return_value() {
+        // rustc returns 1 from the first body and 2 from the second.
+        // return_tail_folds is sound only where the block tail is the fn body.
+        let early = canonicalize("fn f() -> u8 { let _a = { return 1; }; 2 }");
+        let value = canonicalize("fn f() -> u8 { let _a = { 1 }; 2 }");
+        assert_ne!(early.text, value.text);
+    }
+
+    #[test]
+    fn a_return_in_an_argument_block_is_not_the_fn_return_value() {
+        let early = canonicalize("fn f() -> u8 { g({ return 1; }); 2 }");
+        let value = canonicalize("fn f() -> u8 { g({ 1 }); 2 }");
+        assert_ne!(early.text, value.text);
+    }
+
+    #[test]
+    fn a_return_in_a_loop_body_is_not_a_tail_expression() {
+        // The first body returns on the first pass, the second never
+        // terminates.
+        let early = canonicalize("fn f() -> u8 { while c { return 1; } 2 }");
+        let looped = canonicalize("fn f() -> u8 { while c { 1 } 2 }");
+        assert_ne!(early.text, looped.text);
+    }
+
+    #[test]
+    fn a_return_in_an_arm_block_stays_a_block() {
+        // An arm body `{ return 1; }` returns from the fn, `{ 1 }` is the arm
+        // value. The arm must keep its block whatever folding is added.
+        let early = canonicalize("fn f() -> u8 { match v { A => { return 1; }, _ => 2 } }");
+        let value = canonicalize("fn f() -> u8 { match v { A => { 1 }, _ => 2 } }");
+        assert_ne!(early.text, value.text);
+    }
+
+    #[test]
+    fn a_return_in_an_async_block_is_its_tail_value() {
+        // rustc reads an async block's `return` as its tail, so this fold is
+        // sound here as it is in fn and closure bodies.
+        let a = canonicalize("let f = async { return 1; };");
+        let b = canonicalize("let f = async { 1 };");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_inert_attr_on_a_match_arm_merges() {
+        // rustc accepts attributes on arms and inert lint attributes carry no
+        // program meaning, as expect_attr_merges pins for items.
+        let a = canonicalize("match v { #[expect(unused_variables)] Some(_) => {}, None => {} }");
+        let b = canonicalize("match v { Some(_) => {}, None => {} }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_cfg_attr_on_a_match_arm_stays_distinct() {
+        let a = canonicalize("match v { #[cfg(unix)] Some(_) => {}, None => {} }");
+        let b = canonicalize("match v { Some(_) => {}, None => {} }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_inert_attr_on_a_fn_param_merges() {
+        // rustc accepts `fn f(#[...] x: u8)` and the attribute is inert.
+        let a = canonicalize("fn f(#[expect(unused_variables)] x: u8) { x }");
+        let b = canonicalize("fn f(x: u8) { x }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_literal_in_a_local_macro_stays_opaque() {
+        let a = canonicalize("m!(0x10);\nf();");
+        let b = canonicalize("m!(16);\nf();");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn include_depth_folds_on_byte_path_literals() {
+        // flat_literal documents byte support. This pins flattening for a
+        // `b"…"`, distinct_byte_include_paths_stay_distinct must hold
+        // whichever way the contract call goes.
+        let near = canonicalize("let i = include_image!(b\"../icon.png\");");
+        let here = canonicalize("let i = include_image!(b\"icon.png\");");
+        assert_eq!(near.text, here.text);
+    }
+
+    #[test]
+    fn include_depth_folds_on_raw_byte_path_literals() {
+        let near = canonicalize("let i = include_image!(br\"../icon.png\");");
+        let here = canonicalize("let i = include_image!(br\"icon.png\");");
+        assert_eq!(near.text, here.text);
+    }
+
+    #[test]
+    fn include_depth_folds_on_c_string_path_literals() {
+        let near = canonicalize("let i = include_image!(c\"../icon\");");
+        let here = canonicalize("let i = include_image!(c\"icon\");");
+        assert_eq!(near.text, here.text);
+    }
+
+    #[test]
+    fn distinct_byte_include_paths_stay_distinct() {
+        // The buggy flat_literal drops the last path char of a non-raw
+        // prefixed literal, which merged `../x.png` with `../x.pnq`.
+        let a = canonicalize("let i = include_image!(b\"../x.png\");");
+        let b = canonicalize("let i = include_image!(b\"../x.pnq\");");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn distinct_c_string_include_paths_stay_distinct() {
+        let a = canonicalize("let i = include_image!(c\"../a\");");
+        let b = canonicalize("let i = include_image!(c\"../b\");");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_let_chain_binder_in_a_match_guard() {
+        // rustc accepts let-chains in arm guards and scopes the binder over
+        // guard and arm body. skills/dejadoc/SKILL.md declares local names
+        // never separate two bodies.
+        let a = canonicalize("match w { Some(v) if let Some(z) = q && z == v => z, _ => 2 }");
+        let b = canonicalize("match w { Some(v) if let Some(t) = q && t == v => t, _ => 2 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_higher_ranked_lifetime_in_a_dyn_bound() {
+        // alpha_renames_closure_higher_ranked_lifetimes pins the closure
+        // binder. SKILL.md makes no distinction for one in a type.
+        let a = canonicalize("let f: &dyn for<'a> Fn(&'a u8) = g;");
+        let b = canonicalize("let f: &dyn for<'b> Fn(&'b u8) = g;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_higher_ranked_lifetime_in_a_where_bound() {
+        let a = canonicalize("fn g<T>(x: &T) where T: for<'a> Tr<'a> {}");
+        let b = canonicalize("fn g<T>(x: &T) where T: for<'b> Tr<'b> {}");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_fn_pointer_parameter_names() {
+        // A named fn-pointer argument is decorative. rustc resolves nothing
+        // through it, so either spelling names one type.
+        let a = canonicalize("let f: fn(a: u8) = g;");
+        let b = canonicalize("let f: fn(b: u8) = g;");
+        assert_eq!(a.text, b.text);
     }
 }

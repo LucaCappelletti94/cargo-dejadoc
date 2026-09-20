@@ -162,10 +162,32 @@ impl VisitMut for Drift {
         semicolon_non_tail_macros(&mut block.stmts);
         syn::visit_mut::visit_block_mut(self, block);
         drop_empty_stmts(&mut block.stmts);
-        fold_tail_return(&mut block.stmts);
+    }
+
+    fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {
+        syn::visit_mut::visit_item_fn_mut(self, node);
+        fold_tail_return(&mut node.block.stmts);
+    }
+
+    fn visit_impl_item_fn_mut(&mut self, node: &mut syn::ImplItemFn) {
+        syn::visit_mut::visit_impl_item_fn_mut(self, node);
+        fold_tail_return(&mut node.block.stmts);
+    }
+
+    fn visit_trait_item_fn_mut(&mut self, node: &mut syn::TraitItemFn) {
+        syn::visit_mut::visit_trait_item_fn_mut(self, node);
+        if let Some(block) = &mut node.default {
+            fold_tail_return(&mut block.stmts);
+        }
+    }
+
+    fn visit_expr_async_mut(&mut self, node: &mut syn::ExprAsync) {
+        syn::visit_mut::visit_expr_async_mut(self, node);
+        fold_tail_return(&mut node.block.stmts);
     }
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
+        strip_inert_attrs(&mut arm.attrs);
         unwrap_arm_block(arm);
         syn::visit_mut::visit_arm_mut(self, arm);
     }
@@ -174,13 +196,29 @@ impl VisitMut for Drift {
         syn::visit_mut::visit_expr_mut(self, expr);
         fold_paren_expr(expr);
         if let syn::Expr::Closure(closure) = expr {
+            if let syn::Expr::Block(block) = closure.body.as_mut() {
+                fold_tail_return(&mut block.block.stmts);
+            }
             unwrap_single_expr_block(&mut closure.body);
         }
     }
 
     fn visit_pat_mut(&mut self, pat: &mut syn::Pat) {
+        strip_pat_inert_attrs(pat);
         syn::visit_mut::visit_pat_mut(self, pat);
         fold_paren_pat(pat);
+    }
+
+    fn visit_fn_arg_mut(&mut self, node: &mut syn::FnArg) {
+        if let syn::FnArg::Typed(typed) = node {
+            strip_inert_attrs(&mut typed.attrs);
+        }
+        syn::visit_mut::visit_fn_arg_mut(self, node);
+    }
+
+    fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
+        strip_inert_attrs(&mut node.attrs);
+        syn::visit_mut::visit_named_arg_mut(self, node);
     }
 
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {
@@ -309,7 +347,9 @@ fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
     });
 }
 
-/// Replace a tail `return expr;` with `expr` as the tail expression.
+/// Replace a tail `return expr;` with `expr` as the tail expression, only
+/// for the block visitors whose tail is the body value, a fn, an async block
+/// or a closure body.
 fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
     let n = stmts.len();
     if n == 0 {
@@ -393,6 +433,26 @@ fn is_inert_attr(attr: &syn::Attribute) -> bool {
 /// Drop inert attributes from the list.
 fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !is_inert_attr(attr));
+}
+
+/// Drop inert attributes from every pattern variant that carries them.
+fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
+    let attrs = match pat {
+        syn::Pat::Ident(p) => &mut p.attrs,
+        syn::Pat::Reference(p) => &mut p.attrs,
+        syn::Pat::Struct(p) => &mut p.attrs,
+        syn::Pat::Tuple(p) => &mut p.attrs,
+        syn::Pat::TupleStruct(p) => &mut p.attrs,
+        syn::Pat::Slice(p) => &mut p.attrs,
+        syn::Pat::Guard(p) => &mut p.attrs,
+        syn::Pat::Or(p) => &mut p.attrs,
+        syn::Pat::Paren(p) => &mut p.attrs,
+        syn::Pat::Rest(p) => &mut p.attrs,
+        syn::Pat::Type(p) => &mut p.attrs,
+        syn::Pat::Wild(p) => &mut p.attrs,
+        _ => return,
+    };
+    strip_inert_attrs(attrs);
 }
 
 fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {

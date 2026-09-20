@@ -598,18 +598,22 @@ fn walk_let_cond(renamer: &mut Renamer, cond: &mut syn::Expr) {
             walk_let_cond(renamer, &mut binary.left);
             walk_let_cond(renamer, &mut binary.right);
         }
-        syn::Expr::Let(let_expr) => {
-            syn::visit_mut::visit_expr_mut(renamer, &mut let_expr.expr);
-            let mut names = Vec::new();
-            pattern_names(&let_expr.pat, &mut names);
-            for name in &names {
-                renamer.bind(Ns::Value, name);
-            }
-            syn::visit_mut::visit_pat_mut(renamer, &mut let_expr.pat);
-            rewrite_pat_bindings(renamer, &mut let_expr.pat);
-        }
+        syn::Expr::Let(let_expr) => bind_let(renamer, let_expr),
         other => syn::visit_mut::visit_expr_mut(renamer, other),
     }
+}
+
+/// Visit a `let` expression, binding its pattern names before the pattern
+/// is rewritten.
+fn bind_let(renamer: &mut Renamer, let_expr: &mut syn::ExprLet) {
+    syn::visit_mut::visit_expr_mut(renamer, &mut let_expr.expr);
+    let mut names = Vec::new();
+    pattern_names(&let_expr.pat, &mut names);
+    for name in &names {
+        renamer.bind(Ns::Value, name);
+    }
+    syn::visit_mut::visit_pat_mut(renamer, &mut let_expr.pat);
+    rewrite_pat_bindings(renamer, &mut let_expr.pat);
 }
 
 impl VisitMut for Renamer {
@@ -1053,6 +1057,32 @@ impl VisitMut for Renamer {
         if let Some(canon) = self.lookup(&[Ns::Lifetime], &name) {
             lifetime.ident = Ident::new(&canon, lifetime.ident.span());
         }
+    }
+
+    fn visit_pat_guard_mut(&mut self, node: &mut syn::PatGuard) {
+        syn::visit_mut::visit_pat_mut(self, &mut node.pat);
+        walk_let_cond(self, &mut node.guard);
+    }
+
+    fn visit_bound_lifetimes_mut(&mut self, node: &mut syn::BoundLifetimes) {
+        for param in &mut node.lifetimes {
+            if let syn::GenericParam::Lifetime(lifetime) = param {
+                let name = lifetime.lifetime.ident.to_string();
+                let canon = self.bind(Ns::Lifetime, &name);
+                lifetime.lifetime.ident = Ident::new(&canon, lifetime.lifetime.ident.span());
+            }
+        }
+        syn::visit_mut::visit_bound_lifetimes_mut(self, node);
+    }
+
+    fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
+        if let Some((name, _)) = &mut node.name
+            && *name != "_"
+        {
+            let canon = canonical(&mut self.counter);
+            *name = Ident::new(&canon, name.span());
+        }
+        syn::visit_mut::visit_named_arg_mut(self, node);
     }
 
     fn visit_attribute_mut(&mut self, attribute: &mut syn::Attribute) {
