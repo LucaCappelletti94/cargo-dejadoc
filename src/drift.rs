@@ -210,8 +210,9 @@ impl VisitMut for Drift {
     }
 
     fn visit_fn_arg_mut(&mut self, node: &mut syn::FnArg) {
-        if let syn::FnArg::Typed(typed) = node {
-            strip_inert_attrs(&mut typed.attrs);
+        match node {
+            syn::FnArg::Receiver(receiver) => strip_inert_attrs(&mut receiver.attrs),
+            syn::FnArg::Typed(typed) => strip_inert_attrs(&mut typed.attrs),
         }
         syn::visit_mut::visit_fn_arg_mut(self, node);
     }
@@ -460,26 +461,30 @@ fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
 }
 
 /// Drop inert attributes from every pattern variant rustc accepts an
-/// attribute on, the match-arm pattern kinds. `Pat::Rest` and `Pat::Type` are
-/// excluded, rustc rejects `#[attr] ..` and reaches named parameter
-/// attributes through `visit_fn_arg_mut` instead.
+/// attribute on, the match-arm pattern kinds. `Pat::Rest` and `Pat::Const`
+/// are excluded, rustc rejects `#[attr] ..` and gates `const { 1 }` patterns
+/// behind an unstable feature, and named parameter attributes arrive through
+/// `visit_fn_arg_mut` instead.
 fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
     let attrs = match pat {
         syn::Pat::Ident(p) => &mut p.attrs,
+        syn::Pat::Lit(p) => &mut p.attrs,
+        syn::Pat::Macro(p) => &mut p.attrs,
+        syn::Pat::Or(p) => &mut p.attrs,
+        syn::Pat::Paren(p) => &mut p.attrs,
+        syn::Pat::Path(p) => &mut p.attrs,
+        syn::Pat::Range(p) => &mut p.attrs,
         syn::Pat::Reference(p) => &mut p.attrs,
+        syn::Pat::Guard(p) => &mut p.attrs,
+        syn::Pat::Slice(p) => &mut p.attrs,
         syn::Pat::Struct(p) => &mut p.attrs,
         syn::Pat::Tuple(p) => &mut p.attrs,
         syn::Pat::TupleStruct(p) => &mut p.attrs,
-        syn::Pat::Slice(p) => &mut p.attrs,
-        syn::Pat::Guard(p) => &mut p.attrs,
-        syn::Pat::Or(p) => &mut p.attrs,
-        syn::Pat::Paren(p) => &mut p.attrs,
         syn::Pat::Wild(p) => &mut p.attrs,
         _ => return,
     };
     strip_inert_attrs(attrs);
 }
-
 fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
     Some(match item {
         syn::Item::Const(v) => &mut v.attrs,

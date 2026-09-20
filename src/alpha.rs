@@ -1076,12 +1076,9 @@ impl VisitMut for Renamer {
     }
 
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
-        if let Some((name, _)) = &mut node.name
-            && *name != "_"
-        {
-            let canon = canonical(&mut self.counter);
-            *name = Ident::new(&canon, name.span());
-        }
+        // Parameter names in a function pointer type bind nothing, rustc
+        // reads `fn(a: u8)`, `fn(_: u8)` and `fn(u8)` as one signature.
+        node.name = None;
         syn::visit_mut::visit_named_arg_mut(self, node);
     }
 

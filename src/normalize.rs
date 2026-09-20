@@ -2219,6 +2219,13 @@ fn f() {}"#,
     }
 
     #[test]
+    fn an_inert_attr_on_a_method_receiver_merges() {
+        // rustc, verified, accepts an attribute on a method receiver.
+        let a = canonicalize("impl S { fn m(#[expect(unused)] &self) -> u8 { 1 } }");
+        let b = canonicalize("impl S { fn m(&self) -> u8 { 1 } }");
+        assert_eq!(a.text, b.text);
+    }
+    #[test]
     fn inert_attrs_on_match_arm_patterns_merge() {
         // rustc, verified, accepts `#[expect]` on every match arm pattern
         // kind, pinning each live arm of `strip_pat_inert_attrs`.
@@ -2233,6 +2240,10 @@ fn f() {}"#,
             "1 | 2 => 1, _ => 2",
             "(Some(_)) => 1, _ => 2",
             "_ => 1",
+            "1 => 1, _ => 2",
+            "None => 1, _ => 2",
+            "1..=5 => 1, _ => 2",
+            "mac!() => 1, _ => 2",
         ];
         for arm in arms {
             let with = canonicalize(&format!(
@@ -2350,11 +2361,15 @@ fn f() {}"#,
     }
 
     #[test]
-    fn alpha_renames_fn_pointer_parameter_names() {
-        // A named fn-pointer argument is decorative. rustc resolves nothing
-        // through it, so either spelling names one type.
-        let a = canonicalize("let f: fn(a: u8) = g;");
-        let b = canonicalize("let f: fn(b: u8) = g;");
-        assert_eq!(a.text, b.text);
+    fn alpha_erases_fn_pointer_parameter_names() {
+        // A fn-pointer argument name is decorative, rustc resolves nothing
+        // through it, so every spelling names one type.
+        let named = canonicalize("let f: fn(a: u8) = g;");
+        let other = canonicalize("let f: fn(b: u8) = g;");
+        let discard = canonicalize("let f: fn(_: u8) = g;");
+        let bare = canonicalize("let f: fn(u8) = g;");
+        assert_eq!(named.text, other.text);
+        assert_eq!(named.text, discard.text);
+        assert_eq!(named.text, bare.text);
     }
 }
