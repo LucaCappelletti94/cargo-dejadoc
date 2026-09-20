@@ -348,12 +348,10 @@ fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
     });
 }
 
-/// Replace a tail `return expr;` with `expr` as the tail expression of a
-/// block, then propagate through every tail position that forwards its value
-/// to the body's value. An `if` without an `else` discards its then value,
-/// rustc rejects a valued return in tail position there (`E0317`), so the
-/// then-block folds only when an else arm exists. Loops, let initializers and
-/// arguments never join the chain, their block tails are not the body value.
+/// Replace a tail `return expr;` with `expr`, then propagate through every
+/// tail position forwarding its value, an `if` only with an `else` clause
+/// because rustc rejects a valued return in a discarded then position
+/// (`E0317`).
 fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
     let n = stmts.len();
     if n != 0 {
@@ -460,22 +458,18 @@ fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !is_inert_attr(attr));
 }
 
-/// Drop inert attributes from every pattern variant rustc accepts an
-/// attribute on, the match-arm pattern kinds. `Pat::Rest` and `Pat::Const`
-/// are excluded, rustc rejects `#[attr] ..` and gates `const { 1 }` patterns
-/// behind an unstable feature, and named parameter attributes arrive through
-/// `visit_fn_arg_mut` instead.
+/// An attribute on an untyped closure parameter sits on the pattern itself,
+/// arm and named-parameter attributes sit on the arm or `FnArg` instead.
+/// `Path`, `Or`, `Range`, `Guard`, `Rest` and `Const` never keep an attribute
+/// in a parsed tree, a single-segment name parses as `Ident`, an or-pattern
+/// splits the parameter list and an attributed range reprints as a `Paren`.
 fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
     let attrs = match pat {
         syn::Pat::Ident(p) => &mut p.attrs,
         syn::Pat::Lit(p) => &mut p.attrs,
         syn::Pat::Macro(p) => &mut p.attrs,
-        syn::Pat::Or(p) => &mut p.attrs,
         syn::Pat::Paren(p) => &mut p.attrs,
-        syn::Pat::Path(p) => &mut p.attrs,
-        syn::Pat::Range(p) => &mut p.attrs,
         syn::Pat::Reference(p) => &mut p.attrs,
-        syn::Pat::Guard(p) => &mut p.attrs,
         syn::Pat::Slice(p) => &mut p.attrs,
         syn::Pat::Struct(p) => &mut p.attrs,
         syn::Pat::Tuple(p) => &mut p.attrs,
@@ -485,6 +479,7 @@ fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
     };
     strip_inert_attrs(attrs);
 }
+
 fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
     Some(match item {
         syn::Item::Const(v) => &mut v.attrs,

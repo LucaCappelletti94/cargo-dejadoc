@@ -2226,31 +2226,38 @@ fn f() {}"#,
         assert_eq!(a.text, b.text);
     }
     #[test]
-    fn inert_attrs_on_match_arm_patterns_merge() {
-        // rustc, verified, accepts `#[expect]` on every match arm pattern
-        // kind, pinning each live arm of `strip_pat_inert_attrs`.
-        let arms = [
-            "x => 1, _ => 2",
-            "&x => 1, _ => 2",
-            "P { x } => 1, _ => 2",
-            "(a, b) => 1, _ => 2",
-            "Some(q) => 1, _ => 2",
-            "[a, ..] => 1, _ => 2",
-            "Some(q) if q > 0 => 1, _ => 2",
-            "1 | 2 => 1, _ => 2",
-            "(Some(_)) => 1, _ => 2",
-            "_ => 1",
-            "1 => 1, _ => 2",
-            "None => 1, _ => 2",
-            "1..=5 => 1, _ => 2",
-            "mac!() => 1, _ => 2",
+    fn a_single_expr_arm_block_unwraps_in_a_non_tail_match() {
+        // The arm block unwrap lives in `visit_arm_mut`, not in the tail
+        // fold chain, so a match whose value is discarded must unwrap too.
+        let a = canonicalize("fn f() -> u8 { match v { A => { 1 }, _ => 2 }; 2 }");
+        let b = canonicalize("fn f() -> u8 { match v { A => 1, _ => 2 }; 2 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn inert_attrs_on_closure_parameter_patterns_merge() {
+        // An attribute on an untyped closure parameter lands on the pattern
+        // and each kind reaching `strip_pat_inert_attrs` merges.
+        let params = [
+            "x",
+            "&k",
+            "(p, q)",
+            "(Some(s))",
+            "Some(r)",
+            "[m, ..]",
+            "P { x }",
+            "_g",
+            "_",
+            "1 | 2",
+            "None",
+            "1",
+            "1..=5",
+            "mac!()",
         ];
-        for arm in arms {
-            let with = canonicalize(&format!(
-                "fn f(v: V) -> u8 {{ match v {{ #[expect(unused_variables)] {arm} }} }}"
-            ));
-            let without = canonicalize(&format!("fn f(v: V) -> u8 {{ match v {{ {arm} }} }}"));
-            assert_eq!(with.text, without.text, "arm pattern {arm}");
+        for param in params {
+            let with = canonicalize(&format!("let c = |#[expect(unused)] {param}| 0;"));
+            let without = canonicalize(&format!("let c = |{param}| 0;"));
+            assert_eq!(with.text, without.text, "param pattern {param}");
         }
     }
 
