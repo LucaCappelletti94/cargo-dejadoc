@@ -2244,6 +2244,31 @@ fn f() {}"#,
     }
 
     #[test]
+    fn a_tail_return_without_semicolon_folds() {
+        let a = canonicalize("fn f() -> u8 { return 1 }");
+        let b = canonicalize("fn f() -> u8 { 1 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_cfg_attr_on_a_tail_return_keeps_the_return() {
+        // rustc, verified: with the cfg off the fn falls through to 2,
+        // folding the return away would change the result.
+        let a = canonicalize(
+            "fn f() -> u8 { #[cfg(never_flag)] #[expect(unreachable_code)] return 1; 2 }",
+        );
+        let b = canonicalize("fn f() -> u8 { 1; 2 }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_inert_attr_on_a_tail_return_still_folds() {
+        let a = canonicalize("fn f() -> u8 { #[expect(unreachable_code)] return 1; }");
+        let b = canonicalize("fn f() -> u8 { 1 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn inert_attrs_on_closure_parameter_patterns_merge() {
         // An attribute on an untyped closure parameter lands on the pattern
         // and each kind reaching `strip_pat_inert_attrs` merges.

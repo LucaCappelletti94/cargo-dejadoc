@@ -348,17 +348,23 @@ fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
     });
 }
 
-/// Replace a tail `return expr;` with `expr`, then propagate through every
-/// tail position forwarding its value, an `if` only with an `else` clause
-/// because rustc rejects a valued return in a discarded then position
-/// (`E0317`).
+/// Replace a tail `return expr`, with or without the semicolon, with
+/// `expr`, then propagate through every tail position forwarding its value,
+/// an `if` only with an `else` clause because rustc rejects a valued return
+/// in a discarded then position (`E0317`). A return keeping a live
+/// attribute, `#[cfg]` for instance, must not fold, the fold would drop
+/// the condition.
 fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
     let n = stmts.len();
     if n != 0 {
-        let is_valued_tail_return = matches!(&stmts[n - 1], syn::Stmt::Expr(syn::Expr::Return(r), Some(_)) if r.expr.is_some());
-        if is_valued_tail_return {
+        let mut fold_now = false;
+        if let Some(syn::Stmt::Expr(syn::Expr::Return(ret), _)) = stmts.last_mut() {
+            strip_inert_attrs(&mut ret.attrs);
+            fold_now = ret.expr.is_some() && ret.attrs.is_empty();
+        }
+        if fold_now {
             let last = stmts.remove(n - 1);
-            if let syn::Stmt::Expr(syn::Expr::Return(mut ret), Some(_)) = last
+            if let syn::Stmt::Expr(syn::Expr::Return(mut ret), _) = last
                 && let Some(mut inner) = ret.expr.take()
             {
                 fold_tail_expr(&mut inner);
