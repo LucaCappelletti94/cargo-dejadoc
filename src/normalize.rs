@@ -2244,6 +2244,30 @@ fn f() {}"#,
     }
 
     #[test]
+    fn a_higher_ranked_lifetime_does_not_shadow_a_loop_label() {
+        // rustc verified, label `'a` and `for<'a>` are distinct namespaces,
+        // the `break` must keep pointing at the label.
+        let a = canonicalize(
+            "fn f() -> u8 { 'a: loop { let g: for<'a> fn(&'a u8) -> &'a u8 = h; break 'a 1; } }",
+        );
+        let b = canonicalize(
+            "fn f() -> u8 { 'zz: loop { let g: for<'q> fn(&'q u8) -> &'q u8 = h; break 'zz 1; } }",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_higher_ranked_dyn_bound_does_not_shadow_a_loop_label() {
+        let a = canonicalize(
+            "fn f() -> u8 { 'a: loop { let d: &dyn for<'a> Fn(&'a u8) = g; break 'a 1; } }",
+        );
+        let b = canonicalize(
+            "fn f() -> u8 { 'zz: loop { let d: &dyn for<'q> Fn(&'q u8) = g; break 'zz 1; } }",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn a_tail_return_without_semicolon_folds() {
         let a = canonicalize("fn f() -> u8 { return 1 }");
         let b = canonicalize("fn f() -> u8 { 1 }");

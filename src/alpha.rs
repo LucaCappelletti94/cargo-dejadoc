@@ -1075,6 +1075,21 @@ impl VisitMut for Renamer {
         syn::visit_mut::visit_bound_lifetimes_mut(self, node);
     }
 
+    fn visit_type_fn_ptr_mut(&mut self, node: &mut syn::TypeFnPtr) {
+        // A `for<'a>` binder lives in its own frame, an outer loop label
+        // named `'a` must not collide with it.
+        self.push();
+        syn::visit_mut::visit_type_fn_ptr_mut(self, node);
+        self.pop();
+    }
+
+    fn visit_trait_bound_mut(&mut self, node: &mut syn::TraitBound) {
+        // Same owner scoping for `for<'a>` on `dyn` and `impl` bounds.
+        self.push();
+        syn::visit_mut::visit_trait_bound_mut(self, node);
+        self.pop();
+    }
+
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
         // Parameter names in a function pointer type bind nothing, rustc
         // reads `fn(a: u8)`, `fn(_: u8)` and `fn(u8)` as one signature.
