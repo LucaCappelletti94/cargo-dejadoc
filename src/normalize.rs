@@ -2235,6 +2235,15 @@ fn f() {}"#,
     }
 
     #[test]
+    fn a_folded_return_expression_reenters_the_chain() {
+        // Folding the tail `return` exposes the value as the new tail,
+        // its own tail return folds too, rustc verified equivalent.
+        let a = canonicalize("fn f() -> u8 { return { g(); return 2; }; }");
+        let b = canonicalize("fn f() -> u8 { { g(); 2 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn inert_attrs_on_closure_parameter_patterns_merge() {
         // An attribute on an untyped closure parameter lands on the pattern
         // and each kind reaching `strip_pat_inert_attrs` merges.

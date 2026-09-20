@@ -359,8 +359,9 @@ fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
         if is_valued_tail_return {
             let last = stmts.remove(n - 1);
             if let syn::Stmt::Expr(syn::Expr::Return(mut ret), Some(_)) = last
-                && let Some(inner) = ret.expr.take()
+                && let Some(mut inner) = ret.expr.take()
             {
+                fold_tail_expr(&mut inner);
                 stmts.push(syn::Stmt::Expr(*inner, None));
             }
         } else if let Some(syn::Stmt::Expr(expr, None)) = stmts.last_mut() {

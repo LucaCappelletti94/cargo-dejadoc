@@ -1020,7 +1020,7 @@ impl VisitMut for Renamer {
                 }
                 syn::PathArguments::Parenthesized(args) => {
                     for input in &mut args.inputs {
-                        syn::visit_mut::visit_named_arg_mut(self, input);
+                        self.visit_named_arg_mut(input);
                     }
                     syn::visit_mut::visit_return_type_mut(self, &mut args.output);
                 }
