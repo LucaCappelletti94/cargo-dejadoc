@@ -2151,12 +2151,96 @@ fn f() {}"#,
     }
 
     #[test]
-    fn a_return_in_an_arm_block_stays_a_block() {
-        // An arm body `{ return 1; }` returns from the fn, `{ 1 }` is the arm
-        // value. The arm must keep its block whatever folding is added.
+    fn a_return_in_a_tail_match_arm_folds() {
+        // A tail match arm value is the fn result, `return 1;` and `1`
+        // return the same value, verified equivalent with rustc.
         let early = canonicalize("fn f() -> u8 { match v { A => { return 1; }, _ => 2 } }");
         let value = canonicalize("fn f() -> u8 { match v { A => { 1 }, _ => 2 } }");
+        assert_eq!(early.text, value.text);
+    }
+
+    #[test]
+    fn a_return_in_a_non_tail_match_arm_is_not_the_discarded_value() {
+        // The semicolon drops the match value while an early return still
+        // escapes the fn, so that arm must not fold.
+        let early = canonicalize("fn f() -> u8 { match v { A => { return 1; }, _ => {} }; 2 }");
+        let value = canonicalize("fn f() -> u8 { match v { A => { 1 }, _ => {} }; 2 }");
         assert_ne!(early.text, value.text);
+    }
+
+    #[test]
+    fn a_return_in_a_tail_unsafe_block_folds() {
+        let a = canonicalize("fn f() -> u8 { unsafe { return 1; } }");
+        let b = canonicalize("fn f() -> u8 { unsafe { 1 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_return_in_tail_if_else_branches_folds() {
+        let a = canonicalize(
+            "fn f(c: bool, d: bool) -> u8 { if c { return 1; } else if d { return 2; } else { return 3; } }",
+        );
+        let b =
+            canonicalize("fn f(c: bool, d: bool) -> u8 { if c { 1 } else if d { 2 } else { 3 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_return_in_a_no_else_if_keeps_its_return() {
+        // An `if` without an `else` discards its then value and rustc
+        // rejects a valued return there (`E0317`), so this shape cannot
+        // compile and must not fold.
+        let a = canonicalize("fn f() -> u8 { if c { return 1; } }");
+        let b = canonicalize("fn f() -> u8 { if c { 1 } }");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_impl_fn_tail_return_folds() {
+        let a = canonicalize("impl T for S { fn f(&self) -> u8 { return 1; } }");
+        let b = canonicalize("impl T for S { fn f(&self) -> u8 { 1 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_trait_default_fn_tail_return_folds() {
+        let a = canonicalize("trait T { fn f() -> u8 { return 1; } }");
+        let b = canonicalize("trait T { fn f() -> u8 { 1 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_inert_attr_on_a_fn_pointer_parameter_merges() {
+        // rustc, verified, accepts an attribute on a named fn pointer
+        // parameter, the strip lives in `visit_named_arg_mut`.
+        let a = canonicalize("let f: fn(#[expect(unused)] x: u8) = g;");
+        let b = canonicalize("let f: fn(x: u8) = g;");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn inert_attrs_on_match_arm_patterns_merge() {
+        // rustc, verified, accepts `#[expect]` on every match arm pattern
+        // kind, pinning each live arm of `strip_pat_inert_attrs`.
+        let arms = [
+            "x => 1, _ => 2",
+            "&x => 1, _ => 2",
+            "P { x } => 1, _ => 2",
+            "(a, b) => 1, _ => 2",
+            "Some(q) => 1, _ => 2",
+            "[a, ..] => 1, _ => 2",
+            "Some(q) if q > 0 => 1, _ => 2",
+            "1 | 2 => 1, _ => 2",
+            "(Some(_)) => 1, _ => 2",
+            "_ => 1",
+        ];
+        for arm in arms {
+            let with = canonicalize(&format!(
+                "fn f(v: V) -> u8 {{ match v {{ #[expect(unused_variables)] {arm} }} }}"
+            ));
+            let without = canonicalize(&format!("fn f(v: V) -> u8 {{ match v {{ {arm} }} }}"));
+            assert_eq!(with.text, without.text, "arm pattern {arm}");
+        }
     }
 
     #[test]

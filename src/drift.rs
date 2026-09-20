@@ -347,24 +347,48 @@ fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
     });
 }
 
-/// Replace a tail `return expr;` with `expr` as the tail expression, only
-/// for the block visitors whose tail is the body value, a fn, an async block
-/// or a closure body.
+/// Replace a tail `return expr;` with `expr` as the tail expression of a
+/// block, then propagate through every tail position that forwards its value
+/// to the body's value. An `if` without an `else` discards its then value,
+/// rustc rejects a valued return in tail position there (`E0317`), so the
+/// then-block folds only when an else arm exists. Loops, let initializers and
+/// arguments never join the chain, their block tails are not the body value.
 fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
     let n = stmts.len();
-    if n == 0 {
-        return;
+    if n != 0 {
+        let is_valued_tail_return = matches!(&stmts[n - 1], syn::Stmt::Expr(syn::Expr::Return(r), Some(_)) if r.expr.is_some());
+        if is_valued_tail_return {
+            let last = stmts.remove(n - 1);
+            if let syn::Stmt::Expr(syn::Expr::Return(mut ret), Some(_)) = last
+                && let Some(inner) = ret.expr.take()
+            {
+                stmts.push(syn::Stmt::Expr(*inner, None));
+            }
+        } else if let Some(syn::Stmt::Expr(expr, None)) = stmts.last_mut() {
+            fold_tail_expr(expr);
+        }
     }
-    let is_valued_tail_return =
-        matches!(&stmts[n - 1], syn::Stmt::Expr(syn::Expr::Return(r), Some(_)) if r.expr.is_some());
-    if !is_valued_tail_return {
-        return;
-    }
-    let last = stmts.remove(n - 1);
-    if let syn::Stmt::Expr(syn::Expr::Return(mut ret), Some(_)) = last
-        && let Some(inner) = ret.expr.take()
-    {
-        stmts.push(syn::Stmt::Expr(*inner, None));
+}
+
+/// Continue the fold through an expression whose tail value is the enclosing
+/// tail's value.
+fn fold_tail_expr(expr: &mut syn::Expr) {
+    match expr {
+        syn::Expr::Block(block) => fold_tail_return(&mut block.block.stmts),
+        syn::Expr::Unsafe(block) => fold_tail_return(&mut block.block.stmts),
+        syn::Expr::If(expr_if) if expr_if.else_branch.is_some() => {
+            fold_tail_return(&mut expr_if.then_branch.stmts);
+            if let Some((_, otherwise)) = &mut expr_if.else_branch {
+                fold_tail_expr(otherwise);
+            }
+        }
+        syn::Expr::Match(expr_match) => {
+            for arm in &mut expr_match.arms {
+                fold_tail_expr(&mut arm.body);
+                unwrap_single_expr_block(&mut arm.body);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -435,7 +459,10 @@ fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !is_inert_attr(attr));
 }
 
-/// Drop inert attributes from every pattern variant that carries them.
+/// Drop inert attributes from every pattern variant rustc accepts an
+/// attribute on, the match-arm pattern kinds. `Pat::Rest` and `Pat::Type` are
+/// excluded, rustc rejects `#[attr] ..` and reaches named parameter
+/// attributes through `visit_fn_arg_mut` instead.
 fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
     let attrs = match pat {
         syn::Pat::Ident(p) => &mut p.attrs,
@@ -447,8 +474,6 @@ fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
         syn::Pat::Guard(p) => &mut p.attrs,
         syn::Pat::Or(p) => &mut p.attrs,
         syn::Pat::Paren(p) => &mut p.attrs,
-        syn::Pat::Rest(p) => &mut p.attrs,
-        syn::Pat::Type(p) => &mut p.attrs,
         syn::Pat::Wild(p) => &mut p.attrs,
         _ => return,
     };
