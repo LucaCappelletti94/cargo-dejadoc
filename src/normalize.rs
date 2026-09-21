@@ -2318,22 +2318,34 @@ fn f() {}"#,
         assert_eq!(a.text, b.text);
     }
 
+    fn token_after(text: &str, keyword: &str) -> String {
+        let words: Vec<&str> = text
+            .split_whitespace()
+            .map(|w| w.trim_end_matches([')', ',', ';']))
+            .collect();
+        let i = words.iter().position(|w| *w == keyword).unwrap();
+        words[i + 1].to_string()
+    }
+
     #[test]
     fn a_use_alias_annotation_prints_the_declared_binder() {
         // The alias is printed once, the annotation must carry the very
         // canon the use statement declares, twin tests cannot see a split
         // because both sides split alike.
         let a = canonicalize("use a::T;\nfn f(x: T) {}");
-        let words: Vec<String> = a
-            .text
-            .split_whitespace()
-            .map(|w| w.trim_end_matches([')', ',', ';']).to_string())
-            .collect();
-        let at = |tok: &str| {
-            let i = words.iter().position(|w| w == tok).unwrap();
-            words[i + 1].clone()
-        };
-        assert_eq!(at("as"), at(":"));
+        assert_eq!(token_after(&a.text, "as"), token_after(&a.text, ":"));
+    }
+
+    #[test]
+    fn an_impl_trait_path_prints_the_declared_trait() {
+        // A top level value sharing the trait name must not hijack the
+        // impl trait path, a value-first lookup breaks the twin
+        // identically on both sides, so the check is that the impl names
+        // the declared trait.
+        let a = canonicalize(
+            "const t: u8 = 5; trait t { fn m(&self) -> u8; } struct W; impl t for W { fn m(&self) -> u8 { 1 } } fn g() { let _ = t; W.m(); }",
+        );
+        assert_eq!(token_after(&a.text, "trait"), token_after(&a.text, "impl"));
     }
     #[test]
     fn a_higher_ranked_dyn_bound_does_not_shadow_a_loop_label() {

@@ -826,7 +826,11 @@ impl VisitMut for Renamer {
             self.visit_attribute_mut(attr);
         }
         if let Some((path, _)) = &mut item.trait_ {
+            // The trait path of `impl Trait for Type` is a type position
+            // given as a bare path, no visit_type_path_mut wraps it.
+            let outer = core::mem::replace(&mut self.in_type, true);
             self.visit_path_mut(path);
+            self.in_type = outer;
         }
         syn::visit_mut::visit_type_mut(self, &mut item.self_ty);
         let outer = self.self_ty.replace(item.self_ty.as_ref().clone());
