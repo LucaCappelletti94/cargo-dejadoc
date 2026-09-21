@@ -37,15 +37,19 @@ enum Ns {
     Type,
     /// Lifetimes.
     Lifetime,
+    /// Loop and block labels, a namespace rustc keeps distinct from lifetimes.
+    Label,
     /// Local macro names.
     Macro,
 }
 
-/// A scope frame, one per block, function, generics list, impl, or closure.
+/// A scope frame, one per block, function, generics list, impl, closure
+/// or `for<'a>` binder.
 struct Frame {
     value: BTreeMap<String, String>,
     ty: BTreeMap<String, String>,
     lifetime: BTreeMap<String, String>,
+    label: BTreeMap<String, String>,
     mac: BTreeMap<String, String>,
 }
 
@@ -55,6 +59,7 @@ impl Frame {
             value: BTreeMap::new(),
             ty: BTreeMap::new(),
             lifetime: BTreeMap::new(),
+            label: BTreeMap::new(),
             mac: BTreeMap::new(),
         }
     }
@@ -64,6 +69,7 @@ impl Frame {
             Ns::Value => self.value.insert(name, canon),
             Ns::Type => self.ty.insert(name, canon),
             Ns::Lifetime => self.lifetime.insert(name, canon),
+            Ns::Label => self.label.insert(name, canon),
             Ns::Macro => self.mac.insert(name, canon),
         };
     }
@@ -73,6 +79,7 @@ impl Frame {
             Ns::Value => self.value.get(name),
             Ns::Type => self.ty.get(name),
             Ns::Lifetime => self.lifetime.get(name),
+            Ns::Label => self.label.get(name),
             Ns::Macro => self.mac.get(name),
         }
     }
@@ -85,6 +92,7 @@ struct Renamer {
     counter: usize,
     mod_frames: BTreeMap<String, Frame>,
     self_ty: Option<syn::Type>,
+    in_type: bool,
 }
 
 impl Renamer {
@@ -94,6 +102,7 @@ impl Renamer {
             counter: 0,
             mod_frames: BTreeMap::new(),
             self_ty: None,
+            in_type: false,
         }
     }
 
@@ -143,8 +152,17 @@ impl Renamer {
     /// Bind a loop or block label in the current frame.
     fn bind_label(&mut self, label: Option<&mut syn::Label>) {
         if let Some(label) = label {
-            let canon = self.bind(Ns::Lifetime, &label.name.ident.to_string());
+            let canon = self.bind(Ns::Label, &label.name.ident.to_string());
             label.name.ident = Ident::new(&canon, label.name.ident.span());
+        }
+    }
+
+    /// Resolve a label reference through the label namespace only, the
+    /// lifetime map must not answer, rustc keeps the two namespaces apart.
+    fn rename_label(&mut self, lifetime: &mut syn::Lifetime) {
+        let name = lifetime.ident.to_string();
+        if let Some(canon) = self.lookup(&[Ns::Label], &name) {
+            lifetime.ident = Ident::new(&canon, lifetime.ident.span());
         }
     }
 
@@ -483,10 +501,13 @@ fn prebind<'a>(renamer: &mut Renamer, items: impl Iterator<Item = &'a syn::Item>
     }
 }
 
-/// Bind a use name in both namespaces and return its value canon.
+/// Bind a use name in both namespaces to one canon and return it.
 fn bind_use_name(renamer: &mut Renamer, name: &str) -> String {
+    // The alias is printed once, so the value and type namespaces must
+    // share one canon, two canons would leave the type position pointing
+    // at a binder the output never declares.
     let canon = renamer.bind(Ns::Value, name);
-    renamer.bind(Ns::Type, name);
+    renamer.top_bind(Ns::Type, name, canon.clone());
     canon
 }
 
@@ -576,8 +597,12 @@ fn begin_generics(renamer: &mut Renamer, generics: &mut syn::Generics) {
                 ty_param.ident = Ident::new(&canon, ty_param.ident.span());
             }
             syn::GenericParam::Const(r#const) => {
+                // A const parameter prints once and a bare reference in
+                // `Foo<N>` reads as a type argument, bind both namespaces
+                // to one canon so the reference matches the declaration.
                 let name = r#const.ident.to_string();
                 let canon = renamer.bind(Ns::Value, &name);
+                renamer.top_bind(Ns::Type, &name, canon.clone());
                 r#const.ident = Ident::new(&canon, r#const.ident.span());
             }
         }
@@ -992,18 +1017,29 @@ impl VisitMut for Renamer {
     fn visit_path_mut(&mut self, path: &mut syn::Path) {
         // Only the first segment may name a local binder, and a leading
         // colon always names an extern crate. Each later segment resolves
-        // through the saved frame of the local module before it.
+        // through the saved frame of the local module before it. A type
+        // position reads the type namespace only, rustc-valid programs
+        // bind every name they show there in it.
+        let (ns1, ns2) = if self.in_type {
+            (Ns::Type, None)
+        } else {
+            (Ns::Value, Some(Ns::Type))
+        };
+        let found = path.segments.first().and_then(|first| {
+            self.lookup(&[ns1], &first.ident.to_string())
+                .or_else(|| ns2.and_then(|ns2| self.lookup(&[ns2], &first.ident.to_string())))
+        });
         if path.leading_colon.is_none()
             && let Some(first) = path.segments.first_mut()
-            && let Some(mut canon) = self.lookup(&[Ns::Value, Ns::Type], &first.ident.to_string())
+            && let Some(mut canon) = found
         {
             first.ident = Ident::new(&canon, first.ident.span());
             for segment in path.segments.iter_mut().skip(1) {
                 let name = segment.ident.to_string();
                 let Some(next) = self.mod_frames.get(&canon).and_then(|frame| {
                     frame
-                        .lookup(Ns::Value, &name)
-                        .or_else(|| frame.lookup(Ns::Type, &name))
+                        .lookup(ns1, &name)
+                        .or_else(|| ns2.and_then(|ns2| frame.lookup(ns2, &name)))
                 }) else {
                     break;
                 };
@@ -1015,7 +1051,15 @@ impl VisitMut for Renamer {
             match &mut segment.arguments {
                 syn::PathArguments::AngleBracketed(args) => {
                     for arg in &mut args.args {
-                        syn::visit_mut::visit_generic_argument_mut(self, arg);
+                        if matches!(arg, syn::GenericArgument::Const(_)) {
+                            // A const argument expression resolves values
+                            // again, the type context ends at its braces.
+                            let outer = core::mem::replace(&mut self.in_type, false);
+                            syn::visit_mut::visit_generic_argument_mut(self, arg);
+                            self.in_type = outer;
+                        } else {
+                            syn::visit_mut::visit_generic_argument_mut(self, arg);
+                        }
                     }
                 }
                 syn::PathArguments::Parenthesized(args) => {
@@ -1040,6 +1084,14 @@ impl VisitMut for Renamer {
         mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
     }
 
+    fn visit_type_path_mut(&mut self, node: &mut syn::TypePath) {
+        // Type positions resolve through the type namespace, a local value
+        // binder of the same name must not capture the annotation.
+        let outer = core::mem::replace(&mut self.in_type, true);
+        syn::visit_mut::visit_type_path_mut(self, node);
+        self.in_type = outer;
+    }
+
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {
         if let Some(self_ty) = &self.self_ty
             && let syn::Type::Path(path) = &*ty
@@ -1059,6 +1111,26 @@ impl VisitMut for Renamer {
         }
     }
 
+    fn visit_expr_break_mut(&mut self, node: &mut syn::ExprBreak) {
+        for attr in &mut node.attrs {
+            self.visit_attribute_mut(attr);
+        }
+        if let Some(label) = &mut node.label {
+            self.rename_label(label);
+        }
+        if let Some(expr) = &mut node.expr {
+            syn::visit_mut::visit_expr_mut(self, expr);
+        }
+    }
+
+    fn visit_expr_continue_mut(&mut self, node: &mut syn::ExprContinue) {
+        for attr in &mut node.attrs {
+            self.visit_attribute_mut(attr);
+        }
+        if let Some(label) = &mut node.label {
+            self.rename_label(label);
+        }
+    }
     fn visit_pat_guard_mut(&mut self, node: &mut syn::PatGuard) {
         syn::visit_mut::visit_pat_mut(self, &mut node.pat);
         walk_let_cond(self, &mut node.guard);
@@ -1084,9 +1156,12 @@ impl VisitMut for Renamer {
     }
 
     fn visit_trait_bound_mut(&mut self, node: &mut syn::TraitBound) {
-        // Same owner scoping for `for<'a>` on `dyn` and `impl` bounds.
+        // Same owner scoping for `for<'a>` on `dyn` and `impl` bounds, and
+        // the bound path is a type position.
         self.push();
+        let outer = core::mem::replace(&mut self.in_type, true);
         syn::visit_mut::visit_trait_bound_mut(self, node);
+        self.in_type = outer;
         self.pop();
     }
 

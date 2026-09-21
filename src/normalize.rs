@@ -2192,6 +2192,7 @@ fn f() {}"#,
         // compile and must not fold.
         let a = canonicalize("fn f() -> u8 { if c { return 1; } }");
         let b = canonicalize("fn f() -> u8 { if c { 1 } }");
+        assert!(!a.unparsed);
         assert_ne!(a.text, b.text);
     }
 
@@ -2257,6 +2258,84 @@ fn f() {}"#,
     }
 
     #[test]
+    fn a_label_and_a_lifetime_param_of_one_name_stay_distinct() {
+        // rustc verified, `'a` as a label and `'a` as a lifetime parameter
+        // are separate namespaces, the reference keeps the parameter and
+        // the break keeps the label.
+        let a = canonicalize(
+            "fn f<'a>(v: bool, x: &'a u8) -> &'a u8 { 'a: loop { if v { continue 'a; } let y: &'a u8 = x; break 'a y; } }",
+        );
+        let b = canonicalize(
+            "fn f<'z>(v: bool, x: &'z u8) -> &'z u8 { 'q: loop { if v { continue 'q; } let y: &'z u8 = x; break 'q y; } }",
+        );
+        assert!(!a.unparsed);
+        assert!(!b.unparsed);
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_value_binding_does_not_capture_a_type_annotation() {
+        // rustc verified, a parameter named `s` and the alias `s` are
+        // separate namespaces, the return annotation keeps the alias.
+        let a = canonicalize("type s = u8; fn f(s: u8) -> s { 1 }");
+        let b = canonicalize("type zz = u8; fn f(q: u8) -> zz { 1 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_value_binding_does_not_capture_a_trait_bound() {
+        // rustc verified, the bound of the local struct resolves through
+        // the type namespace even with a same-named parameter in scope.
+        let a = canonicalize("trait t {} fn f(t: u8) { struct A<T: t>(T); }");
+        let b = canonicalize("trait zz {} fn f(q: u8) { struct B<T: zz>(T); }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_expression_of_a_captured_name_keeps_the_value_namespace() {
+        let a = canonicalize("type s = u8; fn f(s: u8) -> s { s }");
+        let b = canonicalize("type zz = u8; fn f(q: u8) -> zz { q }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_value_use_after_a_bound_keeps_the_value_namespace() {
+        let a = canonicalize("trait t {} fn f(t: u8) { struct A<T: t>(T); let _x = t; }");
+        let b = canonicalize("trait zz {} fn f(q: u8) { struct B<T: zz>(T); let _x = q; }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_const_argument_expression_keeps_the_value_namespace() {
+        // rustc verified, `s` names the alias in type position and the
+        // const item inside the argument braces.
+        let a = canonicalize(
+            "type s = usize; const s: usize = 2; struct F<const N: usize, T> { n: core::marker::PhantomData<T> } const G: F<{ s }, s> = F { n: core::marker::PhantomData };",
+        );
+        let b = canonicalize(
+            "type zz = usize; const q: usize = 2; struct H<const N: usize, T> { n: core::marker::PhantomData<T> } const R: H<{ q }, zz> = H { n: core::marker::PhantomData };",
+        );
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_use_alias_annotation_prints_the_declared_binder() {
+        // The alias is printed once, the annotation must carry the very
+        // canon the use statement declares, twin tests cannot see a split
+        // because both sides split alike.
+        let a = canonicalize("use a::T;\nfn f(x: T) {}");
+        let words: Vec<String> = a
+            .text
+            .split_whitespace()
+            .map(|w| w.trim_end_matches([')', ',', ';']).to_string())
+            .collect();
+        let at = |tok: &str| {
+            let i = words.iter().position(|w| w == tok).unwrap();
+            words[i + 1].clone()
+        };
+        assert_eq!(at("as"), at(":"));
+    }
+    #[test]
     fn a_higher_ranked_dyn_bound_does_not_shadow_a_loop_label() {
         let a = canonicalize(
             "fn f() -> u8 { 'a: loop { let d: &dyn for<'a> Fn(&'a u8) = g; break 'a 1; } }",
@@ -2282,6 +2361,7 @@ fn f() {}"#,
             "fn f() -> u8 { #[cfg(never_flag)] #[expect(unreachable_code)] return 1; 2 }",
         );
         let b = canonicalize("fn f() -> u8 { 1; 2 }");
+        assert!(!a.unparsed);
         assert_ne!(a.text, b.text);
     }
 
