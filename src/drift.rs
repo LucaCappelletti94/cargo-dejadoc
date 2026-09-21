@@ -162,10 +162,32 @@ impl VisitMut for Drift {
         semicolon_non_tail_macros(&mut block.stmts);
         syn::visit_mut::visit_block_mut(self, block);
         drop_empty_stmts(&mut block.stmts);
-        fold_tail_return(&mut block.stmts);
+    }
+
+    fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {
+        syn::visit_mut::visit_item_fn_mut(self, node);
+        fold_tail_return(&mut node.block.stmts);
+    }
+
+    fn visit_impl_item_fn_mut(&mut self, node: &mut syn::ImplItemFn) {
+        syn::visit_mut::visit_impl_item_fn_mut(self, node);
+        fold_tail_return(&mut node.block.stmts);
+    }
+
+    fn visit_trait_item_fn_mut(&mut self, node: &mut syn::TraitItemFn) {
+        syn::visit_mut::visit_trait_item_fn_mut(self, node);
+        if let Some(block) = &mut node.default {
+            fold_tail_return(&mut block.stmts);
+        }
+    }
+
+    fn visit_expr_async_mut(&mut self, node: &mut syn::ExprAsync) {
+        syn::visit_mut::visit_expr_async_mut(self, node);
+        fold_tail_return(&mut node.block.stmts);
     }
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
+        strip_inert_attrs(&mut arm.attrs);
         unwrap_arm_block(arm);
         syn::visit_mut::visit_arm_mut(self, arm);
     }
@@ -174,13 +196,30 @@ impl VisitMut for Drift {
         syn::visit_mut::visit_expr_mut(self, expr);
         fold_paren_expr(expr);
         if let syn::Expr::Closure(closure) = expr {
+            if let syn::Expr::Block(block) = closure.body.as_mut() {
+                fold_tail_return(&mut block.block.stmts);
+            }
             unwrap_single_expr_block(&mut closure.body);
         }
     }
 
     fn visit_pat_mut(&mut self, pat: &mut syn::Pat) {
+        strip_pat_inert_attrs(pat);
         syn::visit_mut::visit_pat_mut(self, pat);
         fold_paren_pat(pat);
+    }
+
+    fn visit_fn_arg_mut(&mut self, node: &mut syn::FnArg) {
+        match node {
+            syn::FnArg::Receiver(receiver) => strip_inert_attrs(&mut receiver.attrs),
+            syn::FnArg::Typed(typed) => strip_inert_attrs(&mut typed.attrs),
+        }
+        syn::visit_mut::visit_fn_arg_mut(self, node);
+    }
+
+    fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
+        strip_inert_attrs(&mut node.attrs);
+        syn::visit_mut::visit_named_arg_mut(self, node);
     }
 
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {
@@ -309,22 +348,53 @@ fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
     });
 }
 
-/// Replace a tail `return expr;` with `expr` as the tail expression.
+/// Replace a tail `return expr`, with or without the semicolon, with
+/// `expr`, then propagate through every tail position forwarding its value,
+/// an `if` only with an `else` clause because rustc rejects a valued return
+/// in a discarded then position (`E0317`). A return keeping a live
+/// attribute, `#[cfg]` for instance, must not fold, the fold would drop
+/// the condition.
 fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
     let n = stmts.len();
-    if n == 0 {
-        return;
+    if n != 0 {
+        let mut fold_now = false;
+        if let Some(syn::Stmt::Expr(syn::Expr::Return(ret), _)) = stmts.last_mut() {
+            strip_inert_attrs(&mut ret.attrs);
+            fold_now = ret.expr.is_some() && ret.attrs.is_empty();
+        }
+        if fold_now {
+            let last = stmts.remove(n - 1);
+            if let syn::Stmt::Expr(syn::Expr::Return(mut ret), _) = last
+                && let Some(mut inner) = ret.expr.take()
+            {
+                fold_tail_expr(&mut inner);
+                stmts.push(syn::Stmt::Expr(*inner, None));
+            }
+        } else if let Some(syn::Stmt::Expr(expr, None)) = stmts.last_mut() {
+            fold_tail_expr(expr);
+        }
     }
-    let is_valued_tail_return =
-        matches!(&stmts[n - 1], syn::Stmt::Expr(syn::Expr::Return(r), Some(_)) if r.expr.is_some());
-    if !is_valued_tail_return {
-        return;
-    }
-    let last = stmts.remove(n - 1);
-    if let syn::Stmt::Expr(syn::Expr::Return(mut ret), Some(_)) = last
-        && let Some(inner) = ret.expr.take()
-    {
-        stmts.push(syn::Stmt::Expr(*inner, None));
+}
+
+/// Continue the fold through an expression whose tail value is the enclosing
+/// tail's value.
+fn fold_tail_expr(expr: &mut syn::Expr) {
+    match expr {
+        syn::Expr::Block(block) => fold_tail_return(&mut block.block.stmts),
+        syn::Expr::Unsafe(block) => fold_tail_return(&mut block.block.stmts),
+        syn::Expr::If(expr_if) if expr_if.else_branch.is_some() => {
+            fold_tail_return(&mut expr_if.then_branch.stmts);
+            if let Some((_, otherwise)) = &mut expr_if.else_branch {
+                fold_tail_expr(otherwise);
+            }
+        }
+        syn::Expr::Match(expr_match) => {
+            for arm in &mut expr_match.arms {
+                fold_tail_expr(&mut arm.body);
+                unwrap_single_expr_block(&mut arm.body);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -393,6 +463,28 @@ fn is_inert_attr(attr: &syn::Attribute) -> bool {
 /// Drop inert attributes from the list.
 fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !is_inert_attr(attr));
+}
+
+/// An attribute on an untyped closure parameter sits on the pattern itself,
+/// arm and named-parameter attributes sit on the arm or `FnArg` instead.
+/// `Path`, `Or`, `Range`, `Guard`, `Rest` and `Const` never keep an attribute
+/// in a parsed tree, a single-segment name parses as `Ident`, an or-pattern
+/// splits the parameter list and an attributed range reprints as a `Paren`.
+fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
+    let attrs = match pat {
+        syn::Pat::Ident(p) => &mut p.attrs,
+        syn::Pat::Lit(p) => &mut p.attrs,
+        syn::Pat::Macro(p) => &mut p.attrs,
+        syn::Pat::Paren(p) => &mut p.attrs,
+        syn::Pat::Reference(p) => &mut p.attrs,
+        syn::Pat::Slice(p) => &mut p.attrs,
+        syn::Pat::Struct(p) => &mut p.attrs,
+        syn::Pat::Tuple(p) => &mut p.attrs,
+        syn::Pat::TupleStruct(p) => &mut p.attrs,
+        syn::Pat::Wild(p) => &mut p.attrs,
+        _ => return,
+    };
+    strip_inert_attrs(attrs);
 }
 
 fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
