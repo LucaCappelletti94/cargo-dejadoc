@@ -298,8 +298,9 @@ fn rewrite_format_arg(renamer: &Renamer, arg: &str, out: &mut String) {
     let mut rest = spec;
     while let Some((before, after)) = rest.split_once('$') {
         let start = before
-            .rfind(|c: char| !c.is_alphanumeric() && c != '_')
-            .map_or(0, |p| p + 1);
+            .char_indices()
+            .rfind(|&(_, c)| !c.is_alphanumeric() && c != '_')
+            .map_or(0, |(p, c)| p + c.len_utf8());
         out.push_str(&before[..start]);
         push_format_name(renamer, &before[start..], out);
         out.push('$');

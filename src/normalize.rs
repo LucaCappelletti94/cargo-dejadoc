@@ -2072,6 +2072,14 @@ fn f() {}"#,
     }
 
     #[test]
+    fn a_multibyte_char_before_a_width_name_keeps_the_rename() {
+        // `€` is three bytes, the width name `w` starts after all of them.
+        let a = canonicalize("let w = 5;\nprintln!(\"{:€w$}\", 1)\n");
+        let b = canonicalize("let z = 5;\nprintln!(\"{:€z$}\", 1)\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn alpha_positional_and_inline_format_args() {
         let a = canonicalize("let x = 1;\nprintln!(\"{} {x}\", x)\n");
         let b = canonicalize("let y = 1;\nprintln!(\"{} {y}\", y)\n");
