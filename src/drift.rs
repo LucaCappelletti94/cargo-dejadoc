@@ -73,12 +73,27 @@ pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
 fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
     let rebuilt = match lit {
         syn::Lit::Int(i) => {
-            let s = format!("{}{}", i.base10_digits(), i.suffix());
-            syn::Lit::Int(syn::LitInt::new(&s, span))
+            let decimal = format!("{}{}", i.base10_digits(), i.suffix());
+            match syn::parse_str::<syn::LitInt>(&decimal) {
+                Ok(mut read)
+                    if read.base10_digits() == i.base10_digits() && read.suffix() == i.suffix() =>
+                {
+                    read.set_span(span);
+                    syn::Lit::Int(read)
+                }
+                // The suffix reads as a radix prefix or an exponent after the digits, `0b0buu`.
+                _ => syn::Lit::Int(i),
+            }
         }
         syn::Lit::Float(f) => {
-            let digits = canon_float_str(f.base10_digits());
-            syn::Lit::Float(syn::LitFloat::new(&format!("{digits}{}", f.suffix()), span))
+            let decimal = format!("{}{}", canon_float_str(f.base10_digits()), f.suffix());
+            match syn::parse_str::<syn::LitFloat>(&decimal) {
+                Ok(mut read) => {
+                    read.set_span(span);
+                    syn::Lit::Float(read)
+                }
+                Err(_) => syn::Lit::Float(f),
+            }
         }
         syn::Lit::Str(s) => syn::Lit::Str(syn::LitStr::new(&s.value(), span)),
         syn::Lit::ByteStr(b) => syn::Lit::ByteStr(syn::LitByteStr::new(&b.value(), span)),
