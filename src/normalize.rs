@@ -1402,6 +1402,13 @@ fn f() {}"#,
     }
 
     #[test]
+    fn alpha_renames_bindings_inside_an_at_subpattern() {
+        let a = canonicalize("match Some(1) { pino @ Some(abete) => abete, None => 0 }");
+        let b = canonicalize("match Some(1) { x @ Some(y) => y, None => 0 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn alpha_renames_closure_params() {
         let a = canonicalize("let f = |pino| pino + 1;\nf(2);\n");
         let b = canonicalize("let f = |abete| abete + 1;\nf(2);\n");
