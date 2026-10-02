@@ -309,27 +309,30 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 ///
 /// # Panics
 ///
-/// Re-raises a panic of the canonicalizing thread, a bug in this crate.
+/// Panics when canonicalization panics, a bug in this crate.
 #[must_use]
 pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     #[cfg(feature = "std")]
     {
-        std::thread::scope(|scope| {
-            std::thread::Builder::new()
-                .stack_size(GROUP_STACK)
-                .spawn_scoped(scope, || group_here(blocks, threshold, min_tokens))
-                .map_or_else(
-                    |_| group_here(blocks, threshold, min_tokens),
-                    |worker| {
-                        worker
-                            .join()
-                            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
-                    },
-                )
-        })
+        group_on_stack(blocks, threshold, min_tokens, GROUP_STACK)
     }
     #[cfg(not(feature = "std"))]
     group_here(blocks, threshold, min_tokens)
+}
+
+/// `group` on a thread with `stack` reserved, or on the calling thread when
+/// the system refuses that thread.
+#[cfg(feature = "std")]
+fn group_on_stack(blocks: &[DocTest], threshold: usize, min_tokens: usize, stack: usize) -> Report {
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(scope, || group_here(blocks, threshold, min_tokens));
+        match worker {
+            Ok(worker) => worker.join().expect("canonicalization does not panic"),
+            Err(_) => group_here(blocks, threshold, min_tokens),
+        }
+    })
 }
 
 /// Stack reserved for canonicalization, room for `MAX_NESTING` and
@@ -693,5 +696,18 @@ mod tests {
             .join()
             .unwrap();
         assert!(!report.groups[0].unparsed);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn a_refused_worker_thread_falls_back_to_the_calling_thread() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let y = 1;", false),
+        ];
+        // No system reserves half the address space for one thread's stack.
+        let refused = group_on_stack(&blocks, 2, 0, usize::MAX / 2);
+        assert_eq!(refused, group(&blocks, 2, 0));
+        assert_eq!(refused.groups.len(), 1);
     }
 }
