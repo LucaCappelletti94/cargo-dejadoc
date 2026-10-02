@@ -266,7 +266,8 @@ pub struct Group {
     pub id: String,
     /// Full blake3 hex of the canonical form.
     pub hash: String,
-    /// True when the canonical form came from the text fallback.
+    /// True when the canonical form came from the text fallback, for a body
+    /// that does not parse or exceeds the nesting or token cap.
     pub unparsed: bool,
     /// Token count of the canonical form.
     pub tokens: usize,
@@ -333,7 +334,7 @@ pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report 
 
 /// Stack reserved for canonicalization, room for `MAX_NESTING` and
 /// `MAX_TOKENS` bodies with a wide margin even in a debug build.
-#[cfg(feature = "std")]
+#[cfg(any(test, feature = "std"))]
 const GROUP_STACK: usize = 1 << 30;
 
 /// `group` on the calling thread's stack.

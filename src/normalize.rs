@@ -26,7 +26,7 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
     let unhidden: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
     let stripped = without_crate_attrs(&unhidden);
     let body = stripped.as_ref();
-    let Some(mut file) = parse_as_crate(body) else {
+    let Some(mut file) = within_caps(body).then(|| parse_as_crate(body)).flatten() else {
         let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
         return Canonical {
             tokens: text.split_whitespace().count(),
@@ -40,6 +40,72 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
     let stream = crate::drift::strip_trailing_commas(stream);
     let stream = crate::drift::canonical_literals(stream);
     from_stream(stream)
+}
+
+/// Deepest bracket and generic nesting a body may reach before it hashes as
+/// text, past it the recursive parse and visits risk the end of the stack.
+pub(crate) const MAX_NESTING: usize = 64;
+
+/// Most leaf tokens a body may hold before it hashes as text, bounding the
+/// length of operator, method and closure chains.
+pub(crate) const MAX_TOKENS: usize = 16_384;
+
+/// Whether `body` stays within `MAX_NESTING` and `MAX_TOKENS`, walked without
+/// recursion. An open `<` counts as nesting until its `>`, a `;`, a `{…}`
+/// block or the end of its group, so comparisons do not add up. A body that
+/// does not tokenize is within the caps and fails to parse later.
+fn within_caps(body: &str) -> bool {
+    use proc_macro2::{Delimiter, TokenTree};
+
+    let Ok(stream) = body.parse::<proc_macro2::TokenStream>() else {
+        return true;
+    };
+    // One entry per open group, its remaining trees and its open `<` count.
+    let mut stack = alloc::vec![(stream.into_iter(), 0_usize)];
+    let (mut depth, mut tokens) = (0_usize, 0_usize);
+    while let Some((trees, angles)) = stack.last_mut() {
+        let Some(tree) = trees.next() else {
+            depth -= *angles;
+            stack.pop();
+            depth = depth.saturating_sub(1);
+            continue;
+        };
+        match tree {
+            TokenTree::Group(group) => {
+                if group.delimiter() == Delimiter::Brace {
+                    depth -= *angles;
+                    *angles = 0;
+                }
+                let inner = group.stream();
+                drop(group);
+                stack.push((inner.into_iter(), 0));
+                depth += 1;
+            }
+            TokenTree::Punct(punct) => {
+                tokens += 1;
+                match punct.as_char() {
+                    '<' => {
+                        *angles += 1;
+                        depth += 1;
+                    }
+                    '>' if *angles > 0 => {
+                        *angles -= 1;
+                        depth -= 1;
+                    }
+                    ';' => {
+                        depth -= *angles;
+                        *angles = 0;
+                    }
+                    _ => {}
+                }
+            }
+            TokenTree::Ident(_) | TokenTree::Literal(_) => tokens += 1,
+        }
+        if depth > MAX_NESTING || tokens > MAX_TOKENS {
+            return false;
+        }
+    }
+    true
 }
 
 /// A body's leading `#![…]` attributes, which rustdoc lifts onto the
@@ -241,6 +307,53 @@ mod tests {
         assert!(!a.unparsed);
         assert_ne!(a.text, "");
         assert!(a.tokens > 0);
+    }
+
+    /// Whether `code` hashes as text, canonicalized on the stack `group` uses.
+    fn hashes_as_text(code: String) -> bool {
+        std::thread::Builder::new()
+            .stack_size(crate::GROUP_STACK)
+            .spawn(move || canonicalize(&code).unparsed)
+            .unwrap()
+            .join()
+            .unwrap()
+    }
+
+    #[test]
+    fn nesting_past_the_cap_hashes_as_text() {
+        let nested = |n: usize| format!("let x = {}1{};", "(".repeat(n), ")".repeat(n));
+        assert!(!hashes_as_text(nested(MAX_NESTING)));
+        assert!(hashes_as_text(nested(MAX_NESTING + 1)));
+    }
+
+    #[test]
+    fn generic_nesting_counts_toward_the_cap() {
+        let nested = |n: usize| format!("let x: {}u8{} = v;", "Vec<".repeat(n), ">".repeat(n));
+        assert!(!hashes_as_text(nested(MAX_NESTING)));
+        assert!(hashes_as_text(nested(MAX_NESTING + 1)));
+    }
+
+    #[test]
+    fn a_long_body_past_the_token_cap_hashes_as_text() {
+        let statements = "x;".repeat(MAX_TOKENS / 2);
+        assert!(!hashes_as_text(statements.clone()));
+        assert!(hashes_as_text(format!("{statements}x")));
+    }
+
+    #[test]
+    fn comparisons_do_not_add_up_across_statements_blocks_or_groups() {
+        let calls = format!("let v = [{}];", "f(a < b), ".repeat(MAX_NESTING + 1));
+        let semicolons = "let c = a < b;\n".repeat(MAX_NESTING + 1);
+        let blocks = "if a < b {}\n".repeat(MAX_NESTING + 1);
+        for body in [calls, semicolons, blocks] {
+            assert!(!hashes_as_text(body.clone()), "{body}");
+        }
+    }
+
+    #[test]
+    fn closed_generics_do_not_add_up() {
+        let tuple = format!("let x: ({}) = v;", "Vec<u8>, ".repeat(MAX_NESTING + 1));
+        assert!(!hashes_as_text(tuple));
     }
 
     #[test]
