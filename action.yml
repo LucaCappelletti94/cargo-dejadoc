@@ -318,10 +318,18 @@ runs:
         # site is inline when its file is in the pull request diff.
         onlynew_mode=false
         [ "$onlynew" = "1" ] && onlynew_mode=true
-        jq -r --arg cwd "$cwd" --argjson changed "$changed_json" --argjson base "$base_json" \
+        # One command line argument holds at most 128 KiB, a large pull request's
+        # file list exceeds it, so jq reads both lists from files.
+        changed_file="$RUNNER_TEMP/dejadoc-changed.json"
+        base_file="$RUNNER_TEMP/dejadoc-base-keys.json"
+        printf '%s' "$changed_json" > "$changed_file"
+        printf '%s' "$base_json" > "$base_file"
+        jq -r --arg cwd "$cwd" --slurpfile changed "$changed_file" --slurpfile base "$base_file" \
           --argjson onlynew_mode "$onlynew_mode" '
           def spath: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-          . as $r
+          $changed[0] as $changed
+          | $base[0] as $base
+          | . as $r
           | [ range(0; ($r.groups | length)) as $gi
               | $r.groups[$gi]
               | ($gi + 1) as $g
@@ -578,7 +586,11 @@ runs:
           exit 0
         fi
 
-          jq -n --arg pr "$pr" --arg head "$head_sha" --arg oor "$out_of_range" --arg f "$findings" \
+          # Both lists grow with the pull request, past one argument's 128 KiB.
+          printf '%s' "$out_of_range" > "$RUNNER_TEMP/dejadoc-out-of-range.txt"
+          printf '%s' "$findings" > "$RUNNER_TEMP/dejadoc-findings.txt"
+          jq -n --arg pr "$pr" --arg head "$head_sha" \
+            --rawfile oor "$RUNNER_TEMP/dejadoc-out-of-range.txt" --rawfile f "$RUNNER_TEMP/dejadoc-findings.txt" \
             '{pr: $pr, head_sha: $head, out_of_range: $oor, findings: $f}' > "$meta"
           touch "$comments"
         fi
