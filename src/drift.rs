@@ -188,6 +188,8 @@ impl VisitMut for Drift {
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
         strip_inert_attrs(&mut arm.attrs);
         unwrap_arm_block(arm);
+        // The printer writes the comma a non-block arm needs, a written one is drift.
+        arm.comma = None;
         syn::visit_mut::visit_arm_mut(self, arm);
     }
 

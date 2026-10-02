@@ -721,6 +721,27 @@ mod tests {
     }
 
     #[test]
+    fn a_block_arm_comma_merges() {
+        let a = canonicalize("match 1 { 1 => {}, _ => {} }");
+        let b = canonicalize("match 1 { 1 => {} _ => {} }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_unwrapped_arm_block_merges_with_the_comma_form() {
+        let a = canonicalize("match v { 1 => { foo() } _ => 0 }");
+        let b = canonicalize("match v { 1 => foo(), _ => 0 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_tail_return_arm_block_merges_with_the_comma_form() {
+        let a = canonicalize("fn f(v: u8) -> u8 { match v { 1 => { return 2; } _ => 0 } }");
+        let b = canonicalize("fn f(v: u8) -> u8 { match v { 1 => 2, _ => 0 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn doc_comment_on_local_fn_merges() {
         let a = canonicalize("/// Doc comment.\nfn f() -> u8 { 1 }");
         let b = canonicalize("fn f() -> u8 { 1 }");
