@@ -1,0 +1,2 @@
+&&&retur&let x = 1;
+println!("{}", #[cfg(unix)] x);

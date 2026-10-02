@@ -1,0 +1,1 @@
+assert!(v.iter().map(|y| y > 0).any(|y| y))

@@ -1,0 +1,4 @@
+match it {
+    pino if pino > 0 => pino,
+    _ => 0,
+}

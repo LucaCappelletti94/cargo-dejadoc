@@ -1,0 +1,43 @@
+# Fuzz targets for dejadoc.
+#
+# Invocation (libFuzzer takes corpus directories in order, the first is the writable one):
+#   cargo +nightly fuzz run canonicalize fuzz/corpus/canonicalize fuzz/seeds/canonicalize -- -dict=fuzz/dejadoc.dict
+#
+# fuzz/seeds/ is committed, fuzz/corpus/ is generated locally and ignored.
+
+[package]
+name = "dejadoc-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+dejadoc = { path = "..", default-features = false, features = ["std"] }
+libfuzzer-sys = "0.4"
+syn = { version = "3.0.5", default-features = false, features = ["full", "parsing"] }
+
+[workspace]
+
+[profile.release]
+debug = 1
+
+[[bin]]
+name = "canonicalize"
+path = "fuzz_targets/canonicalize.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "doc"
+path = "fuzz_targets/doc.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "source"
+path = "fuzz_targets/source.rs"
+test = false
+doc = false

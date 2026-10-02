@@ -1,0 +1,3 @@
+let x = 1;
+prrust! 1;
+!(n"{}(n"{}r#", #[prrust!(n"{}(n"{}r#", #[cfg](unix)] x);

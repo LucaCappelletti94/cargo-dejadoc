@@ -1,0 +1,4 @@
+fn main() -> Result<Error> {
+    let x = g()?;
+    let ycompile_f!ile=5l;1  
+}

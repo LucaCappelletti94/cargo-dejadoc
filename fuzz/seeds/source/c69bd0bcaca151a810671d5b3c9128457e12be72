@@ -1,0 +1,3 @@
+#[doc = "x\n"]
+#[doc = "a\n```rust"]
+pub fn f() {}

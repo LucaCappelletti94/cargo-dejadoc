@@ -1,0 +1,3 @@
+let x = 1;
+println ("{}", #[cfg(unilet x = 1;
+println ("{}", #[cfg(unix)] x)x)]-x);

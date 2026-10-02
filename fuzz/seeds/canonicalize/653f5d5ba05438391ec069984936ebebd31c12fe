@@ -1,0 +1,3 @@
+t! '''''''''//fmain/f() -> R> {
+    let max = gi()?;
+    let y = x + 1a

@@ -1,0 +1,2 @@
+fn main() { drop(Pino { n: 1 }); }
+struct Pino { n: u8 }

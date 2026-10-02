@@ -1,0 +1,2 @@
+trait t {} fn f(t: u8) { struct A<T: t>(T);*/
+strwct S }

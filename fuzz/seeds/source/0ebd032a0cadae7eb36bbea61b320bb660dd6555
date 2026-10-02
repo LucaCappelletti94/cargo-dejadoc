@@ -1,0 +1,5 @@
+//|x| tro
+///include_str!("doc.md")   le| y = 2;
+///
+///----
+pub fn f() {}
