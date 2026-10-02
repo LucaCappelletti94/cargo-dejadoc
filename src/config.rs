@@ -1,9 +1,7 @@
 //! `.dejadoc.toml` parameters. A missing file is a no-op.
 
-#[cfg(feature = "std")]
 use std::path::Path;
 
-#[cfg(feature = "std")]
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 /// Parameters from a `.dejadoc.toml` file.
@@ -15,7 +13,6 @@ pub(crate) struct Config {
     pub(crate) min_tokens: Option<usize>,
 }
 
-#[cfg(feature = "std")]
 /// Load `path`, or the default config when the file is absent.
 ///
 /// # Errors
@@ -29,7 +26,7 @@ pub(crate) fn load(path: &Path) -> crate::Result<Config> {
     Ok(toml::from_str(&text)?)
 }
 
-#[cfg(all(test, feature = "std"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 

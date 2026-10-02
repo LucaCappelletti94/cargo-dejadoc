@@ -51,29 +51,8 @@ fn main() -> ExitCode {
     if args.get(1).is_some_and(|a| a == "dejadoc") {
         args.remove(1);
     }
-    let args = Args::parse_from(args);
-    let scan = match build(&args) {
-        Ok(scan) => scan,
-        Err(err) => {
-            eprintln!("dejadoc: {err}");
-            return ExitCode::from(2);
-        }
-    };
-    match scan.run(Path::new(".")) {
-        Ok(report) => {
-            let out = if args.json {
-                dejadoc::json(&report)
-            } else {
-                let mut out = dejadoc::human(&report, args.verbose);
-                if args.github {
-                    out.push('\n');
-                    out.push_str(&dejadoc::annotations(&report, args.no_fail));
-                }
-                out
-            };
-            println!("{out}");
-            dejadoc::exit_code(&report, args.no_fail)
-        }
+    match run(&Args::parse_from(args)) {
+        Ok(code) => code,
         Err(err) => {
             eprintln!("dejadoc: {err}");
             ExitCode::from(2)
@@ -81,7 +60,7 @@ fn main() -> ExitCode {
     }
 }
 
-fn build(args: &Args) -> dejadoc::Result<dejadoc::Dejadoc> {
+fn run(args: &Args) -> dejadoc::Result<ExitCode> {
     let mut scan = dejadoc::Dejadoc::default();
     if let Some(package) = &args.package {
         scan = scan.package(package);
@@ -98,5 +77,17 @@ fn build(args: &Args) -> dejadoc::Result<dejadoc::Dejadoc> {
     if let Some(config) = &args.config {
         scan = scan.config(config)?;
     }
-    Ok(scan)
+    let report = scan.run(Path::new("."))?;
+    let out = if args.json {
+        dejadoc::json(&report)
+    } else {
+        let mut out = dejadoc::human(&report, args.verbose);
+        if args.github {
+            out.push('\n');
+            out.push_str(&dejadoc::annotations(&report, args.no_fail));
+        }
+        out
+    };
+    println!("{out}");
+    Ok(dejadoc::exit_code(&report, args.no_fail))
 }

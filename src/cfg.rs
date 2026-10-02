@@ -4,7 +4,7 @@
 
 use alloc::string::ToString;
 
-use syn::{Expr, ExprLit, Lit, Meta, Token, punctuated::Punctuated};
+use syn::{Expr, ExprLit, Lit, LitStr, Meta, Token, punctuated, punctuated::Punctuated};
 
 /// Whether every `#[cfg(…)]` in `attrs` holds.
 pub(crate) fn allows(attrs: &[syn::Attribute]) -> bool {
@@ -17,22 +17,45 @@ pub(crate) fn allows(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
+/// The metas a `#[cfg_attr(pred, …)]` applies, `None` unless it is one
+/// and its predicate holds.
+pub(crate) fn cfg_attr_metas(attr: &syn::Attribute) -> Option<punctuated::IntoIter<Meta>> {
+    if !attr.path().is_ident("cfg_attr") {
+        return None;
+    }
+    let Meta::List(list) = &attr.meta else {
+        return None;
+    };
+    let mut metas = list
+        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        .ok()?
+        .into_iter();
+    metas
+        .next()
+        .is_some_and(|pred| holds(&pred))
+        .then_some(metas)
+}
+
+/// The string literal `expr` is, if any.
+pub(crate) fn lit_str(expr: &Expr) -> Option<&LitStr> {
+    match expr {
+        Expr::Lit(ExprLit {
+            lit: Lit::Str(s), ..
+        }) => Some(s),
+        _ => None,
+    }
+}
+
 /// Whether a cfg predicate holds.
 pub(crate) fn holds(pred: &Meta) -> bool {
     let list = match pred {
         Meta::Path(path) => return path.get_ident().is_some_and(|i| flag(&i.to_string())),
         Meta::NameValue(nv) => {
-            let Expr::Lit(ExprLit {
-                lit: Lit::Str(value),
-                ..
-            }) = &nv.value
-            else {
-                return false;
-            };
-            return nv
-                .path
-                .get_ident()
-                .is_some_and(|i| pair(&i.to_string(), &value.value()));
+            return lit_str(&nv.value).is_some_and(|value| {
+                nv.path
+                    .get_ident()
+                    .is_some_and(|i| pair(&i.to_string(), &value.value()))
+            });
         }
         Meta::List(list) => list,
     };

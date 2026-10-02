@@ -7,9 +7,9 @@ use alloc::vec::Vec;
 
 use quote::ToTokens;
 use syn::{
-    AttrStyle, Expr, ExprLit, ExprMacro, ForeignItem, Ident, Item, Lit, LitStr, Macro, Meta, Token,
-    TraitItem, Type, UseTree,
-    parse::{Parse, ParseStream},
+    Expr, ExprLit, ExprMacro, ForeignItem, Ident, Item, Lit, LitStr, Macro, Meta, Token, TraitItem,
+    Type, UseTree,
+    parse::{Parse, ParseStream, Parser},
     parse2,
     punctuated::Punctuated,
     visit::Visit,
@@ -66,14 +66,8 @@ pub fn extract(
         read_include,
         out: Vec::new(),
     };
-    // File-level `//!` docs: inner doc attributes only.
-    let inner: Vec<syn::Attribute> = parsed
-        .attrs
-        .iter()
-        .filter(|a| matches!(a.style, AttrStyle::Inner { .. }))
-        .cloned()
-        .collect();
-    if !walker.doc(&inner, prefix) {
+    // File-level `//!` docs, `syn::File` keeps only inner attributes.
+    if !walker.doc(&parsed.attrs, prefix) {
         return walker.out;
     }
     for item in &parsed.items {
@@ -122,45 +116,20 @@ impl Walker<'_> {
                 if !self.doc(&i.attrs, &sub) {
                     return;
                 }
-                for assoc in &i.items {
-                    let Some(name) = impl_assoc_name(assoc) else {
-                        continue;
-                    };
-                    let path = format!("{sub}::{name}");
-                    if self.doc(assoc_attrs(assoc), &path)
-                        && let syn::ImplItem::Fn(f) = assoc
-                    {
-                        self.body(&f.block, &path);
-                    }
-                }
+                self.members(i.items.iter().map(impl_member), &sub);
             }
             Item::Trait(t) => {
                 let sub = format!("{prefix}::{}", t.ident);
                 if !self.doc(&t.attrs, &sub) {
                     return;
                 }
-                for assoc in &t.items {
-                    let Some(name) = trait_assoc_name(assoc) else {
-                        continue;
-                    };
-                    let path = format!("{sub}::{name}");
-                    if self.doc(trait_assoc_attrs(assoc), &path)
-                        && let TraitItem::Fn(f) = assoc
-                        && let Some(block) = &f.default
-                    {
-                        self.body(block, &path);
-                    }
-                }
+                self.members(t.items.iter().map(trait_member), &sub);
             }
             Item::ForeignMod(f) => {
                 if !self.doc(&f.attrs, prefix) {
                     return;
                 }
-                for foreign in &f.items {
-                    if let Some(name) = foreign_name(foreign) {
-                        self.doc(foreign_attrs(foreign), &format!("{prefix}::{name}"));
-                    }
-                }
+                self.members(f.items.iter().map(foreign_member), prefix);
             }
             Item::Fn(f) => {
                 let path = format!("{prefix}::{}", f.sig.ident);
@@ -193,9 +162,21 @@ impl Walker<'_> {
                 }
             }
             _ => {
-                if let Some(name) = item_name(item) {
-                    self.doc(item_attrs(item), &format!("{prefix}::{name}"));
+                if let Some((name, attrs, _)) = item_member(item) {
+                    self.doc(attrs, &format!("{prefix}::{name}"));
                 }
+            }
+        }
+    }
+
+    /// Members under `prefix`, a member's body walked when its cfg holds.
+    fn members<'m>(&mut self, members: impl Iterator<Item = Option<Member<'m>>>, prefix: &str) {
+        for (name, attrs, body) in members.flatten() {
+            let path = format!("{prefix}::{name}");
+            if self.doc(attrs, &path)
+                && let Some(block) = body
+            {
+                self.body(block, &path);
             }
         }
     }
@@ -272,77 +253,58 @@ impl<'ast> Visit<'ast> for NestedItems<'ast> {
     }
 }
 
-fn item_attrs(item: &Item) -> &[syn::Attribute] {
-    match item {
-        Item::Const(c) => &c.attrs,
-        Item::ExternCrate(e) => &e.attrs,
-        Item::Macro(m) => &m.attrs,
-        Item::Static(s) => &s.attrs,
-        Item::TraitAlias(t) => &t.attrs,
-        Item::Type(t) => &t.attrs,
-        Item::Use(u) => &u.attrs,
-        _ => &[],
-    }
+/// A documentable item's name, attributes, and the body whose nested
+/// items rustdoc visits.
+type Member<'a> = (String, &'a [syn::Attribute], Option<&'a syn::Block>);
+
+/// The items `Walker::item` does not handle itself.
+fn item_member(item: &Item) -> Option<Member<'_>> {
+    Some(match item {
+        Item::Const(c) => (c.ident.to_string(), &c.attrs, None),
+        Item::Static(s) => (s.ident.to_string(), &s.attrs, None),
+        Item::Type(t) => (t.ident.to_string(), &t.attrs, None),
+        Item::TraitAlias(t) => (t.ident.to_string(), &t.attrs, None),
+        Item::Use(u) => (use_name(&u.tree), &u.attrs, None),
+        Item::ExternCrate(e) => {
+            let name = e
+                .rename
+                .as_ref()
+                .map_or_else(|| e.ident.to_string(), |(_, i)| i.to_string());
+            (name, &e.attrs, None)
+        }
+        Item::Macro(m) => (macro_name(m.ident.as_ref(), &m.mac), &m.attrs, None),
+        _ => return None,
+    })
 }
 
-fn impl_assoc_name(assoc: &syn::ImplItem) -> Option<String> {
-    match assoc {
-        syn::ImplItem::Const(c) => Some(c.ident.to_string()),
-        syn::ImplItem::Fn(f) => Some(f.sig.ident.to_string()),
-        syn::ImplItem::Type(t) => Some(t.ident.to_string()),
-        syn::ImplItem::Macro(m) => Some(macro_name(None, &m.mac)),
-        _ => None,
-    }
+fn impl_member(member: &syn::ImplItem) -> Option<Member<'_>> {
+    Some(match member {
+        syn::ImplItem::Const(c) => (c.ident.to_string(), &c.attrs, None),
+        syn::ImplItem::Fn(f) => (f.sig.ident.to_string(), &f.attrs, Some(&f.block)),
+        syn::ImplItem::Type(t) => (t.ident.to_string(), &t.attrs, None),
+        syn::ImplItem::Macro(m) => (macro_name(None, &m.mac), &m.attrs, None),
+        _ => return None,
+    })
 }
 
-fn trait_assoc_name(assoc: &TraitItem) -> Option<String> {
-    match assoc {
-        TraitItem::Const(c) => Some(c.ident.to_string()),
-        TraitItem::Fn(f) => Some(f.sig.ident.to_string()),
-        TraitItem::Type(t) => Some(t.ident.to_string()),
-        TraitItem::Macro(m) => Some(macro_name(None, &m.mac)),
-        _ => None,
-    }
+fn trait_member(member: &TraitItem) -> Option<Member<'_>> {
+    Some(match member {
+        TraitItem::Const(c) => (c.ident.to_string(), &c.attrs, None),
+        TraitItem::Fn(f) => (f.sig.ident.to_string(), &f.attrs, f.default.as_ref()),
+        TraitItem::Type(t) => (t.ident.to_string(), &t.attrs, None),
+        TraitItem::Macro(m) => (macro_name(None, &m.mac), &m.attrs, None),
+        _ => return None,
+    })
 }
 
-fn foreign_name(foreign: &ForeignItem) -> Option<String> {
-    match foreign {
-        ForeignItem::Fn(f) => Some(f.sig.ident.to_string()),
-        ForeignItem::Static(s) => Some(s.ident.to_string()),
-        ForeignItem::Type(t) => Some(t.ident.to_string()),
-        ForeignItem::Macro(m) => Some(macro_name(None, &m.mac)),
-        _ => None,
-    }
-}
-
-fn assoc_attrs(assoc: &syn::ImplItem) -> &[syn::Attribute] {
-    match assoc {
-        syn::ImplItem::Const(c) => &c.attrs,
-        syn::ImplItem::Fn(f) => &f.attrs,
-        syn::ImplItem::Type(t) => &t.attrs,
-        syn::ImplItem::Macro(m) => &m.attrs,
-        _ => &[],
-    }
-}
-
-fn trait_assoc_attrs(assoc: &TraitItem) -> &[syn::Attribute] {
-    match assoc {
-        TraitItem::Const(c) => &c.attrs,
-        TraitItem::Fn(f) => &f.attrs,
-        TraitItem::Type(t) => &t.attrs,
-        TraitItem::Macro(m) => &m.attrs,
-        _ => &[],
-    }
-}
-
-fn foreign_attrs(foreign: &ForeignItem) -> &[syn::Attribute] {
-    match foreign {
-        ForeignItem::Fn(f) => &f.attrs,
-        ForeignItem::Static(s) => &s.attrs,
-        ForeignItem::Type(t) => &t.attrs,
-        ForeignItem::Macro(m) => &m.attrs,
-        _ => &[],
-    }
+fn foreign_member(member: &ForeignItem) -> Option<Member<'_>> {
+    Some(match member {
+        ForeignItem::Fn(f) => (f.sig.ident.to_string(), &f.attrs, None),
+        ForeignItem::Static(s) => (s.ident.to_string(), &s.attrs, None),
+        ForeignItem::Type(t) => (t.ident.to_string(), &t.attrs, None),
+        ForeignItem::Macro(m) => (macro_name(None, &m.mac), &m.attrs, None),
+        _ => return None,
+    })
 }
 
 fn line_of(span: proc_macro2::Span) -> u32 {
@@ -369,17 +331,13 @@ fn doc_sources(
             if let Meta::NameValue(nv) = &attr.meta {
                 push_doc_expr(&mut parts, &nv.value, bounds, file, read_include);
             }
-        } else if attr.path().is_ident("cfg_attr")
-            && let Meta::List(list) = &attr.meta
-            && let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-            && metas.first().is_some_and(crate::cfg::holds)
-        {
-            let docs = metas.iter().skip(1).filter_map(|meta| match meta {
-                Meta::NameValue(nv) if nv.path.is_ident("doc") => Some(nv),
-                _ => None,
-            });
-            for nv in docs {
-                push_doc_expr(&mut parts, &nv.value, bounds, file, read_include);
+        } else if let Some(metas) = cfg::cfg_attr_metas(attr) {
+            for meta in metas {
+                if let Meta::NameValue(nv) = meta
+                    && nv.path.is_ident("doc")
+                {
+                    push_doc_expr(&mut parts, &nv.value, bounds, file, read_include);
+                }
             }
         }
     }
@@ -404,14 +362,12 @@ fn push_doc_expr(
             }
         }
         Expr::Macro(ExprMacro { mac, .. }) if mac.path.is_ident("concat") => {
-            if let Ok(concat) = parse2::<ConcatParts>(mac.tokens.clone()) {
-                for part in concat.0 {
-                    match part {
-                        ConcatPart::Lit(s) => push_literal(parts, &s, attr, file),
-                        ConcatPart::Include(s) => {
-                            push_include(parts, file, read_include, &s.value());
-                        }
-                    }
+            let args =
+                Punctuated::<ConcatArg, Token![,]>::parse_terminated.parse2(mac.tokens.clone());
+            for arg in args.into_iter().flatten() {
+                match arg {
+                    ConcatArg::Lit(s) => push_literal(parts, &s, attr, file),
+                    ConcatArg::Include(s) => push_include(parts, file, read_include, &s.value()),
                 }
             }
         }
@@ -523,11 +479,11 @@ fn unindent(text: &str) -> String {
 
 /// Strip the star prefix of a `/** */` block doc, mirroring rustdoc's
 /// `beautify_doc_string`. The fragment kind is unrecoverable from the
-/// token stream, so the strip runs only when the value is multiline
-/// and every line between the first and last non-blank lines carries
-/// its star at one column after spaces or tabs. An all-star first or
-/// last line becomes a blank line; the line count is preserved so
-/// per-line source attribution holds.
+/// token stream, so the strip runs only when the value is multiline and
+/// every line it trims to carries its star at one column after spaces
+/// or tabs. Like rustdoc it skips a first line not starting with a star
+/// and the blank lines at both ends. An all-star first or last line
+/// becomes a blank line, so per-line source attribution holds.
 fn block_star_strip(text: &str) -> String {
     if !text.contains('\n') {
         return text.to_string();
@@ -545,15 +501,19 @@ fn block_star_strip(text: &str) -> String {
         lines[len - 1].clear();
         changed = true;
     }
-    // Horizontal range: the lines between the first and last non-blank.
+    // Horizontal range: the first line only when it starts with a star,
+    // then without blank lines at either end.
+    let start = usize::from(!lines[0].trim_start().starts_with('*'));
+    let blank = |l: &String| l.trim().is_empty();
     let from = lines
         .iter()
-        .position(|l| !l.trim().is_empty())
-        .unwrap_or(len);
+        .skip(start)
+        .position(|l| !blank(l))
+        .map_or(len, |p| start + p);
     let to = lines
         .iter()
-        .rposition(|l| !l.trim().is_empty())
-        .map_or(from, |p| p + 1);
+        .rposition(|l| !blank(l))
+        .map_or(from, |p| from.max(p + 1));
     let mut star_col: Option<usize> = None;
     for line in &lines[from..to] {
         let mut found = false;
@@ -601,13 +561,7 @@ fn line_range(text: &str, line: u32) -> Vec<u32> {
     (line..line.saturating_add(n)).collect()
 }
 
-struct ConcatParts(Vec<ConcatPart>);
-
-enum ConcatPart {
-    Lit(LitStr),
-    Include(LitStr),
-}
-
+/// One argument of a `#[doc = concat!(…)]` value.
 enum ConcatArg {
     Lit(LitStr),
     Include(LitStr),
@@ -626,20 +580,6 @@ impl Parse for ConcatArg {
             ));
         }
         Ok(ConcatArg::Include(parse2(mac.tokens)?))
-    }
-}
-
-impl Parse for ConcatParts {
-    fn parse(input: ParseStream) -> syn::Result<Self> {
-        let args = Punctuated::<ConcatArg, Token![,]>::parse_terminated(input)?;
-        let parts = args
-            .into_iter()
-            .map(|a| match a {
-                ConcatArg::Lit(l) => ConcatPart::Lit(l),
-                ConcatArg::Include(l) => ConcatPart::Include(l),
-            })
-            .collect();
-        Ok(ConcatParts(parts))
     }
 }
 
@@ -673,10 +613,9 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
     let mut out = Vec::new();
     let text = unindent(&src.text);
     for f in fence::scan(&text) {
-        let (counted, info, allow) = classify(&f.info);
-        if !counted {
+        let Some((info, allow)) = classify(&f.info) else {
             continue;
-        }
+        };
         let (start, stop) = (&src.origins[f.line], &src.origins[f.end]);
         let file = start
             .file
@@ -703,14 +642,12 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
     out
 }
 
-/// Counted / allowed / skipped for an info string, plus the recorded
-/// doctest attributes, by rustdoc's `LangString::parse` rules. A block
-/// is Rust unless a `custom` tag or an unknown tag not preceded by a
-/// Rust tag turns it off, and `ignore` skips it.
-fn classify(info: &str) -> (bool, Vec<String>, bool) {
-    let Some(tokens) = lang_tokens(info) else {
-        return (false, Vec::new(), false);
-    };
+/// The recorded doctest attributes and the allow flag for an info string,
+/// `None` for a block rustdoc skips, by rustdoc's `LangString::parse`
+/// rules. A block is Rust unless a `custom` tag or an unknown tag not
+/// preceded by a Rust tag turns it off, and `ignore` skips it.
+fn classify(info: &str) -> Option<(Vec<String>, bool)> {
+    let tokens = lang_tokens(info)?;
     let mut seen_rust = false;
     let mut seen_other = false;
     let mut custom = false;
@@ -746,9 +683,9 @@ fn classify(info: &str) -> (bool, Vec<String>, bool) {
         }
     }
     if custom || (seen_other && !seen_rust) || ignore {
-        return (false, Vec::new(), false);
+        return None;
     }
-    (true, out, allow)
+    Some((out, allow))
 }
 
 /// The tags of an info string: comma or whitespace separated, with
@@ -777,22 +714,6 @@ fn lang_tokens(info: &str) -> Option<Vec<&str>> {
         out.push(&info[s..]);
     }
     Some(out)
-}
-
-fn item_name(item: &Item) -> Option<String> {
-    Some(match item {
-        Item::Const(c) => c.ident.to_string(),
-        Item::Static(s) => s.ident.to_string(),
-        Item::Type(t) => t.ident.to_string(),
-        Item::TraitAlias(t) => t.ident.to_string(),
-        Item::Use(u) => use_name(&u.tree),
-        Item::ExternCrate(e) => e
-            .rename
-            .as_ref()
-            .map_or_else(|| e.ident.to_string(), |(_, i)| i.to_string()),
-        Item::Macro(m) => macro_name(m.ident.as_ref(), &m.mac),
-        _ => return None,
-    })
 }
 
 fn macro_name(ident: Option<&Ident>, mac: &Macro) -> String {
@@ -840,17 +761,22 @@ mod tests {
     use super::*;
     use alloc::vec;
 
-    /// Extracted doctests with `end` cleared, the whole-struct tests
-    /// below pin everything else and `spans` pins `end`.
-    fn run(src: &str) -> Vec<DocTest> {
+    /// Every doctest of `src` as `src/lib.rs` of the crate `mycrate`.
+    fn extract_src(src: &str) -> Vec<DocTest> {
         let parsed = syn::parse_file(src).unwrap();
-        let mut out = extract(
+        extract(
             "mycrate",
             "/root/src/lib.rs",
             &parsed,
             "/root",
-            &|_f: &str, _p: &str| None,
-        );
+            &|_f, _p| None,
+        )
+    }
+
+    /// Extracted doctests with `end` cleared, the whole-struct tests
+    /// below pin everything else and `spans` pins `end`.
+    fn run(src: &str) -> Vec<DocTest> {
+        let mut out = extract_src(src);
         for dt in &mut out {
             dt.end = None;
         }
@@ -859,17 +785,10 @@ mod tests {
 
     /// The source line span of every doctest in `src`.
     fn spans(src: &str) -> Vec<(u32, Option<u32>)> {
-        let parsed = syn::parse_file(src).unwrap();
-        extract(
-            "mycrate",
-            "/root/src/lib.rs",
-            &parsed,
-            "/root",
-            &|_f: &str, _p: &str| None,
-        )
-        .into_iter()
-        .map(|dt| (dt.line, dt.end))
-        .collect()
+        extract_src(src)
+            .into_iter()
+            .map(|dt| (dt.line, dt.end))
+            .collect()
     }
 
     fn to(mut d: DocTest, end: u32) -> DocTest {
@@ -1260,6 +1179,25 @@ mod tests {
     }
 
     #[test]
+    fn block_doc_text_on_the_opening_line_still_strips() {
+        let src = "/** intro\n * ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 2, "mycrate::f", &[], "let x = 1;", false)]
+        );
+    }
+
+    #[test]
+    fn block_doc_fence_on_the_opening_line_strips_its_body() {
+        let src = "/** ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
+        // rustdoc keeps the space after the star when the fence opens on the `/**` line.
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate::f", &[], " let x = 1;", false)]
+        );
+    }
+
+    #[test]
     fn block_doc_inconsistent_star_column_is_kept() {
         let src = "/**\n * A.\n** B.\n */\npub fn f() {}\n";
         assert_eq!(run(src), vec![]);
@@ -1351,6 +1289,21 @@ mod tests {
                 false
             )]
         );
+    }
+
+    #[test]
+    fn block_doc_blank_second_line_still_strips() {
+        let src = "/**\n\n * ```\n * let x = 1;\n * ```\n */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 3, "mycrate::f", &[], "let x = 1;", false)]
+        );
+    }
+
+    #[test]
+    fn block_doc_with_only_a_blank_line_after_its_text_has_no_doctest() {
+        let src = "/** x\n   */\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
     }
 
     #[test]
@@ -1486,29 +1439,30 @@ mod tests {
         }
     }
 
-    #[test]
-    fn include_str_doc() {
+    /// Every doctest of `lib_rs` as `src/lib.rs` of a tempdir crate, with
+    /// `doc_md` written beside it for `include_str!("doc.md")`.
+    fn extract_with_doc(lib_rs: &str, doc_md: Option<&str>) -> Vec<DocTest> {
         let dir = tempfile::tempdir().unwrap();
         let src = dir.path().join("src");
         std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(
-            src.join("doc.md"),
-            "See below.\n\n```rust\nlet from = include;\n```\n",
-        )
-        .unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
-            "#[doc = include_str!(\"doc.md\")]\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
+        if let Some(doc) = doc_md {
+            std::fs::write(src.join("doc.md"), doc).unwrap();
+        }
+        let parsed = syn::parse_file(lib_rs).unwrap();
+        extract(
             "mycrate",
             &src.join("lib.rs").to_string_lossy(),
             &parsed,
             &dir.path().to_string_lossy(),
             &fs_read(&src),
+        )
+    }
+
+    #[test]
+    fn include_str_doc() {
+        let dts = extract_with_doc(
+            "#[doc = include_str!(\"doc.md\")]\npub fn f() {}\n",
+            Some("See below.\n\n```rust\nlet from = include;\n```\n"),
         );
         assert_eq!(
             dts,
@@ -1528,23 +1482,9 @@ mod tests {
 
     #[test]
     fn concat_include_str_doc() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("doc.md"), "```\nfn main() {}\n```\n").unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
+        let dts = extract_with_doc(
             "#[doc = concat!(\"prefix \", include_str!(\"doc.md\"))]\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
-            "mycrate",
-            &src.join("lib.rs").to_string_lossy(),
-            &parsed,
-            &dir.path().to_string_lossy(),
-            &fs_read(&src),
+            Some("```\nfn main() {}\n```\n"),
         );
         assert_eq!(
             dts,
@@ -1557,23 +1497,9 @@ mod tests {
 
     #[test]
     fn include_file_stars_are_kept() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("doc.md"), " * ```\n * fn main() {}\n * ```\n").unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
+        let dts = extract_with_doc(
             "#[doc = include_str!(\"doc.md\")]\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
-            "mycrate",
-            &src.join("lib.rs").to_string_lossy(),
-            &parsed,
-            &dir.path().to_string_lossy(),
-            &fs_read(&src),
+            Some(" * ```\n * fn main() {}\n * ```\n"),
         );
         // rustdoc keeps the stars in include files (raw fragment kind),
         // so the fences are list item fences and count as empty doctests.
@@ -1694,23 +1620,9 @@ pub fn raw() {}
     fn fence_spanning_include() {
         // A fence straddling a `#[doc = include_str!(…)]` part belongs to
         // the item's one doc stream, as rustdoc assembles it.
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("doc.md"), "fn main() {}").unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
+        let dts = extract_with_doc(
             "/// ```\n#[doc = include_str!(\"doc.md\")]\n/// ```\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
-            "mycrate",
-            &src.join("lib.rs").to_string_lossy(),
-            &parsed,
-            &dir.path().to_string_lossy(),
-            &fs_read(&src),
+            Some("fn main() {}"),
         );
         // Both fences sit in `lib.rs`, so the span covers the include
         // attribute between them.
@@ -1725,23 +1637,9 @@ pub fn raw() {}
 
     #[test]
     fn fence_closing_inside_an_include_has_no_span() {
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(src.join("doc.md"), "fn main() {}\n```\n").unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
+        let dts = extract_with_doc(
             "/// ```\n#[doc = include_str!(\"doc.md\")]\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
-            "mycrate",
-            &src.join("lib.rs").to_string_lossy(),
-            &parsed,
-            &dir.path().to_string_lossy(),
-            &fs_read(&src),
+            Some("fn main() {}\n```\n"),
         );
         assert_eq!(
             dts,
@@ -1761,22 +1659,9 @@ pub fn raw() {}
         // A doc part ending in a newline plus the merge separator yields
         // one extra text line; the line mapping must cover it, since
         // fences are indexed by text line.
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
+        let dts = extract_with_doc(
             "#[doc = \"x\\n\"]\n#[doc = \"a\\n```rust\"]\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
-            "mycrate",
-            &src.join("lib.rs").to_string_lossy(),
-            &parsed,
-            &dir.path().to_string_lossy(),
-            &|_f: &str, _p: &str| None,
+            None,
         );
         assert_eq!(dts, vec![dt("src/lib.rs", 3, "mycrate::f", &[], "", false)]);
     }
@@ -1785,23 +1670,7 @@ pub fn raw() {}
     fn empty_first_doc_part_keeps_line_mapping() {
         // A bare `///` line is a zero-line doc part; the merge separator
         // after it still adds one text line, which must stay mapped.
-        let dir = tempfile::tempdir().unwrap();
-        let src = dir.path().join("src");
-        std::fs::create_dir_all(&src).unwrap();
-        std::fs::write(
-            src.join("lib.rs"),
-            "///\n/// text\n/// ```rust\npub fn f() {}\n",
-        )
-        .unwrap();
-        let code = std::fs::read_to_string(src.join("lib.rs")).unwrap();
-        let parsed = syn::parse_file(&code).unwrap();
-        let dts = extract(
-            "mycrate",
-            &src.join("lib.rs").to_string_lossy(),
-            &parsed,
-            &dir.path().to_string_lossy(),
-            &|_f: &str, _p: &str| None,
-        );
+        let dts = extract_with_doc("///\n/// text\n/// ```rust\npub fn f() {}\n", None);
         assert_eq!(
             dts,
             vec![to(dt("src/lib.rs", 3, "mycrate::f", &[], "", false), 3)]

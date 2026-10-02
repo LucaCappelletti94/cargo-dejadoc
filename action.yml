@@ -424,6 +424,18 @@ runs:
             printf '%s' "$1"
           fi
         }
+        # Workflow command escaping, a property also ends at `,` or `:`.
+        escape_data() {
+          local s="${1//%/%25}"
+          s="${s//$'\r'/%0D}"
+          printf '%s' "${s//$'\n'/%0A}"
+        }
+        escape_property() {
+          local s
+          s="$(escape_data "$1")"
+          s="${s//:/%3A}"
+          printf '%s' "${s//,/%2C}"
+        }
         rendered=''
         findings=''
         # One pass builds every comment, live posts them, the dry run renders them.
@@ -463,7 +475,7 @@ runs:
             keep="$basekeep"
             [ -z "$keep" ] && keep="$keepat"
             printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
-              "$p" "$line" "$item" "$keep" "$g"
+              "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$keep")" "$g"
             findings="$findings- \`$p:$line\`  $item, duplicates \`$keep\`"$'\n'
           fi
           close_line="$end"

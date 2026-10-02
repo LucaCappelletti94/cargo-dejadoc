@@ -169,11 +169,10 @@ fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2:
                 out.extend(core::iter::once(proc_macro2::TokenTree::Punct(p)));
             }
             proc_macro2::TokenTree::Group(group) => {
-                let inner = flatten_stream(group.stream(), strip);
+                out.extend(core::iter::once(crate::drift::map_group(&group, |inner| {
+                    flatten_stream(inner, strip)
+                })));
                 strip = false;
-                let mut out_group = proc_macro2::Group::new(group.delimiter(), inner);
-                out_group.set_span(group.span());
-                out.extend(core::iter::once(proc_macro2::TokenTree::Group(out_group)));
             }
             proc_macro2::TokenTree::Literal(lit) => {
                 let kept = if strip {
@@ -1399,6 +1398,13 @@ fn f() {}"#,
     fn alpha_renames_struct_shorthand_bindings() {
         let a = canonicalize("let P { pino } = make();\npino\n");
         let b = canonicalize("let P { pino: abete } = make();\nabete\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn alpha_renames_bindings_inside_an_at_subpattern() {
+        let a = canonicalize("match Some(1) { pino @ Some(abete) => abete, None => 0 }");
+        let b = canonicalize("match Some(1) { x @ Some(y) => y, None => 0 }");
         assert_eq!(a.text, b.text);
     }
 

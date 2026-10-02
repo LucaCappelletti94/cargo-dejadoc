@@ -86,7 +86,7 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             let _ = writeln!(
                 &mut out,
                 "::{level} file={},line={},title=dejadoc::{} duplicates the doctest of {} at {}:{}, group {}",
-                copy.file.as_str(),
+                escape_property(copy.file.as_str()),
                 copy.line,
                 escape(&copy.item),
                 escape(&kept.item),
@@ -99,12 +99,17 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
     out
 }
 
-/// A workflow command message, with the characters that would end it or
-/// its properties percent encoded.
+/// A workflow command message, with the characters that would end it
+/// percent encoded.
 fn escape(text: &str) -> String {
     text.replace('%', "%25")
         .replace('\r', "%0D")
         .replace('\n', "%0A")
+}
+
+/// A workflow command property value, which a `,` or `:` would also end.
+fn escape_property(text: &str) -> String {
+    escape(text).replace(':', "%3A").replace(',', "%2C")
 }
 
 #[cfg(test)]
@@ -285,5 +290,16 @@ mod tests {
         odd.groups[0].sites[0].item = "m::a%weird".into();
         let out = annotations(&odd, false);
         assert!(out.contains("of m::a%25weird at"), "{out}");
+    }
+
+    #[test]
+    fn annotations_escape_the_file_property() {
+        let mut odd = report();
+        odd.groups[0].sites[1].file = "src/a,b:c%.rs".into();
+        let out = annotations(&odd, false);
+        assert!(
+            out.starts_with("::error file=src/a%2Cb%3Ac%25.rs,line=97,"),
+            "{out}"
+        );
     }
 }
