@@ -86,14 +86,8 @@ fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
             }
         }
         syn::Lit::Float(f) => {
-            let decimal = format!("{}{}", canon_float_str(f.base10_digits()), f.suffix());
-            match syn::parse_str::<syn::LitFloat>(&decimal) {
-                Ok(mut read) => {
-                    read.set_span(span);
-                    syn::Lit::Float(read)
-                }
-                Err(_) => syn::Lit::Float(f),
-            }
+            let digits = canon_float_str(f.base10_digits());
+            syn::Lit::Float(syn::LitFloat::new(&format!("{digits}{}", f.suffix()), span))
         }
         syn::Lit::Str(s) => syn::Lit::Str(syn::LitStr::new(&s.value(), span)),
         syn::Lit::ByteStr(b) => syn::Lit::ByteStr(syn::LitByteStr::new(&b.value(), span)),
