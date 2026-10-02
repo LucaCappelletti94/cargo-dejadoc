@@ -302,9 +302,42 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 /// `min_tokens`, and groups under `threshold`.
 ///
 /// Blocks sharing a file and line are one doc block reached through several
-/// items, so only the first is kept.
+/// items, so only the first is kept. With the `std` feature the
+/// canonicalization runs on a thread with a 1 GiB reserved stack, falling
+/// back to the calling thread when the system refuses that thread.
+///
+/// # Panics
+///
+/// Re-raises a panic of the canonicalizing thread, a bug in this crate.
 #[must_use]
 pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
+    #[cfg(feature = "std")]
+    {
+        std::thread::scope(|scope| {
+            std::thread::Builder::new()
+                .stack_size(GROUP_STACK)
+                .spawn_scoped(scope, || group_here(blocks, threshold, min_tokens))
+                .map_or_else(
+                    |_| group_here(blocks, threshold, min_tokens),
+                    |worker| {
+                        worker
+                            .join()
+                            .unwrap_or_else(|panic| std::panic::resume_unwind(panic))
+                    },
+                )
+        })
+    }
+    #[cfg(not(feature = "std"))]
+    group_here(blocks, threshold, min_tokens)
+}
+
+/// Stack reserved for canonicalization, room for `MAX_NESTING` and
+/// `MAX_TOKENS` bodies with a wide margin even in a debug build.
+#[cfg(feature = "std")]
+const GROUP_STACK: usize = 1 << 30;
+
+/// `group` on the calling thread's stack.
+fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     let mut by_site: BTreeMap<(&str, u32), &DocTest> = BTreeMap::new();
     for block in blocks {
         by_site
@@ -645,5 +678,19 @@ mod tests {
         assert_eq!(report.groups, Vec::new());
         assert_eq!(report.unique, 2);
         assert_eq!(report.total, 2);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn a_long_closure_chain_canonicalizes_on_a_small_caller_stack() {
+        // 5,000 chained closures overflow even an 8 MiB stack in a debug build.
+        let code = format!("let f = {}1;", "|x| ".repeat(5000));
+        let report = std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || group(&[dt("a.rs", 1, "m::a", &code, false)], 1, 0))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(!report.groups[0].unparsed);
     }
 }
