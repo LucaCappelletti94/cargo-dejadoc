@@ -44,45 +44,30 @@ enum Ns {
 }
 
 /// A scope frame, one per block, function, generics list, impl, closure
-/// or `for<'a>` binder.
-struct Frame {
-    value: BTreeMap<String, String>,
-    ty: BTreeMap<String, String>,
-    lifetime: BTreeMap<String, String>,
-    label: BTreeMap<String, String>,
-    mac: BTreeMap<String, String>,
-}
+/// or `for<'a>` binder, with one map per namespace.
+#[derive(Default)]
+struct Frame([BTreeMap<String, String>; 5]);
 
 impl Frame {
-    fn new() -> Self {
-        Self {
-            value: BTreeMap::new(),
-            ty: BTreeMap::new(),
-            lifetime: BTreeMap::new(),
-            label: BTreeMap::new(),
-            mac: BTreeMap::new(),
-        }
-    }
-
     fn bind(&mut self, ns: Ns, name: String, canon: String) {
-        match ns {
-            Ns::Value => self.value.insert(name, canon),
-            Ns::Type => self.ty.insert(name, canon),
-            Ns::Lifetime => self.lifetime.insert(name, canon),
-            Ns::Label => self.label.insert(name, canon),
-            Ns::Macro => self.mac.insert(name, canon),
-        };
+        // A fieldless enum's discriminant, 0 to 4.
+        self.0[ns as usize].insert(name, canon);
     }
 
     fn lookup(&self, ns: Ns, name: &str) -> Option<&String> {
-        match ns {
-            Ns::Value => self.value.get(name),
-            Ns::Type => self.ty.get(name),
-            Ns::Lifetime => self.lifetime.get(name),
-            Ns::Label => self.label.get(name),
-            Ns::Macro => self.mac.get(name),
-        }
+        // A fieldless enum's discriminant, 0 to 4.
+        self.0[ns as usize].get(name)
     }
+
+    /// First binder of `name` in `ns`, in priority order.
+    fn lookup_any(&self, ns: &[Ns], name: &str) -> Option<&String> {
+        ns.iter().find_map(|ns| self.lookup(*ns, name))
+    }
+}
+
+/// Point `ident` at `canon`, keeping its span.
+fn rename(ident: &mut Ident, canon: &str) {
+    *ident = Ident::new(canon, ident.span());
 }
 
 /// The scope stack, the positional counter, the saved module frames,
@@ -98,7 +83,7 @@ struct Renamer {
 impl Renamer {
     fn new() -> Self {
         Self {
-            frames: vec![Frame::new()],
+            frames: vec![Frame::default()],
             counter: 0,
             mod_frames: BTreeMap::new(),
             self_ty: None,
@@ -107,7 +92,7 @@ impl Renamer {
     }
 
     fn push(&mut self) {
-        self.frames.push(Frame::new());
+        self.frames.push(Frame::default());
     }
 
     fn pop(&mut self) {
@@ -129,6 +114,22 @@ impl Renamer {
             .bind(ns, name.to_string(), canon);
     }
 
+    /// Bind `ident` in the current frame and rename it.
+    fn bind_ident(&mut self, ns: Ns, ident: &mut Ident) -> String {
+        let canon = self.bind(ns, &ident.to_string());
+        rename(ident, &canon);
+        canon
+    }
+
+    /// Bind `name` in the value and type namespaces to one canon. A use
+    /// alias or a const parameter prints once, two canons would leave a
+    /// position of the other namespace pointing at an undeclared binder.
+    fn bind_value_and_type(&mut self, name: &str) -> String {
+        let canon = self.bind(Ns::Value, name);
+        self.top_bind(Ns::Type, name, canon.clone());
+        canon
+    }
+
     /// Nearest-binder lookup, namespace priority first.
     fn lookup(&self, ns: &[Ns], name: &str) -> Option<String> {
         for ns in ns {
@@ -141,29 +142,42 @@ impl Renamer {
         None
     }
 
-    /// The canon `name` already holds in the current frame, else a new one.
-    fn bind_or_reuse(&mut self, ns: Ns, name: &str) -> String {
-        match self.frames.last().and_then(|frame| frame.lookup(ns, name)) {
+    /// Rename `ident` to the canon it already holds in the current frame,
+    /// else to a new one.
+    fn rename_binder(&mut self, ns: Ns, ident: &mut Ident) -> String {
+        let name = ident.to_string();
+        let canon = match self.frames.last().and_then(|frame| frame.lookup(ns, &name)) {
             Some(canon) => canon.clone(),
-            None => self.bind(ns, name),
+            None => self.bind(ns, &name),
+        };
+        rename(ident, &canon);
+        canon
+    }
+
+    /// Rename `ident` to its nearest binder in `ns`, if any.
+    fn resolve(&self, ns: &[Ns], ident: &mut Ident) {
+        if let Some(canon) = self.lookup(ns, &ident.to_string()) {
+            rename(ident, &canon);
+        }
+    }
+
+    fn visit_attrs(&mut self, attrs: &mut [syn::Attribute]) {
+        for attr in attrs {
+            self.visit_attribute_mut(attr);
         }
     }
 
     /// Bind a loop or block label in the current frame.
     fn bind_label(&mut self, label: Option<&mut syn::Label>) {
         if let Some(label) = label {
-            let canon = self.bind(Ns::Label, &label.name.ident.to_string());
-            label.name.ident = Ident::new(&canon, label.name.ident.span());
+            self.bind_ident(Ns::Label, &mut label.name.ident);
         }
     }
 
     /// Resolve a label reference through the label namespace only, the
     /// lifetime map must not answer, rustc keeps the two namespaces apart.
-    fn rename_label(&mut self, lifetime: &mut syn::Lifetime) {
-        let name = lifetime.ident.to_string();
-        if let Some(canon) = self.lookup(&[Ns::Label], &name) {
-            lifetime.ident = Ident::new(&canon, lifetime.ident.span());
-        }
+    fn rename_label(&self, lifetime: &mut syn::Lifetime) {
+        self.resolve(&[Ns::Label], &mut lifetime.ident);
     }
 
     /// Rewrite macro tokens the parser cannot read, an identifier before
@@ -180,16 +194,11 @@ impl Renamer {
                     } else {
                         &[Ns::Value, Ns::Type]
                     };
-                    if let Some(canon) = self.lookup(ns, &ident.to_string()) {
-                        ident = Ident::new(&canon, ident.span());
-                    }
+                    self.resolve(ns, &mut ident);
                     proc_macro2::TokenTree::Ident(ident)
                 }
                 proc_macro2::TokenTree::Group(group) => {
-                    let inner = self.rename_tokens(group.stream());
-                    let mut rebuilt = proc_macro2::Group::new(group.delimiter(), inner);
-                    rebuilt.set_span(group.span());
-                    proc_macro2::TokenTree::Group(rebuilt)
+                    crate::drift::map_group(&group, |inner| self.rename_tokens(inner))
                 }
                 other => other,
             });
@@ -361,109 +370,69 @@ fn is_unit_path(id: &syn::PatIdent) -> bool {
         && id.ident.to_string().starts_with(|c: char| c.is_uppercase())
 }
 
-/// Rewrite the binder identifiers of `pat` to their canonical names.
-fn rewrite_pat_bindings(renamer: &mut Renamer, pat: &mut syn::Pat) {
+/// Call `f` on every identifier pattern of `pat`, in traversal order.
+/// A shorthand `S { x }` binds the member name and drops the member when
+/// rendered, so its field takes the explicit `x: x` form on the way.
+fn walk_pat_idents(pat: &mut syn::Pat, f: &mut impl FnMut(&mut syn::PatIdent)) {
     match pat {
         syn::Pat::Ident(id) => {
-            let ns: &[Ns] = if is_unit_path(id) {
-                &[Ns::Value, Ns::Type]
-            } else {
-                &[Ns::Value]
-            };
-            if let Some(canon) = renamer.lookup(ns, &id.ident.to_string()) {
-                id.ident = Ident::new(&canon, id.ident.span());
-            }
+            f(id);
             if let Some((_, sub)) = &mut id.subpat {
-                rewrite_pat_bindings(renamer, sub);
+                walk_pat_idents(sub, f);
             }
         }
-        syn::Pat::Tuple(tuple) => {
-            for pat in &mut tuple.elems {
-                rewrite_pat_bindings(renamer, pat);
-            }
-        }
-        syn::Pat::Slice(slice) => {
-            for pat in &mut slice.elems {
-                rewrite_pat_bindings(renamer, pat);
-            }
-        }
-        syn::Pat::TupleStruct(tuple) => {
-            for pat in &mut tuple.elems {
-                rewrite_pat_bindings(renamer, pat);
+        syn::Pat::Tuple(syn::PatTuple { elems, .. })
+        | syn::Pat::Slice(syn::PatSlice { elems, .. })
+        | syn::Pat::TupleStruct(syn::PatTupleStruct { elems, .. }) => {
+            for pat in elems {
+                walk_pat_idents(pat, f);
             }
         }
         syn::Pat::Struct(r#struct) => {
             for field in &mut r#struct.fields {
-                // A shorthand `S { x }` binds the member name and
-                // drops the member when rendered, so force the
-                // explicit `x: x` form before the rewrite.
-                if field.colon_token.is_none() {
-                    field.colon_token = Some(syn::token::Colon::default());
-                }
-                rewrite_pat_bindings(renamer, &mut field.pat);
+                field.colon_token.get_or_insert_with(Default::default);
+                walk_pat_idents(&mut field.pat, f);
             }
         }
         syn::Pat::Or(r#or) => {
             for pat in &mut r#or.cases {
-                rewrite_pat_bindings(renamer, pat);
+                walk_pat_idents(pat, f);
             }
         }
-        syn::Pat::Reference(reference) => rewrite_pat_bindings(renamer, &mut reference.pat),
-        syn::Pat::Type(type_pat) => rewrite_pat_bindings(renamer, &mut type_pat.pat),
-        syn::Pat::Guard(guard) => rewrite_pat_bindings(renamer, &mut guard.pat),
+        syn::Pat::Reference(syn::PatReference { pat, .. })
+        | syn::Pat::Type(syn::PatType { pat, .. })
+        | syn::Pat::Guard(syn::PatGuard { pat, .. }) => walk_pat_idents(pat, f),
         _ => {}
     }
 }
 
-/// Collect the names bound by `pat`, in traversal order.
-fn pattern_names(pat: &syn::Pat, out: &mut Vec<String>) {
-    match pat {
-        syn::Pat::Ident(id) => {
-            if !is_unit_path(id) {
-                out.push(id.ident.to_string());
-            }
-            if let Some((_, sub)) = &id.subpat {
-                pattern_names(sub, out);
-            }
+/// Rewrite the binder identifiers of `pat` to their canonical names.
+fn rewrite_pat_bindings(renamer: &Renamer, pat: &mut syn::Pat) {
+    walk_pat_idents(pat, &mut |id| {
+        let ns: &[Ns] = if is_unit_path(id) {
+            &[Ns::Value, Ns::Type]
+        } else {
+            &[Ns::Value]
+        };
+        renamer.resolve(ns, &mut id.ident);
+    });
+}
+
+/// Push the names bound by `pat` to `out`, in traversal order.
+fn pattern_names(pat: &mut syn::Pat, out: &mut Vec<String>) {
+    walk_pat_idents(pat, &mut |id| {
+        if !is_unit_path(id) {
+            out.push(id.ident.to_string());
         }
-        syn::Pat::Tuple(tuple) => {
-            for pat in &tuple.elems {
-                pattern_names(pat, out);
-            }
-        }
-        syn::Pat::Slice(slice) => {
-            for pat in &slice.elems {
-                pattern_names(pat, out);
-            }
-        }
-        syn::Pat::TupleStruct(tuple) => {
-            for pat in &tuple.elems {
-                pattern_names(pat, out);
-            }
-        }
-        syn::Pat::Struct(r#struct) => {
-            for field in &r#struct.fields {
-                pattern_names(&field.pat, out);
-            }
-        }
-        syn::Pat::Or(r#or) => {
-            for pat in &r#or.cases {
-                pattern_names(pat, out);
-            }
-        }
-        syn::Pat::Reference(reference) => pattern_names(&reference.pat, out),
-        syn::Pat::Type(type_pat) => pattern_names(&type_pat.pat, out),
-        syn::Pat::Guard(guard) => pattern_names(&guard.pat, out),
-        _ => {}
-    }
+    });
 }
 
 /// The names bound by the function parameters of `inputs`.
-fn fn_param_names<'a>(inputs: impl Iterator<Item = &'a syn::FnArg>) -> Vec<String> {
+fn fn_param_names<'a>(inputs: impl Iterator<Item = &'a mut syn::FnArg>) -> Vec<String> {
     let mut out = Vec::new();
     for input in inputs {
         if let syn::FnArg::Typed(pat_type) = input {
-            pattern_names(&pat_type.pat, &mut out);
+            pattern_names(&mut pat_type.pat, &mut out);
         }
     }
     out
@@ -501,16 +470,6 @@ fn prebind<'a>(renamer: &mut Renamer, items: impl Iterator<Item = &'a syn::Item>
     }
 }
 
-/// Bind a use name in both namespaces to one canon and return it.
-fn bind_use_name(renamer: &mut Renamer, name: &str) -> String {
-    // The alias is printed once, so the value and type namespaces must
-    // share one canon, two canons would leave the type position pointing
-    // at a binder the output never declares.
-    let canon = renamer.bind(Ns::Value, name);
-    renamer.top_bind(Ns::Type, name, canon.clone());
-    canon
-}
-
 impl Renamer {
     /// Bind every name a use tree introduces and rewrite the tree. A plain
     /// name is both the imported item and its local alias, so it becomes
@@ -522,17 +481,17 @@ impl Renamer {
                 syn::UseTree::Path(path)
             }
             syn::UseTree::Name(syn::UseName { ident }) => {
-                let canon = bind_use_name(self, &ident.to_string());
+                let canon = self.bind_value_and_type(&ident.to_string());
                 syn::UseTree::Rename(syn::UseRename {
                     rename: Ident::new(&canon, ident.span()),
                     ident,
                     as_token: <syn::Token![as]>::default(),
                 })
             }
-            syn::UseTree::Rename(mut rename) => {
-                let canon = bind_use_name(self, &rename.rename.to_string());
-                rename.rename = Ident::new(&canon, rename.rename.span());
-                syn::UseTree::Rename(rename)
+            syn::UseTree::Rename(mut alias) => {
+                let canon = self.bind_value_and_type(&alias.rename.to_string());
+                rename(&mut alias.rename, &canon);
+                syn::UseTree::Rename(alias)
             }
             syn::UseTree::Group(mut group) => {
                 group.items = group
@@ -547,6 +506,53 @@ impl Renamer {
             }
             glob @ syn::UseTree::Glob(_) => glob,
         }
+    }
+
+    /// Bind every name `pat` binds, then visit and rewrite it.
+    fn bind_pat(&mut self, pat: &mut syn::Pat) {
+        let mut names = Vec::new();
+        pattern_names(pat, &mut names);
+        for name in &names {
+            self.bind(Ns::Value, name);
+        }
+        syn::visit_mut::visit_pat_mut(self, pat);
+        rewrite_pat_bindings(self, pat);
+    }
+
+    /// A function's generics frame and parameter frame around its
+    /// signature and body, its own name already handled.
+    fn visit_fn(
+        &mut self,
+        attrs: &mut [syn::Attribute],
+        sig: &mut syn::Signature,
+        body: Option<&mut syn::Block>,
+    ) {
+        begin_generics(self, &mut sig.generics);
+        self.visit_attrs(attrs);
+        self.push();
+        for param in fn_param_names(sig.inputs.iter_mut()) {
+            self.bind(Ns::Value, &param);
+        }
+        visit_fn_inputs(self, sig.inputs.iter_mut());
+        syn::visit_mut::visit_return_type_mut(self, &mut sig.output);
+        if let Some(body) = body {
+            self.visit_block_mut(body);
+        }
+        self.pop();
+        self.pop();
+    }
+
+    /// Rename a type item, then open its generics frame and visit its
+    /// attributes. The caller visits the rest and pops the frame.
+    fn begin_type_item(
+        &mut self,
+        ident: &mut Ident,
+        generics: &mut syn::Generics,
+        attrs: &mut [syn::Attribute],
+    ) {
+        self.rename_binder(Ns::Type, ident);
+        begin_generics(self, generics);
+        self.visit_attrs(attrs);
     }
 }
 
@@ -587,23 +593,15 @@ fn begin_generics(renamer: &mut Renamer, generics: &mut syn::Generics) {
     for param in &mut generics.params {
         match param {
             syn::GenericParam::Lifetime(lifetime) => {
-                let name = lifetime.lifetime.ident.to_string();
-                let canon = renamer.bind(Ns::Lifetime, &name);
-                lifetime.lifetime.ident = Ident::new(&canon, lifetime.lifetime.ident.span());
+                renamer.bind_ident(Ns::Lifetime, &mut lifetime.lifetime.ident);
             }
             syn::GenericParam::Type(ty_param) => {
-                let name = ty_param.ident.to_string();
-                let canon = renamer.bind(Ns::Type, &name);
-                ty_param.ident = Ident::new(&canon, ty_param.ident.span());
+                renamer.bind_ident(Ns::Type, &mut ty_param.ident);
             }
             syn::GenericParam::Const(r#const) => {
-                // A const parameter prints once and a bare reference in
-                // `Foo<N>` reads as a type argument, bind both namespaces
-                // to one canon so the reference matches the declaration.
-                let name = r#const.ident.to_string();
-                let canon = renamer.bind(Ns::Value, &name);
-                renamer.top_bind(Ns::Type, &name, canon.clone());
-                r#const.ident = Ident::new(&canon, r#const.ident.span());
+                // A bare reference in `Foo<N>` reads as a type argument.
+                let canon = renamer.bind_value_and_type(&r#const.ident.to_string());
+                rename(&mut r#const.ident, &canon);
             }
         }
     }
@@ -632,13 +630,7 @@ fn walk_let_cond(renamer: &mut Renamer, cond: &mut syn::Expr) {
 /// is rewritten.
 fn bind_let(renamer: &mut Renamer, let_expr: &mut syn::ExprLet) {
     syn::visit_mut::visit_expr_mut(renamer, &mut let_expr.expr);
-    let mut names = Vec::new();
-    pattern_names(&let_expr.pat, &mut names);
-    for name in &names {
-        renamer.bind(Ns::Value, name);
-    }
-    syn::visit_mut::visit_pat_mut(renamer, &mut let_expr.pat);
-    rewrite_pat_bindings(renamer, &mut let_expr.pat);
+    renamer.bind_pat(&mut let_expr.pat);
 }
 
 impl VisitMut for Renamer {
@@ -670,88 +662,30 @@ impl VisitMut for Renamer {
             }
         }
         // The pattern's names become visible from here on.
-        let mut names = Vec::new();
-        pattern_names(&local.pat, &mut names);
-        for name in &names {
-            self.bind(Ns::Value, name);
-        }
-        syn::visit_mut::visit_pat_mut(self, &mut local.pat);
-        rewrite_pat_bindings(self, &mut local.pat);
+        self.bind_pat(&mut local.pat);
     }
 
     fn visit_item_fn_mut(&mut self, item: &mut syn::ItemFn) {
-        let name = item.sig.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Value, &name);
-        item.sig.ident = Ident::new(&canon, item.sig.ident.span());
-        begin_generics(self, &mut item.sig.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
-        self.push();
-        for param in fn_param_names(item.sig.inputs.iter()) {
-            self.bind(Ns::Value, &param);
-        }
-        visit_fn_inputs(self, item.sig.inputs.iter_mut());
-        syn::visit_mut::visit_return_type_mut(self, &mut item.sig.output);
-        self.visit_block_mut(&mut item.block);
-        self.pop();
-        self.pop();
+        self.rename_binder(Ns::Value, &mut item.sig.ident);
+        self.visit_fn(&mut item.attrs, &mut item.sig, Some(&mut item.block));
     }
 
     fn visit_impl_item_fn_mut(&mut self, item: &mut syn::ImplItemFn) {
-        begin_generics(self, &mut item.sig.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
-        self.push();
-        for param in fn_param_names(item.sig.inputs.iter()) {
-            self.bind(Ns::Value, &param);
-        }
-        visit_fn_inputs(self, item.sig.inputs.iter_mut());
-        syn::visit_mut::visit_return_type_mut(self, &mut item.sig.output);
-        self.visit_block_mut(&mut item.block);
-        self.pop();
-        self.pop();
+        self.visit_fn(&mut item.attrs, &mut item.sig, Some(&mut item.block));
     }
 
     fn visit_trait_item_fn_mut(&mut self, item: &mut syn::TraitItemFn) {
-        begin_generics(self, &mut item.sig.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
-        self.push();
-        for param in fn_param_names(item.sig.inputs.iter()) {
-            self.bind(Ns::Value, &param);
-        }
-        visit_fn_inputs(self, item.sig.inputs.iter_mut());
-        syn::visit_mut::visit_return_type_mut(self, &mut item.sig.output);
-        if let Some(default) = &mut item.default {
-            self.visit_block_mut(default);
-        }
-        self.pop();
-        self.pop();
+        self.visit_fn(&mut item.attrs, &mut item.sig, item.default.as_mut());
     }
 
     fn visit_item_struct_mut(&mut self, item: &mut syn::ItemStruct) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        begin_generics(self, &mut item.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.begin_type_item(&mut item.ident, &mut item.generics, &mut item.attrs);
         syn::visit_mut::visit_fields_mut(self, &mut item.fields);
         self.pop();
     }
 
     fn visit_item_enum_mut(&mut self, item: &mut syn::ItemEnum) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        begin_generics(self, &mut item.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.begin_type_item(&mut item.ident, &mut item.generics, &mut item.attrs);
         for variant in &mut item.variants {
             syn::visit_mut::visit_variant_mut(self, variant);
         }
@@ -759,38 +693,22 @@ impl VisitMut for Renamer {
     }
 
     fn visit_item_union_mut(&mut self, item: &mut syn::ItemUnion) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        begin_generics(self, &mut item.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.begin_type_item(&mut item.ident, &mut item.generics, &mut item.attrs);
         syn::visit_mut::visit_fields_named_mut(self, &mut item.fields);
         self.pop();
     }
 
     fn visit_item_type_mut(&mut self, item: &mut syn::ItemType) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        begin_generics(self, &mut item.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.begin_type_item(&mut item.ident, &mut item.generics, &mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         self.pop();
     }
 
     fn visit_item_trait_mut(&mut self, item: &mut syn::ItemTrait) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
+        let canon = self.rename_binder(Ns::Type, &mut item.ident);
         self.top_bind(Ns::Type, "Self", canon);
         begin_generics(self, &mut item.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.visit_attrs(&mut item.attrs);
         for trait_item in &mut item.items {
             syn::visit_mut::visit_trait_item_mut(self, trait_item);
         }
@@ -798,13 +716,7 @@ impl VisitMut for Renamer {
     }
 
     fn visit_item_trait_alias_mut(&mut self, item: &mut syn::ItemTraitAlias) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        begin_generics(self, &mut item.generics);
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.begin_type_item(&mut item.ident, &mut item.generics, &mut item.attrs);
         for bound in &mut item.bounds {
             syn::visit_mut::visit_type_param_bound_mut(self, bound);
         }
@@ -822,9 +734,7 @@ impl VisitMut for Renamer {
         if has_generics {
             begin_generics(self, &mut item.generics);
         }
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.visit_attrs(&mut item.attrs);
         if let Some((path, _)) = &mut item.trait_ {
             // The trait path of `impl Trait for Type` is a type position
             // given as a bare path, no visit_type_path_mut wraps it.
@@ -845,51 +755,34 @@ impl VisitMut for Renamer {
     }
 
     fn visit_item_const_mut(&mut self, item: &mut syn::ItemConst) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Value, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.rename_binder(Ns::Value, &mut item.ident);
+        self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
     }
 
     fn visit_item_static_mut(&mut self, item: &mut syn::ItemStatic) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Value, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.rename_binder(Ns::Value, &mut item.ident);
+        self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
     }
 
     fn visit_item_macro_mut(&mut self, item: &mut syn::ItemMacro) {
-        // `macro_rules! n {}` carries the name in `ident`; the legacy
-        // `macro n {}` form does not occur in doctests.
-        let Some(ident) = item.ident.as_mut() else {
-            // A call at item level is visited like any other.
-            for attr in &mut item.attrs {
-                self.visit_attribute_mut(attr);
-            }
+        // `macro_rules! n {}` carries the name in `ident` and a body of
+        // macro pattern syntax. The legacy `macro n {}` form does not occur
+        // in doctests. A call at item level is visited like any other.
+        if let Some(ident) = item.ident.as_mut() {
+            self.bind_ident(Ns::Macro, ident);
+            self.visit_attrs(&mut item.attrs);
+        } else {
+            self.visit_attrs(&mut item.attrs);
             self.visit_macro_mut(&mut item.mac);
-            return;
-        };
-        let name = ident.to_string();
-        let canon = self.bind(Ns::Macro, &name);
-        *ident = Ident::new(&canon, ident.span());
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
         }
-        // The definition body is macro pattern syntax, not Rust.
     }
 
     fn visit_item_use_mut(&mut self, item: &mut syn::ItemUse) {
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.visit_attrs(&mut item.attrs);
         let glob = syn::UseTree::Glob(syn::UseGlob {
             star_token: <syn::Token![*]>::default(),
         });
@@ -897,14 +790,10 @@ impl VisitMut for Renamer {
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
-        let name = item.ident.to_string();
-        let canon = self.bind_or_reuse(Ns::Type, &name);
-        item.ident = Ident::new(&canon, item.ident.span());
-        for attr in &mut item.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        let canon = self.rename_binder(Ns::Type, &mut item.ident);
+        self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
-            let frame = self.mod_frames.remove(&canon).unwrap_or_else(Frame::new);
+            let frame = self.mod_frames.remove(&canon).unwrap_or_default();
             self.frames.push(frame);
             for sub_item in items.iter_mut() {
                 syn::visit_mut::visit_item_mut(self, sub_item);
@@ -916,18 +805,11 @@ impl VisitMut for Renamer {
 
     fn visit_expr_closure_mut(&mut self, closure: &mut syn::ExprClosure) {
         self.push();
-        for param in closure
-            .lifetimes
-            .iter_mut()
-            .flat_map(|bound| bound.lifetimes.iter_mut())
-        {
-            if let syn::GenericParam::Lifetime(lifetime) = param {
-                let canon = self.bind(Ns::Lifetime, &lifetime.lifetime.ident.to_string());
-                lifetime.lifetime.ident = Ident::new(&canon, lifetime.lifetime.ident.span());
-            }
+        if let Some(bound) = &mut closure.lifetimes {
+            self.visit_bound_lifetimes_mut(bound);
         }
         let mut names = Vec::new();
-        for input in &closure.inputs {
+        for input in &mut closure.inputs {
             pattern_names(input, &mut names);
         }
         for name in &names {
@@ -943,14 +825,8 @@ impl VisitMut for Renamer {
     }
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
-        let mut names = Vec::new();
-        pattern_names(&arm.pat, &mut names);
         self.push();
-        for name in &names {
-            self.bind(Ns::Value, name);
-        }
-        syn::visit_mut::visit_pat_mut(self, &mut arm.pat);
-        rewrite_pat_bindings(self, &mut arm.pat);
+        self.bind_pat(&mut arm.pat);
         syn::visit_mut::visit_expr_mut(self, &mut arm.body);
         self.pop();
     }
@@ -958,15 +834,9 @@ impl VisitMut for Renamer {
     fn visit_expr_for_loop_mut(&mut self, for_loop: &mut syn::ExprForLoop) {
         // The iterable resolves under the outer bindings.
         syn::visit_mut::visit_expr_mut(self, &mut for_loop.expr);
-        let mut names = Vec::new();
-        pattern_names(&for_loop.pat, &mut names);
         self.push();
         self.bind_label(for_loop.label.as_mut());
-        for name in &names {
-            self.bind(Ns::Value, name);
-        }
-        syn::visit_mut::visit_pat_mut(self, &mut for_loop.pat);
-        rewrite_pat_bindings(self, &mut for_loop.pat);
+        self.bind_pat(&mut for_loop.pat);
         self.visit_block_mut(&mut for_loop.body);
         self.pop();
     }
@@ -1024,31 +894,26 @@ impl VisitMut for Renamer {
         // through the saved frame of the local module before it. A type
         // position reads the type namespace only, rustc-valid programs
         // bind every name they show there in it.
-        let (ns1, ns2) = if self.in_type {
-            (Ns::Type, None)
+        let ns: &[Ns] = if self.in_type {
+            &[Ns::Type]
         } else {
-            (Ns::Value, Some(Ns::Type))
+            &[Ns::Value, Ns::Type]
         };
-        let found = path.segments.first().and_then(|first| {
-            self.lookup(&[ns1], &first.ident.to_string())
-                .or_else(|| ns2.and_then(|ns2| self.lookup(&[ns2], &first.ident.to_string())))
-        });
         if path.leading_colon.is_none()
             && let Some(first) = path.segments.first_mut()
-            && let Some(mut canon) = found
+            && let Some(mut canon) = self.lookup(ns, &first.ident.to_string())
         {
-            first.ident = Ident::new(&canon, first.ident.span());
+            rename(&mut first.ident, &canon);
             for segment in path.segments.iter_mut().skip(1) {
-                let name = segment.ident.to_string();
-                let Some(next) = self.mod_frames.get(&canon).and_then(|frame| {
-                    frame
-                        .lookup(ns1, &name)
-                        .or_else(|| ns2.and_then(|ns2| frame.lookup(ns2, &name)))
-                }) else {
+                let Some(next) = self
+                    .mod_frames
+                    .get(&canon)
+                    .and_then(|frame| frame.lookup_any(ns, &segment.ident.to_string()))
+                else {
                     break;
                 };
                 canon = next.clone();
-                segment.ident = Ident::new(&canon, segment.ident.span());
+                rename(&mut segment.ident, &canon);
             }
         }
         for segment in &mut path.segments {
@@ -1079,10 +944,7 @@ impl VisitMut for Renamer {
 
     fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {
         if let Some(first) = mac.path.segments.first_mut() {
-            let name = first.ident.to_string();
-            if let Some(canon) = self.lookup(&[Ns::Macro], &name) {
-                first.ident = Ident::new(&canon, first.ident.span());
-            }
+            self.resolve(&[Ns::Macro], &mut first.ident);
         }
         let format_at = format_operand(&mac.path);
         mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
@@ -1109,16 +971,11 @@ impl VisitMut for Renamer {
     }
 
     fn visit_lifetime_mut(&mut self, lifetime: &mut syn::Lifetime) {
-        let name = lifetime.ident.to_string();
-        if let Some(canon) = self.lookup(&[Ns::Lifetime], &name) {
-            lifetime.ident = Ident::new(&canon, lifetime.ident.span());
-        }
+        self.resolve(&[Ns::Lifetime], &mut lifetime.ident);
     }
 
     fn visit_expr_break_mut(&mut self, node: &mut syn::ExprBreak) {
-        for attr in &mut node.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.visit_attrs(&mut node.attrs);
         if let Some(label) = &mut node.label {
             self.rename_label(label);
         }
@@ -1128,9 +985,7 @@ impl VisitMut for Renamer {
     }
 
     fn visit_expr_continue_mut(&mut self, node: &mut syn::ExprContinue) {
-        for attr in &mut node.attrs {
-            self.visit_attribute_mut(attr);
-        }
+        self.visit_attrs(&mut node.attrs);
         if let Some(label) = &mut node.label {
             self.rename_label(label);
         }
@@ -1143,9 +998,7 @@ impl VisitMut for Renamer {
     fn visit_bound_lifetimes_mut(&mut self, node: &mut syn::BoundLifetimes) {
         for param in &mut node.lifetimes {
             if let syn::GenericParam::Lifetime(lifetime) = param {
-                let name = lifetime.lifetime.ident.to_string();
-                let canon = self.bind(Ns::Lifetime, &name);
-                lifetime.lifetime.ident = Ident::new(&canon, lifetime.lifetime.ident.span());
+                self.bind_ident(Ns::Lifetime, &mut lifetime.lifetime.ident);
             }
         }
         syn::visit_mut::visit_bound_lifetimes_mut(self, node);

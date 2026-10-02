@@ -169,11 +169,10 @@ fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2:
                 out.extend(core::iter::once(proc_macro2::TokenTree::Punct(p)));
             }
             proc_macro2::TokenTree::Group(group) => {
-                let inner = flatten_stream(group.stream(), strip);
+                out.extend(core::iter::once(crate::drift::map_group(&group, |inner| {
+                    flatten_stream(inner, strip)
+                })));
                 strip = false;
-                let mut out_group = proc_macro2::Group::new(group.delimiter(), inner);
-                out_group.set_span(group.span());
-                out.extend(core::iter::once(proc_macro2::TokenTree::Group(out_group)));
             }
             proc_macro2::TokenTree::Literal(lit) => {
                 let kept = if strip {

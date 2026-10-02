@@ -17,6 +17,7 @@ use std::path::{Path, PathBuf};
 
 mod alpha;
 mod cfg;
+#[cfg(feature = "std")]
 mod config;
 #[cfg(feature = "std")]
 mod discover;
@@ -117,24 +118,16 @@ impl Dejadoc {
         };
         let mut targets = Vec::new();
         for target in &workspace.targets {
-            let mut files = Vec::new();
-            for (path, file, segments) in discover::module_tree(target)? {
-                files.push(SourceFile {
-                    path: path.to_string_lossy().into_owned(),
-                    segments,
-                    parsed: file,
-                });
-            }
             targets.push(TargetScan {
                 name: target.name.clone(),
-                files,
+                files: discover::module_tree(target)?,
             });
         }
         Ok(scan(
             &targets,
             &root_str,
-            threshold.or(cfg.threshold).unwrap_or(2),
-            min_tokens.or(cfg.min_tokens).unwrap_or(0),
+            threshold.or(cfg.threshold).unwrap_or(DEFAULT_THRESHOLD),
+            min_tokens.or(cfg.min_tokens).unwrap_or(DEFAULT_MIN_TOKENS),
             &read,
         ))
     }
@@ -152,18 +145,14 @@ impl Dejadoc {
             all_targets: _,
             threshold,
             min_tokens,
-            ..
         } = self;
-        let filtered: Vec<TargetScan> = targets
-            .iter()
-            .filter(|t| package.as_deref().is_none_or(|p| p == t.name))
-            .cloned()
-            .collect();
         scan(
-            &filtered,
+            targets
+                .iter()
+                .filter(|t| package.as_deref().is_none_or(|p| p == t.name)),
             root,
-            threshold.unwrap_or(2),
-            min_tokens.unwrap_or(0),
+            threshold.unwrap_or(DEFAULT_THRESHOLD),
+            min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
             read,
         )
     }
@@ -198,8 +187,14 @@ impl core::fmt::Debug for SourceFile {
     }
 }
 
-fn scan(
-    targets: &[TargetScan],
+/// Sites a group needs when no threshold is set.
+const DEFAULT_THRESHOLD: usize = 2;
+
+/// Token floor when no `min-tokens` is set.
+const DEFAULT_MIN_TOKENS: usize = 0;
+
+fn scan<'t>(
+    targets: impl IntoIterator<Item = &'t TargetScan>,
     root: &str,
     threshold: usize,
     min_tokens: usize,
@@ -230,39 +225,18 @@ fn scan(
 pub enum Error {
     /// The workspace could not be resolved.
     #[error("workspace: {0}")]
-    Workspace(#[source] cargo_metadata::Error),
+    Workspace(#[from] cargo_metadata::Error),
     /// A file could not be read.
     #[error("I/O: {0}")]
-    Io(#[source] std::io::Error),
+    Io(#[from] std::io::Error),
     /// The config file could not be read or parsed.
     #[error("config: {0}")]
-    Config(#[source] toml::de::Error),
+    Config(#[from] toml::de::Error),
 }
 
 /// A `Result` with [`Error`] as its default error type.
 #[cfg(feature = "std")]
 pub type Result<T, E = Error> = std::result::Result<T, E>;
-
-#[cfg(feature = "std")]
-impl From<std::io::Error> for Error {
-    fn from(err: std::io::Error) -> Self {
-        Error::Io(err)
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<cargo_metadata::Error> for Error {
-    fn from(err: cargo_metadata::Error) -> Self {
-        Error::Workspace(err)
-    }
-}
-
-#[cfg(feature = "std")]
-impl From<toml::de::Error> for Error {
-    fn from(err: toml::de::Error) -> Self {
-        Error::Config(err)
-    }
-}
 
 /// A doctest block as found in one doc site.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
@@ -408,9 +382,8 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn config_loads_values_immediately() {
-        let dir = std::env::temp_dir().join("dejadoc-config-immediate");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("config.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("config.toml");
         std::fs::write(&file, "threshold = 10\n").unwrap();
         let targets = vec![
             scan_target("alpha", "alpha/src/lib.rs", &[], "one"),
@@ -430,30 +403,32 @@ mod tests {
             .threshold(2)
             .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(report.groups.len(), 1);
-        std::fs::remove_file(&file).unwrap();
     }
 
     #[test]
     #[cfg(feature = "std")]
     fn config_bad_toml_fails_at_build() {
-        let dir = std::env::temp_dir().join("dejadoc-config-immediate");
-        std::fs::create_dir_all(&dir).unwrap();
-        let file = dir.join("bad.toml");
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("bad.toml");
         std::fs::write(&file, "threshold = \"high\"\n").unwrap();
         let err = Dejadoc::default().config(&file).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
-        std::fs::remove_file(&file).unwrap();
     }
 
     fn scan_target(name: &str, path: &str, segments: &[&str], item: &str) -> TargetScan {
         let src =
             format!("/// Doc.\n///\n/// ```\n/// fn dup() {{}}\n/// ```\npub fn {item}() {{}}\n");
+        target_from(name, path, segments, &src)
+    }
+
+    /// A one-file target parsed from `src`.
+    fn target_from(name: &str, path: &str, segments: &[&str], src: &str) -> TargetScan {
         TargetScan {
             name: name.to_string(),
             files: vec![SourceFile {
                 path: path.to_string(),
                 segments: segments.iter().map(ToString::to_string).collect(),
-                parsed: match syn::parse_str(&src) {
+                parsed: match syn::parse_str(src) {
                     Ok(parsed) => parsed,
                     Err(err) => panic!("parse fixture: {err}"),
                 },
@@ -529,23 +504,13 @@ mod tests {
 
     #[test]
     fn run_targets_groups_alpha_equivalent_doctests() {
-        let mk = |name: &str, body: &str| {
+        let target = |name: &str, body: &str| {
             let src = format!("/// ```\n/// {body}\n/// ```\npub fn f() {{}}\n");
-            TargetScan {
-                name: name.to_string(),
-                files: vec![SourceFile {
-                    path: format!("{name}/src/lib.rs"),
-                    segments: Vec::new(),
-                    parsed: match syn::parse_str(&src) {
-                        Ok(parsed) => parsed,
-                        Err(err) => panic!("parse fixture: {err}"),
-                    },
-                }],
-            }
+            target_from(name, &format!("{name}/src/lib.rs"), &[], &src)
         };
         let targets = vec![
-            mk("alpha", "let pino = 1; pino + 1"),
-            mk("beta", "let abete = 1; abete + 1"),
+            target("alpha", "let pino = 1; pino + 1"),
+            target("beta", "let abete = 1; abete + 1"),
         ];
         let report = Dejadoc::default().run_targets("", &targets, &|_file, _inc| None);
         assert_eq!(report.total, 2);

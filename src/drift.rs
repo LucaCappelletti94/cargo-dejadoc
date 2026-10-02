@@ -9,6 +9,13 @@ use proc_macro2::{Group, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::visit_mut::VisitMut;
 
+/// `group` with its stream mapped through `f`, delimiter and span kept.
+pub(crate) fn map_group(group: &Group, f: impl FnOnce(TokenStream) -> TokenStream) -> TokenTree {
+    let mut rebuilt = Group::new(group.delimiter(), f(group.stream()));
+    rebuilt.set_span(group.span());
+    TokenTree::Group(rebuilt)
+}
+
 /// Drop the trailing comma of every token group. A one-tuple keeps its
 /// meaning because the fold of redundant parentheses already separates
 /// it from the parenthesised expression of the same element.
@@ -16,12 +23,9 @@ pub(crate) fn strip_trailing_commas(stream: TokenStream) -> TokenStream {
     stream
         .into_iter()
         .map(|tree| match tree {
-            TokenTree::Group(group) => {
-                let inner = strip_last_comma(strip_trailing_commas(group.stream()));
-                let mut rebuilt = Group::new(group.delimiter(), inner);
-                rebuilt.set_span(group.span());
-                TokenTree::Group(rebuilt)
-            }
+            TokenTree::Group(group) => map_group(&group, |inner| {
+                strip_last_comma(strip_trailing_commas(inner))
+            }),
             other => other,
         })
         .collect()
@@ -57,12 +61,7 @@ pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
                     Err(_) => TokenTree::Literal(lit),
                 }
             }
-            TokenTree::Group(group) if !opaque => {
-                let span = group.span();
-                let mut rebuilt = Group::new(group.delimiter(), canonical_literals(group.stream()));
-                rebuilt.set_span(span);
-                TokenTree::Group(rebuilt)
-            }
+            TokenTree::Group(group) if !opaque => map_group(&group, canonical_literals),
             other => other,
         };
         opaque = matches!(&tree, TokenTree::Punct(p) if matches!(p.as_char(), '!' | '#'));
@@ -547,38 +546,14 @@ fn hoist_uses<T>(
     list.extend(rest);
 }
 
-/// True when every attribute on `item` would be removed by
-/// `strip_inert_attrs`, meaning hoisting it cannot move an attribute
-/// that references a local binding. `use` items never reach here,
-/// `hoist_uses` has already taken them.
-fn item_has_only_inert_attrs(item: &syn::Item) -> bool {
-    let attrs: &[syn::Attribute] = match item {
-        syn::Item::Const(v) => &v.attrs,
-        syn::Item::Enum(v) => &v.attrs,
-        syn::Item::ExternCrate(v) => &v.attrs,
-        syn::Item::Fn(v) => &v.attrs,
-        syn::Item::ForeignMod(v) => &v.attrs,
-        syn::Item::Impl(v) => &v.attrs,
-        syn::Item::Mod(v) => &v.attrs,
-        syn::Item::Static(v) => &v.attrs,
-        syn::Item::Struct(v) => &v.attrs,
-        syn::Item::Trait(v) => &v.attrs,
-        syn::Item::TraitAlias(v) => &v.attrs,
-        syn::Item::Type(v) => &v.attrs,
-        syn::Item::Union(v) => &v.attrs,
-        _ => return true,
-    };
-    attrs.iter().all(is_inert_attr)
-}
-
 /// Hoist non-`use`, non-`macro_rules!` item statements that appear before
 /// the first `macro_rules!` definition in a block to the front, right
 /// after the sorted `use` items placed there by `hoist_uses`.
 ///
-/// Only items whose attributes are all inert are hoisted. An item with a
-/// non-inert attribute may have an argument that references a local
-/// binding; hoisting it before that binding changes the visit order and
-/// breaks alpha renaming.
+/// Only items whose attributes `strip_inert_attrs` would all remove are
+/// hoisted. A live attribute may reference a local binding, and hoisting
+/// it before that binding changes the visit order and breaks alpha
+/// renaming.
 ///
 /// Items in that region move to the front in their original relative order
 /// among items. Non-item statements follow them in their original relative
@@ -601,9 +576,11 @@ fn hoist_block_items(stmts: &mut Vec<syn::Stmt>) {
 
     let mut items = Vec::new();
     let mut rest = Vec::new();
-    for stmt in region {
-        let hoistable = match &stmt {
-            syn::Stmt::Item(item) => item_has_only_inert_attrs(item),
+    for mut stmt in region {
+        let hoistable = match &mut stmt {
+            syn::Stmt::Item(item) => {
+                item_attrs(item).is_none_or(|attrs| attrs.iter().all(is_inert_attr))
+            }
             _ => false,
         };
         if hoistable {
