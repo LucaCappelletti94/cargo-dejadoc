@@ -504,6 +504,15 @@ mod tests {
     }
 
     #[test]
+    fn a_radix_literal_whose_suffix_misreads_in_decimal_keeps_its_spelling() {
+        // In decimal `0b0buu` reads as a binary prefix, `0o7e3` as a float,
+        // `0b0x1` and `0b0x0` as hex literals.
+        for literal in ["0b0buu", "0o7e3", "0b0x1", "0b0x0"] {
+            assert!(canonicalize(literal).text.contains(literal), "{literal}");
+        }
+    }
+
+    #[test]
     fn float_trailing_dot_and_dot_zero_agree() {
         assert_eq!(canonicalize("1.").text, canonicalize("1.0").text);
     }
