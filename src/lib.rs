@@ -266,7 +266,8 @@ pub struct Group {
     pub id: String,
     /// Full blake3 hex of the canonical form.
     pub hash: String,
-    /// True when the canonical form came from the text fallback.
+    /// True when the canonical form came from the text fallback, for a body
+    /// that does not parse or exceeds the nesting or token cap.
     pub unparsed: bool,
     /// Token count of the canonical form.
     pub tokens: usize,
@@ -302,9 +303,45 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 /// `min_tokens`, and groups under `threshold`.
 ///
 /// Blocks sharing a file and line are one doc block reached through several
-/// items, so only the first is kept.
+/// items, so only the first is kept. With the `std` feature the
+/// canonicalization runs on a thread with a 1 GiB reserved stack, falling
+/// back to the calling thread when the system refuses that thread.
+///
+/// # Panics
+///
+/// Panics when canonicalization panics, a bug in this crate.
 #[must_use]
 pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
+    #[cfg(feature = "std")]
+    {
+        group_on_stack(blocks, threshold, min_tokens, GROUP_STACK)
+    }
+    #[cfg(not(feature = "std"))]
+    group_here(blocks, threshold, min_tokens)
+}
+
+/// `group` on a thread with `stack` reserved, or on the calling thread when
+/// the system refuses that thread.
+#[cfg(feature = "std")]
+fn group_on_stack(blocks: &[DocTest], threshold: usize, min_tokens: usize, stack: usize) -> Report {
+    std::thread::scope(|scope| {
+        let worker = std::thread::Builder::new()
+            .stack_size(stack)
+            .spawn_scoped(scope, || group_here(blocks, threshold, min_tokens));
+        match worker {
+            Ok(worker) => worker.join().expect("canonicalization does not panic"),
+            Err(_) => group_here(blocks, threshold, min_tokens),
+        }
+    })
+}
+
+/// Stack reserved for canonicalization, room for `MAX_NESTING` and
+/// `MAX_TOKENS` bodies with a wide margin even in a debug build.
+#[cfg(any(test, feature = "std"))]
+const GROUP_STACK: usize = 1 << 30;
+
+/// `group` on the calling thread's stack.
+fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     let mut by_site: BTreeMap<(&str, u32), &DocTest> = BTreeMap::new();
     for block in blocks {
         by_site
@@ -645,5 +682,32 @@ mod tests {
         assert_eq!(report.groups, Vec::new());
         assert_eq!(report.unique, 2);
         assert_eq!(report.total, 2);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn a_long_closure_chain_canonicalizes_on_a_small_caller_stack() {
+        // 5,000 chained closures overflow even an 8 MiB stack in a debug build.
+        let code = format!("let f = {}1;", "|x| ".repeat(5000));
+        let report = std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || group(&[dt("a.rs", 1, "m::a", &code, false)], 1, 0))
+            .unwrap()
+            .join()
+            .unwrap();
+        assert!(!report.groups[0].unparsed);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn a_refused_worker_thread_falls_back_to_the_calling_thread() {
+        let blocks = vec![
+            dt("a.rs", 1, "m::a", "let x = 1;", false),
+            dt("b.rs", 2, "m::b", "let y = 1;", false),
+        ];
+        // No system reserves half the address space for one thread's stack.
+        let refused = group_on_stack(&blocks, 2, 0, usize::MAX / 2);
+        assert_eq!(refused, group(&blocks, 2, 0));
+        assert_eq!(refused.groups.len(), 1);
     }
 }
