@@ -721,6 +721,27 @@ mod tests {
     }
 
     #[test]
+    fn a_block_arm_comma_merges() {
+        let a = canonicalize("match 1 { 1 => {}, _ => {} }");
+        let b = canonicalize("match 1 { 1 => {} _ => {} }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_unwrapped_arm_block_merges_with_the_comma_form() {
+        let a = canonicalize("match v { 1 => { foo() } _ => 0 }");
+        let b = canonicalize("match v { 1 => foo(), _ => 0 }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_tail_return_arm_block_merges_with_the_comma_form() {
+        let a = canonicalize("fn f(v: u8) -> u8 { match v { 1 => { return 2; } _ => 0 } }");
+        let b = canonicalize("fn f(v: u8) -> u8 { match v { 1 => 2, _ => 0 } }");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
     fn doc_comment_on_local_fn_merges() {
         let a = canonicalize("/// Doc comment.\nfn f() -> u8 { 1 }");
         let b = canonicalize("fn f() -> u8 { 1 }");
@@ -1968,6 +1989,107 @@ fn f() {}"#,
         let a = canonicalize("let x = 1;\nwrite!(out, \"{x}\").unwrap();\n");
         let b = canonicalize("let y = 1;\nwrite!(out, \"{y}\").unwrap();\n");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_positional_identifier_argument_merges_with_its_inline_form() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{}\", x);\n");
+        let b = canonicalize("let x = 1;\nprintln!(\"{x}\");\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_inlined_argument_keeps_its_spec() {
+        let a = canonicalize("let x = 1;\nlet s = format!(\"{:?}\", x);\n");
+        let b = canonicalize("let x = 1;\nlet s = format!(\"{x:?}\");\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn only_identifier_arguments_inline() {
+        let a = canonicalize("let x = 1;\nwrite!(out, \"{} {}\", x, x + 1).unwrap();\n");
+        let b = canonicalize("let x = 1;\nwrite!(out, \"{x} {}\", x + 1).unwrap();\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn inlining_composes_with_alpha_renaming() {
+        let a = canonicalize("let pino = 1;\nprintln!(\"{}\", pino);\n");
+        let b = canonicalize("let abete = 1;\nprintln!(\"{abete}\");\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_format_call_inside_a_macro_argument_inlines() {
+        let a = canonicalize("let x = 1;\nassert_eq!(format!(\"{}\", x), \"1\");\n");
+        let b = canonicalize("let x = 1;\nassert_eq!(format!(\"{x}\"), \"1\");\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_panic_message_does_not_inline() {
+        // Before edition 2021 a lone `panic!("{x}")` literal is no format string.
+        let a = canonicalize("let x = 1;\npanic!(\"{}\", x);\n");
+        let b = canonicalize("let x = 1;\npanic!(\"{x}\");\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_width_argument_blocks_inlining() {
+        let a = canonicalize("let x = 1;\nlet w = 4;\nprintln!(\"{:1$}\", x, w);\n");
+        let b = canonicalize("let x = 1;\nlet w = 4;\nprintln!(\"{x:1$}\", w);\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_raw_identifier_argument_stays_positional() {
+        let a = canonicalize("let r#type = 1;\nprintln!(\"{}\", r#type);\n");
+        assert!(a.text.contains("\"{}\""), "{}", a.text);
+    }
+
+    #[test]
+    fn inline_names_in_panic_and_assert_messages_rename() {
+        let a = canonicalize("let x = 1;\npanic!(\"{x}\");\n");
+        let b = canonicalize("let y = 1;\npanic!(\"{y}\");\n");
+        assert_eq!(a.text, b.text);
+        let a = canonicalize("let x = 1;\nassert!(x == 1, \"{x}\");\n");
+        let b = canonicalize("let y = 1;\nassert!(y == 1, \"{y}\");\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_qualified_path_argument_stays_positional() {
+        let a = canonicalize("println!(\"{}\", <S>::C);\n");
+        let b = canonicalize("println!(\"{C}\");\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_attributed_argument_stays_positional() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{}\", #[cfg(unix)] x);\n");
+        let b = canonicalize("let x = 1;\nprintln!(\"{x}\");\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn escaped_braces_survive_inlining() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{{}} {}\", x);\n");
+        let b = canonicalize("let x = 1;\nprintln!(\"{{}} {x}\");\n");
+        assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_explicit_index_blocks_inlining() {
+        let a = canonicalize("let x = 1;\nprintln!(\"{0} {}\", x);\n");
+        let b = canonicalize("let x = 1;\nprintln!(\"{0} {x}\");\n");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
+    fn an_unused_argument_blocks_inlining() {
+        let a = canonicalize("let x = 1;\nlet y = 2;\nprintln!(\"{}\", x, y);\n");
+        let b = canonicalize("let x = 1;\nlet y = 2;\nprintln!(\"{x}\", y);\n");
+        assert_ne!(a.text, b.text);
     }
 
     #[test]
