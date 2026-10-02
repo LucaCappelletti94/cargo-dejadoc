@@ -87,22 +87,35 @@ impl Dejadoc {
     }
 
     /// Scan `root` (any directory inside the workspace) and report
-    /// duplicated doctests.
+    /// duplicated doctests. Discovery, parsing and extraction run on the
+    /// thread `group` would use, so a deeply nested source file does not
+    /// end the caller's stack.
     ///
     /// # Errors
     ///
     /// Fails when `cargo metadata` cannot resolve the workspace, when the
     /// config cannot be read or parsed, or when a module file cannot be
     /// canonicalized.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the scan panics, a bug in this crate.
     #[cfg(feature = "std")]
     pub fn run(self, root: impl AsRef<Path>) -> Result<Report> {
+        let root = root.as_ref();
+        on_large_stack(GROUP_STACK, || self.clone().run_here(root))
+    }
+
+    /// `run` on the calling thread's stack.
+    #[cfg(feature = "std")]
+    fn run_here(self, root: &Path) -> Result<Report> {
         let Self {
             package,
             all_targets,
             threshold,
             min_tokens,
         } = self;
-        let workspace = discover::workspace(root.as_ref(), package.as_deref(), all_targets)?;
+        let workspace = discover::workspace(root, package.as_deref(), all_targets)?;
         let cfg = config::load(&workspace.root.join(".dejadoc.toml"))?;
         let root_str = workspace.root.to_string_lossy().into_owned();
         let read = |file: &str, p: &str| -> Option<(String, String)> {
@@ -123,12 +136,10 @@ impl Dejadoc {
                 files: discover::module_tree(target)?,
             });
         }
-        Ok(scan(
-            &targets,
-            &root_str,
+        Ok(group_here(
+            &extract_all(&targets, &root_str, &read),
             threshold.or(cfg.threshold).unwrap_or(DEFAULT_THRESHOLD),
             min_tokens.or(cfg.min_tokens).unwrap_or(DEFAULT_MIN_TOKENS),
-            &read,
         ))
     }
 
@@ -146,14 +157,17 @@ impl Dejadoc {
             threshold,
             min_tokens,
         } = self;
-        scan(
+        let blocks = extract_all(
             targets
                 .iter()
                 .filter(|t| package.as_deref().is_none_or(|p| p == t.name)),
             root,
+            read,
+        );
+        group(
+            &blocks,
             threshold.unwrap_or(DEFAULT_THRESHOLD),
             min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
-            read,
         )
     }
 }
@@ -193,13 +207,12 @@ const DEFAULT_THRESHOLD: usize = 2;
 /// Token floor when no `min-tokens` is set.
 const DEFAULT_MIN_TOKENS: usize = 0;
 
-fn scan<'t>(
+/// The doctests of every file of `targets`.
+fn extract_all<'t>(
     targets: impl IntoIterator<Item = &'t TargetScan>,
     root: &str,
-    threshold: usize,
-    min_tokens: usize,
     read: &IncludeRead<'_>,
-) -> Report {
+) -> Vec<DocTest> {
     let mut blocks = Vec::new();
     for target in targets {
         for file in &target.files {
@@ -216,7 +229,7 @@ fn scan<'t>(
             ));
         }
     }
-    group(&blocks, threshold, min_tokens)
+    blocks
 }
 
 /// Failure of a scan.
@@ -314,29 +327,30 @@ pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
 pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report {
     #[cfg(feature = "std")]
     {
-        group_on_stack(blocks, threshold, min_tokens, GROUP_STACK)
+        on_large_stack(GROUP_STACK, || group_here(blocks, threshold, min_tokens))
     }
     #[cfg(not(feature = "std"))]
     group_here(blocks, threshold, min_tokens)
 }
 
-/// `group` on a thread with `stack` reserved, or on the calling thread when
-/// the system refuses that thread.
+/// `f` on a thread with `stack` reserved, or on the calling thread when the
+/// system refuses that thread.
 #[cfg(feature = "std")]
-fn group_on_stack(blocks: &[DocTest], threshold: usize, min_tokens: usize, stack: usize) -> Report {
+fn on_large_stack<T: Send>(stack: usize, f: impl Fn() -> T + Sync) -> T {
     std::thread::scope(|scope| {
-        let worker = std::thread::Builder::new()
+        match std::thread::Builder::new()
             .stack_size(stack)
-            .spawn_scoped(scope, || group_here(blocks, threshold, min_tokens));
-        match worker {
-            Ok(worker) => worker.join().expect("canonicalization does not panic"),
-            Err(_) => group_here(blocks, threshold, min_tokens),
+            .spawn_scoped(scope, &f)
+        {
+            Ok(worker) => worker.join().expect("the scan does not panic"),
+            Err(_) => f(),
         }
     })
 }
 
-/// Stack reserved for canonicalization, room for `MAX_NESTING` and
-/// `MAX_TOKENS` bodies with a wide margin even in a debug build.
+/// Stack reserved for discovery and canonicalization, room for deeply nested
+/// source files and for `MAX_NESTING` and `MAX_TOKENS` bodies with a wide
+/// margin even in a debug build.
 #[cfg(any(test, feature = "std"))]
 const GROUP_STACK: usize = 1 << 30;
 
@@ -706,8 +720,33 @@ mod tests {
             dt("b.rs", 2, "m::b", "let y = 1;", false),
         ];
         // No system reserves half the address space for one thread's stack.
-        let refused = group_on_stack(&blocks, 2, 0, usize::MAX / 2);
+        let refused = on_large_stack(usize::MAX / 2, || group_here(&blocks, 2, 0));
         assert_eq!(refused, group(&blocks, 2, 0));
         assert_eq!(refused.groups.len(), 1);
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn a_deeply_nested_source_file_scans_on_a_small_caller_stack() {
+        // 5,000 nested blocks overflow even an 8 MiB stack while `syn` parses them.
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("src")).unwrap();
+        std::fs::write(
+            dir.path().join("Cargo.toml"),
+            "[package]\nname = \"deep\"\nversion = \"0.1.0\"\nedition = \"2021\"\n[workspace]\n",
+        )
+        .unwrap();
+        let body = format!("{}1{}", "{".repeat(5000), "}".repeat(5000));
+        let lib = format!("/// ```\n/// let x = 1;\n/// ```\npub fn f() -> u8 {{ {body} }}\n");
+        std::fs::write(dir.path().join("src").join("lib.rs"), lib).unwrap();
+        let root = dir.path().to_path_buf();
+        let report = std::thread::Builder::new()
+            .stack_size(2 << 20)
+            .spawn(move || Dejadoc::default().run(root))
+            .unwrap()
+            .join()
+            .unwrap()
+            .unwrap();
+        assert_eq!(report.total, 1);
     }
 }
