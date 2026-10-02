@@ -274,18 +274,6 @@ impl quote::ToTokens for MacroArgs {
     }
 }
 
-/// Index of the format string among the arguments of a std macro.
-fn format_operand(path: &syn::Path) -> Option<usize> {
-    let name = path.segments.last()?.ident.to_string();
-    match name.as_str() {
-        "print" | "println" | "eprint" | "eprintln" | "format" | "format_args" | "panic"
-        | "unreachable" | "todo" | "unimplemented" => Some(0),
-        "write" | "writeln" | "assert" | "debug_assert" => Some(1),
-        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => Some(2),
-        _ => None,
-    }
-}
-
 /// `name` as its bound canon, else as written.
 fn push_format_name(renamer: &Renamer, name: &str, out: &mut String) {
     out.push_str(
@@ -946,7 +934,7 @@ impl VisitMut for Renamer {
         if let Some(first) = mac.path.segments.first_mut() {
             self.resolve(&[Ns::Macro], &mut first.ident);
         }
-        let format_at = format_operand(&mac.path);
+        let format_at = crate::drift::format_operand(&mac.path).map(|(at, _)| at);
         mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
     }
 

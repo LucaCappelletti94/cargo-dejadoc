@@ -283,11 +283,13 @@ impl VisitMut for Drift {
 
     fn visit_expr_macro_mut(&mut self, node: &mut syn::ExprMacro) {
         normalize_macro_delim(&mut node.mac);
+        inline_format_args(&mut node.mac);
         syn::visit_mut::visit_expr_macro_mut(self, node);
     }
 
     fn visit_stmt_macro_mut(&mut self, node: &mut syn::StmtMacro) {
         normalize_macro_delim(&mut node.mac);
+        inline_format_args(&mut node.mac);
         syn::visit_mut::visit_stmt_macro_mut(self, node);
     }
 
@@ -640,4 +642,152 @@ fn normalize_macro_delim(mac: &mut syn::Macro) {
     }
     let span = *mac.delimiter.span();
     mac.delimiter = syn::MacroDelimiter::Paren(syn::token::Paren { span });
+}
+
+/// The format string's index among a std formatting macro's arguments, and
+/// whether the macro is a panic, whose lone literal before edition 2021 is
+/// no format string.
+pub(crate) fn format_operand(path: &syn::Path) -> Option<(usize, bool)> {
+    let name = path.segments.last()?.ident.to_string();
+    Some(match name.as_str() {
+        "print" | "println" | "eprint" | "eprintln" | "format" | "format_args" => (0, false),
+        "write" | "writeln" => (1, false),
+        "panic" | "unreachable" | "todo" | "unimplemented" => (0, true),
+        "assert" | "debug_assert" => (1, true),
+        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => (2, true),
+        _ => return None,
+    })
+}
+
+/// Move identifier arguments of a formatting macro into its format string,
+/// `println!("{}", x)` becoming `println!("{x}")`, in `mac` and in every
+/// formatting call among its arguments. Returns whether `mac` changed.
+fn inline_format_args(mac: &mut syn::Macro) -> bool {
+    use syn::parse::Parser;
+
+    let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
+    let Ok(mut args) = parser.parse2(mac.tokens.clone()) else {
+        return false;
+    };
+    let mut nested = NestedFormat(false);
+    for arg in &mut args {
+        nested.visit_expr_mut(arg);
+    }
+    let inlined = inline_positional(&mac.path, &mut args);
+    if nested.0 || inlined {
+        mac.tokens = args.to_token_stream();
+    }
+    nested.0 || inlined
+}
+
+/// Inlines the formatting calls inside a macro's arguments, which the
+/// drift visit never enters.
+struct NestedFormat(bool);
+
+impl VisitMut for NestedFormat {
+    fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {
+        self.0 |= inline_format_args(mac);
+    }
+}
+
+/// Inline the identifier arguments of `args` when `path` names a non-panic
+/// formatting macro. Returns whether anything moved.
+fn inline_positional(
+    path: &syn::Path,
+    args: &mut syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
+) -> bool {
+    let Some((at, false)) = format_operand(path) else {
+        return false;
+    };
+    let positional: Vec<&syn::Expr> = args.iter().skip(at + 1).collect();
+    if positional
+        .iter()
+        .any(|arg| matches!(arg, syn::Expr::Assign(_)))
+    {
+        return false;
+    }
+    let names: Vec<Option<String>> = positional.into_iter().map(capturable).collect();
+    let Some(syn::Expr::Lit(syn::ExprLit {
+        lit: syn::Lit::Str(format),
+        ..
+    })) = args.iter_mut().nth(at)
+    else {
+        return false;
+    };
+    let Some(text) = inline_placeholders(&format.value(), &names) else {
+        return false;
+    };
+    *format = syn::LitStr::new(&text, format.span());
+    let kept = core::mem::take(args)
+        .into_iter()
+        .enumerate()
+        .filter(|(index, _)| *index <= at || names[index - at - 1].is_none())
+        .map(|(_, arg)| arg);
+    args.extend(kept);
+    true
+}
+
+/// The identifier a format string captures for `arg`, `None` for any other
+/// expression and for the names a placeholder cannot spell.
+fn capturable(arg: &syn::Expr) -> Option<String> {
+    let syn::Expr::Path(path) = arg else {
+        return None;
+    };
+    if !path.attrs.is_empty() {
+        return None;
+    }
+    let name = path.path.get_ident()?.to_string();
+    let spellable =
+        !name.starts_with("r#") && !matches!(name.as_str(), "self" | "Self" | "crate" | "super");
+    spellable.then_some(name)
+}
+
+/// `format` with each implicit `{}` or `{:spec}` placeholder whose argument
+/// in `names` is an identifier spelled inline. `None` when nothing moves, or
+/// when an explicit index, a `$` or `*` spec or a count mismatch makes the
+/// argument order matter.
+fn inline_placeholders(format: &str, names: &[Option<String>]) -> Option<String> {
+    let mut out = String::with_capacity(format.len());
+    let mut next = 0;
+    let mut chars = format.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '{' | '}' if chars.peek() == Some(&c) => {
+                chars.next();
+                out.push(c);
+                out.push(c);
+            }
+            '{' => {
+                let mut body = String::new();
+                loop {
+                    match chars.next()? {
+                        '}' => break,
+                        c => body.push(c),
+                    }
+                }
+                let (arg, spec) = body
+                    .split_once(':')
+                    .map_or((body.as_str(), None), |(a, s)| (a, Some(s)));
+                let explicit_index = !arg.is_empty() && arg.bytes().all(|b| b.is_ascii_digit());
+                if explicit_index || spec.is_some_and(|spec| spec.contains(['$', '*'])) {
+                    return None;
+                }
+                out.push('{');
+                if arg.is_empty() {
+                    out.push_str(names.get(next)?.as_deref().unwrap_or_default());
+                    next += 1;
+                } else {
+                    out.push_str(arg);
+                }
+                if let Some(spec) = spec {
+                    out.push(':');
+                    out.push_str(spec);
+                }
+                out.push('}');
+            }
+            '}' => return None,
+            c => out.push(c),
+        }
+    }
+    (next == names.len() && names.iter().any(Option::is_some)).then_some(out)
 }
