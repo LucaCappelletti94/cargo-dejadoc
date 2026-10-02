@@ -523,11 +523,11 @@ fn unindent(text: &str) -> String {
 
 /// Strip the star prefix of a `/** */` block doc, mirroring rustdoc's
 /// `beautify_doc_string`. The fragment kind is unrecoverable from the
-/// token stream, so the strip runs only when the value is multiline
-/// and every line between the first and last non-blank lines carries
-/// its star at one column after spaces or tabs. An all-star first or
-/// last line becomes a blank line; the line count is preserved so
-/// per-line source attribution holds.
+/// token stream, so the strip runs only when the value is multiline and
+/// every line it trims to carries its star at one column after spaces
+/// or tabs. Like rustdoc it skips a first line not starting with a star
+/// and the blank lines at both ends. An all-star first or last line
+/// becomes a blank line, so per-line source attribution holds.
 fn block_star_strip(text: &str) -> String {
     if !text.contains('\n') {
         return text.to_string();
@@ -545,15 +545,19 @@ fn block_star_strip(text: &str) -> String {
         lines[len - 1].clear();
         changed = true;
     }
-    // Horizontal range: the lines between the first and last non-blank.
+    // Horizontal range: the first line only when it starts with a star,
+    // then without blank lines at either end.
+    let start = usize::from(!lines[0].trim_start().starts_with('*'));
+    let blank = |l: &String| l.trim().is_empty();
     let from = lines
         .iter()
-        .position(|l| !l.trim().is_empty())
-        .unwrap_or(len);
+        .skip(start)
+        .position(|l| !blank(l))
+        .map_or(len, |p| start + p);
     let to = lines
         .iter()
-        .rposition(|l| !l.trim().is_empty())
-        .map_or(from, |p| p + 1);
+        .rposition(|l| !blank(l))
+        .map_or(from, |p| from.max(p + 1));
     let mut star_col: Option<usize> = None;
     for line in &lines[from..to] {
         let mut found = false;
@@ -1260,6 +1264,25 @@ mod tests {
     }
 
     #[test]
+    fn block_doc_text_on_the_opening_line_still_strips() {
+        let src = "/** intro\n * ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 2, "mycrate::f", &[], "let x = 1;", false)]
+        );
+    }
+
+    #[test]
+    fn block_doc_fence_on_the_opening_line_strips_its_body() {
+        let src = "/** ```\n * let x = 1;\n * ``` */\npub fn f() {}\n";
+        // rustdoc keeps the space after the star when the fence opens on the `/**` line.
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 1, "mycrate::f", &[], " let x = 1;", false)]
+        );
+    }
+
+    #[test]
     fn block_doc_inconsistent_star_column_is_kept() {
         let src = "/**\n * A.\n** B.\n */\npub fn f() {}\n";
         assert_eq!(run(src), vec![]);
@@ -1351,6 +1374,21 @@ mod tests {
                 false
             )]
         );
+    }
+
+    #[test]
+    fn block_doc_blank_second_line_still_strips() {
+        let src = "/**\n\n * ```\n * let x = 1;\n * ```\n */\npub fn f() {}\n";
+        assert_eq!(
+            run(src),
+            vec![dt("src/lib.rs", 3, "mycrate::f", &[], "let x = 1;", false)]
+        );
+    }
+
+    #[test]
+    fn block_doc_with_only_a_blank_line_after_its_text_has_no_doctest() {
+        let src = "/** x\n   */\npub fn f() {}\n";
+        assert_eq!(run(src), vec![]);
     }
 
     #[test]
