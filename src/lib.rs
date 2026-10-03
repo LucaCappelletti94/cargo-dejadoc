@@ -284,7 +284,8 @@ pub struct Group {
     pub unparsed: bool,
     /// Token count of the canonical form.
     pub tokens: usize,
-    /// All sites, ordered by file and line.
+    /// All sites, the one to keep first. Sites whose code names their own
+    /// item come first, file and line order breaks ties.
     pub sites: Vec<DocTest>,
 }
 
@@ -388,6 +389,7 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         .filter(|(_, (_, _, sites))| sites.len() >= threshold)
         .map(|(hash, (unparsed, tokens, mut sites))| {
             sites.sort_by(|a, b| (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line)));
+            sites.sort_by_cached_key(|site| !names_its_item(site));
             Group {
                 id: hash[..8].to_string(),
                 hash,
@@ -402,6 +404,17 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         unique: unique.len(),
         groups,
     }
+}
+
+/// Whether `site`'s code names its item, the last word of the item path
+/// appearing as a whole word. A copy that names another item was most
+/// likely copied from it, so the one naming its own item is kept.
+fn names_its_item(site: &DocTest) -> bool {
+    let word = |c: char| c.is_alphanumeric() || c == '_';
+    site.item
+        .rsplit(|c: char| !word(c))
+        .find(|name| !name.is_empty())
+        .is_some_and(|name| site.code.split(|c: char| !word(c)).any(|w| w == name))
 }
 
 #[cfg(test)]
@@ -651,6 +664,48 @@ mod tests {
                 ("a.rs".to_string(), 4),
                 ("b.rs".to_string(), 9)
             ]
+        );
+    }
+
+    #[test]
+    fn a_site_naming_its_item_comes_first() {
+        let order = |blocks: &[DocTest]| -> Vec<String> {
+            group(blocks, 2, 0).groups[0]
+                .sites
+                .iter()
+                .map(|s| s.item.clone())
+                .collect()
+        };
+        // A test copied from `parse` onto `lex` names only `parse`.
+        assert_eq!(
+            order(&[
+                dt("a.rs", 1, "m::lex", "parse(\"x\");", false),
+                dt("b.rs", 2, "m::Parser::parse", "parse(\"x\");", false),
+            ]),
+            ["m::Parser::parse", "m::lex"]
+        );
+        // A raw item name counts without its `r#`, a longer word never counts.
+        assert_eq!(
+            order(&[
+                dt("a.rs", 1, "m::read", "read_all(r#match);", false),
+                dt("b.rs", 2, "m::r#match", "read_all(r#match);", false),
+            ]),
+            ["m::r#match", "m::read"]
+        );
+        // Both or neither naming their item keep file and line order.
+        assert_eq!(
+            order(&[
+                dt("b.rs", 1, "m::f", "f(); g();", false),
+                dt("a.rs", 2, "m::g", "f(); g();", false),
+            ]),
+            ["m::g", "m::f"]
+        );
+        assert_eq!(
+            order(&[
+                dt("b.rs", 1, "m::f", "h();", false),
+                dt("a.rs", 2, "m::g", "h();", false),
+            ]),
+            ["m::g", "m::f"]
         );
     }
 
