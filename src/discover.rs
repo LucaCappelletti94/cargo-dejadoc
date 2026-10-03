@@ -17,6 +17,8 @@ pub(crate) struct Target {
     pub(crate) src: PathBuf,
     /// Whether its doctests are scanned.
     pub(crate) doc: bool,
+    /// Whether it is a Rust library, whose public functions other crates may call.
+    pub(crate) library: bool,
 }
 
 /// A resolved workspace root and the targets to scan.
@@ -53,6 +55,14 @@ pub(crate) fn workspace(
                 name: target.name.clone(),
                 src: target.src_path.clone().into(),
                 doc: scan_target(&target.kind, all_targets),
+                library: target.kind.iter().any(|kind| {
+                    matches!(
+                        kind,
+                        cargo_metadata::TargetKind::Lib
+                            | cargo_metadata::TargetKind::RLib
+                            | cargo_metadata::TargetKind::DyLib
+                    )
+                }),
             });
         }
     }
@@ -261,6 +271,7 @@ mod tests {
             name: "mycrate".into(),
             src: src.to_path_buf(),
             doc: true,
+            library: true,
         }
     }
 

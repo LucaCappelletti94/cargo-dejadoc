@@ -178,12 +178,13 @@ jobs:
           [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
           body="$RUNNER_TEMP/dejadoc-review.md"
           removable=0
-          spanning=0
-          while IFS=$'\t' read -r p line _ _ c _ _ _ _ _ end _ _ kind spans _; do
+          declare -A shared=()
+          while IFS=$'\t' read -r p line _ _ c _ _ _ _ _ end _ _ kind remedy _ _ _ public; do
             [ "$c" != "1" ] || continue
             [ "$kind" = "function" ] || { echo "$p:$line is a $kind, the fixture holds functions only"; exit 1; }
-            if [ "$spans" = "1" ]; then
-              spanning=$((spanning + 1))
+            [ "$remedy" = "delete" ] && [ "$public" = "1" ] && remedy=public
+            if [ "$remedy" != "delete" ]; then
+              shared[$remedy]=$(( ${shared[$remedy]:-0} + 1 ))
               continue
             fi
             removable=$((removable + 1))
@@ -196,9 +197,15 @@ jobs:
             [ "$last" = "}" ] || { echo "the suggestion on $p:$line-$end does not end on the closing brace: $last"; exit 1; }
             echo "verified $p:$line-$end deletes exactly one function"
           done < "$RUNNER_TEMP/dejadoc-inline.tsv"
-          [ "$removable" = "4" ] || { echo "expected 4 removable copies, got $removable"; exit 1; }
-          [ "$spanning" = "1" ] || { echo "expected 1 copy on another type, got $spanning"; exit 1; }
+          [ "$removable" = "3" ] || { echo "expected 3 removable copies, got $removable"; exit 1; }
+          [ "${shared[public]:-0}" = "2" ] || { echo "expected 2 public copies, got ${shared[public]:-0}"; exit 1; }
+          for remedy in generic-or-macro helper-or-macro merge-cfg; do
+            [ "${shared[$remedy]:-0}" = "1" ] || { echo "expected 1 $remedy copy, got ${shared[$remedy]:-0}"; exit 1; }
+          done
           suggestions="$(grep -c '^```suggestion' "$body")"
-          [ "$suggestions" = "4" ] || { echo "expected 4 delete suggestions, the copy on another type carries none, got $suggestions"; exit 1; }
+          [ "$suggestions" = "3" ] || { echo "expected 3 delete suggestions, the other copies carry none, got $suggestions"; exit 1; }
+          grep -q 'It is public API, so deleting it breaks its callers' "$body" || { echo "the public API comment is missing"; exit 1; }
           grep -q 'on another type (Alpha, Beta)' "$body" || { echo "the generic or macro comment is missing"; exit 1; }
+          grep -q "so it can't simply be deleted" "$body" || { echo "the trait method comment is missing"; exit 1; }
+          grep -q 'under another `cfg`' "$body" || { echo "the cfg comment is missing"; exit 1; }
           grep -q 'times in this module' "$body" || { echo "the function copy wording is missing"; exit 1; }

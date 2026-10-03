@@ -638,6 +638,7 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
             code: f.code,
             allow,
             self_type: None,
+            public: false,
         });
     }
     out
@@ -807,6 +808,7 @@ mod tests {
             code: code.into(),
             allow,
             self_type: None,
+            public: false,
         }
     }
 
