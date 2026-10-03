@@ -1,0 +1,2 @@
+struct S;
+impl S { my_items!(1); }

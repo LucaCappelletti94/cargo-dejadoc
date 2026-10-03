@@ -1,0 +1,1 @@
+fn even(n::n:: u32) lse =>  { if n == 0 { false } e { even(n - 1) } }

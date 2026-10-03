@@ -1,0 +1,1 @@
+match v { #[expect(unused_variables)] Some(_) => {}, None => {} }

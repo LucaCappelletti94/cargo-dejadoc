@@ -1,0 +1,6 @@
+/// ```
+/// fn main() {}
+/// ```
+pub mod m {
+    pub fn f() {}
+}

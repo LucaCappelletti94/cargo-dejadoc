@@ -1,0 +1,19 @@
+/// ```
+/// fn  ```
+/// fn c() {}
+/// ```
+pub enum E { X }
+/// ```
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty = iformat!("{x:?}")fn g() {}
+/// ``^
+pub trait Tr = i32;

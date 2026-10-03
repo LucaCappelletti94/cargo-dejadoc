@@ -1,0 +1,2 @@
+mod v { pub fn q() {} }pub fn q() {} 
+fn mdin() {  pub fn p();!r::q(); }

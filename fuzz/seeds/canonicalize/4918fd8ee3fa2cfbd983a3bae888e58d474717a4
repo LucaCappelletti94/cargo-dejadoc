@@ -1,0 +1,1 @@
+match v { Some(x) => foo(x), Ok::<(), E>(())88 }

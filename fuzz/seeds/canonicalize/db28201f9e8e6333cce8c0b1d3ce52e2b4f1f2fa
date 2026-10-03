@@ -1,0 +1,4 @@
+fn maiu() -> Result<Error> {
+    let x = g()?;
+   'let ycompile_faile=5l;1  
+}

@@ -1,0 +1,8 @@
+pub mod a {
+    pub mod b {
+        /// ```
+        /// fn main() {}
+        /// ```
+        pub fn c() {}
+    }
+}

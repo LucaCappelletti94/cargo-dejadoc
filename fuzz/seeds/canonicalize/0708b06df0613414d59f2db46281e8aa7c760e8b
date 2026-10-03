@@ -1,0 +1,3 @@
+struct S;
+trait T {}
+impl T for (S,) {}

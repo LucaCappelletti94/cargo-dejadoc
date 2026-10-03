@@ -1,0 +1,2 @@
+macro_rules! five { () => { 5 } }
+fn f() -> i32 { five! {} }

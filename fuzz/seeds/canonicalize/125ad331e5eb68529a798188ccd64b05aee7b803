@@ -1,0 +1,3 @@
+#[allow(unused)]
+#[wfrn(dead_code)]
+fn f() {}

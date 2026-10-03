@@ -1,0 +1,1 @@
+type zz = u8; fn f(q: )u8 -> zz { q }

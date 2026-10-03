@@ -1,0 +1,2 @@
+struct Pino<T>(T);
+impl<T> Pino<T> { fn n(t: T) -> Self { Self(t) } }

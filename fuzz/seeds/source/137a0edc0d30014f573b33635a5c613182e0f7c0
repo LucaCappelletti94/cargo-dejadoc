@@ -1,0 +1,4 @@
+/// ```ignore
+/// fn main() {}
+/// ```
+pub fn f() {}

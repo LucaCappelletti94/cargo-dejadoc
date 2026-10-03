@@ -1,0 +1,1 @@
+fn f() -> u8 { unsafe { return 1; } }

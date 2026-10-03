@@ -1,0 +1,1 @@
+fn f(c: bool, d: bool) -> u8 { if c { return 1; } else if d {} }

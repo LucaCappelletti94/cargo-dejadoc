@@ -1,0 +1,2 @@
+use dioxus::prelude::*;
+lesignal(|| 0);_signal(|| 0);

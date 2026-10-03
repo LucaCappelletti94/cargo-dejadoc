@@ -1,0 +1,6 @@
+///~~~ `should_panic``
+/// }
+/// ```
+trait T {
+   #  fn m(&C:self);
+}
