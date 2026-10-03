@@ -26,23 +26,24 @@ fn shared_group_spans_crates_and_variants() {
         .expect("shared group present");
     assert_eq!(shared.sites.len(), 4);
     let items: Vec<&str> = shared.sites.iter().map(|s| s.item.as_str()).collect();
+    // The `helper` copies name their item in the code and come first.
     assert_eq!(
         items,
         vec![
-            "alpha::alpha_fn",
-            "alpha::alpha_variant",
             "alpha::util::helper",
-            "beta::util::helper"
+            "beta::util::helper",
+            "alpha::alpha_fn",
+            "alpha::alpha_variant"
         ]
     );
     let files: Vec<&str> = shared.sites.iter().map(|s| s.file.as_str()).collect();
     assert_eq!(
         files,
         vec![
-            "alpha/src/lib.rs",
-            "alpha/src/lib.rs",
             "alpha/src/util.rs",
-            "beta/src/util.rs"
+            "beta/src/util.rs",
+            "alpha/src/lib.rs",
+            "alpha/src/lib.rs"
         ]
     );
 }
