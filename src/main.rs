@@ -14,13 +14,13 @@ use std::process::ExitCode;
     name = "dejadoc",
     bin_name = "cargo dejadoc",
     version,
-    about = "Find duplicated Rust doctests across a workspace"
+    about = "Find duplicated Rust doctests and functions across a workspace"
 )]
 struct Args {
     /// Restrict to one workspace member by name.
     #[arg(short, long)]
     package: Option<String>,
-    /// Scan bin and example targets in addition to lib targets.
+    /// Scan bin and example doctests in addition to lib doctests.
     #[arg(long)]
     all_targets: bool,
     /// Machine-readable output.
@@ -29,9 +29,15 @@ struct Args {
     /// Report groups with at least this many sites (default 2).
     #[arg(short = 't', long, value_name = "N")]
     threshold: Option<usize>,
-    /// Skip blocks with fewer tokens than this (default 0).
+    /// Skip doctests with fewer tokens than this (default 0).
     #[arg(long, value_name = "N")]
     min_tokens: Option<usize>,
+    /// Skip the duplicate function check.
+    #[arg(long)]
+    no_functions: bool,
+    /// Skip functions with fewer tokens than this (default 30).
+    #[arg(long, value_name = "N")]
+    fn_min_tokens: Option<usize>,
     /// Explicit `.dejadoc.toml` location.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -73,6 +79,12 @@ fn run(args: &Args) -> dejadoc::Result<ExitCode> {
     }
     if let Some(min_tokens) = args.min_tokens {
         scan = scan.min_tokens(min_tokens);
+    }
+    if args.no_functions {
+        scan = scan.no_functions();
+    }
+    if let Some(n) = args.fn_min_tokens {
+        scan = scan.fn_min_tokens(n);
     }
     if let Some(config) = &args.config {
         scan = scan.config(config)?;

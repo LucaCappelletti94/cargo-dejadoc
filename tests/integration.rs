@@ -109,6 +109,22 @@ fn all_targets_builder_scans_bin_targets() {
 }
 
 #[test]
+fn a_package_filter_keeps_the_package_bin_targets() {
+    // `dupbin` is a target of package `alpha` with its own name.
+    let report = Dejadoc::default()
+        .package("alpha")
+        .all_targets()
+        .run(FIXTURE)
+        .unwrap();
+    assert!(
+        report
+            .groups
+            .iter()
+            .any(|g| g.sites.iter().any(|s| s.file.ends_with("dupbin.rs")))
+    );
+}
+
+#[test]
 fn min_tokens_builder_filters_blocks() {
     // min-tokens 4 drops the 3-token unparsed group; only the
     // 4-token function group survives.
@@ -157,7 +173,7 @@ fn binary_prints_annotations_beside_the_report() {
         .expect("run dejadoc binary");
     assert_eq!(out.status.code(), Some(1));
     let text = String::from_utf8(out.stdout).expect("utf8 output");
-    assert!(text.contains("9 doctests, 4 unique"), "{text}");
+    assert!(text.contains("9 doctests (4 unique)"), "{text}");
     let marks: Vec<&str> = text.lines().filter(|l| l.starts_with("::")).collect();
     assert_eq!(marks.len(), 4, "{text}");
     assert!(

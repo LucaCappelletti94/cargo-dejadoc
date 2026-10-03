@@ -1,6 +1,6 @@
 //! Report rendering.
 
-use crate::Report;
+use crate::{Kind, Report};
 
 use alloc::format;
 use alloc::string::String;
@@ -12,9 +12,11 @@ pub fn human(report: &Report, verbose: bool) -> String {
     let mut out = String::new();
     let _ = writeln!(
         &mut out,
-        "{} doctests, {} unique, {} duplicated groups",
+        "{} doctests ({} unique), {} functions ({} unique), {} duplicated groups",
         report.total,
         report.unique,
+        report.functions,
+        report.unique_functions,
         report.groups.len()
     );
     if report.groups.is_empty() {
@@ -22,9 +24,13 @@ pub fn human(report: &Report, verbose: bool) -> String {
     }
     out.push('\n');
     for (i, group) in report.groups.iter().enumerate() {
+        let what = match group.kind {
+            Kind::Doctest => "sites",
+            Kind::Function => "functions",
+        };
         let _ = writeln!(
             &mut out,
-            "[{}] {} sites, {} tokens",
+            "[{}] {} {what}, {} tokens",
             group.id,
             group.sites.len(),
             group.tokens
@@ -54,9 +60,14 @@ pub fn human(report: &Report, verbose: bool) -> String {
         }
     }
     out.push('\n');
-    out.push_str(
-        "Remove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n",
-    );
+    if report.groups.iter().any(|g| g.kind == Kind::Doctest) {
+        out.push_str(
+            "Remove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n",
+        );
+    }
+    if report.groups.iter().any(|g| g.kind == Kind::Function) {
+        out.push_str("Remove or update the functions listed above, or keep one on purpose with a `// dejadoc: allow` comment above it\n");
+    }
     out
 }
 
@@ -83,17 +94,29 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             continue;
         };
         for copy in copies {
-            let _ = writeln!(
-                &mut out,
-                "::{level} file={},line={},title=dejadoc::{} duplicates the doctest of {} at {}:{}, group {}",
+            let (file, line, item, kept_item, kept_file, kept_line, id) = (
                 escape_property(copy.file.as_str()),
                 copy.line,
                 escape(&copy.item),
                 escape(&kept.item),
                 escape(kept.file.as_str()),
                 kept.line,
-                group.id
+                &group.id,
             );
+            let _ = match group.kind {
+                Kind::Doctest => writeln!(
+                    &mut out,
+                    "::{level} file={file},line={line},title=dejadoc::{item} duplicates the doctest of {kept_item} at {kept_file}:{kept_line}, group {id}"
+                ),
+                Kind::Function if group.spans_types() => writeln!(
+                    &mut out,
+                    "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} on another type, a generic or a macro can share it, group {id}"
+                ),
+                Kind::Function => writeln!(
+                    &mut out,
+                    "::{level} file={file},line={line},title=dejadoc::{item} duplicates the function {kept_item} at {kept_file}:{kept_line}, group {id}"
+                ),
+            };
         }
     }
     out
@@ -129,6 +152,7 @@ mod tests {
             info: info.iter().map(ToString::to_string).collect(),
             code: code.to_string(),
             allow: false,
+            self_type: None,
         }
     }
 
@@ -136,7 +160,10 @@ mod tests {
         Report {
             total: 34,
             unique: 12,
+            functions: 0,
+            unique_functions: 0,
             groups: vec![Group {
+                kind: crate::Kind::Doctest,
                 id: "ab12cd34".into(),
                 hash: "ab12cd34".into(),
                 unparsed: false,
@@ -154,11 +181,13 @@ mod tests {
         let report = Report {
             total: 3,
             unique: 3,
+            functions: 0,
+            unique_functions: 0,
             groups: Vec::new(),
         };
         assert_eq!(
             human(&report, false),
-            "3 doctests, 3 unique, 0 duplicated groups\n"
+            "3 doctests (3 unique), 0 functions (0 unique), 0 duplicated groups\n"
         );
     }
 
@@ -166,7 +195,7 @@ mod tests {
     fn human_group_section_without_code() {
         assert_eq!(
             human(&report(), false),
-            "34 doctests, 12 unique, 1 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a   (no_run)\n  src/b.rs:97  m::b\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
+            "34 doctests (12 unique), 0 functions (0 unique), 1 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a   (no_run)\n  src/b.rs:97  m::b\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
         );
     }
 
@@ -186,9 +215,10 @@ mod tests {
         // serde_json values order keys alphabetically; pin the exact sets.
         assert_eq!(
             group.as_object().unwrap().keys().collect::<Vec<_>>(),
-            vec!["hash", "id", "sites", "tokens", "unparsed"]
+            vec!["hash", "id", "kind", "sites", "tokens", "unparsed"]
         );
         assert_eq!(group["id"], "ab12cd34");
+        assert_eq!(group["kind"], "doctest");
         assert_eq!(group["tokens"], 5);
         assert_eq!(group["unparsed"], false);
         assert_eq!(group["sites"].as_array().unwrap().len(), 2);
@@ -209,8 +239,11 @@ mod tests {
         let report = Report {
             total: 4,
             unique: 2,
+            functions: 0,
+            unique_functions: 0,
             groups: vec![
                 Group {
+                    kind: crate::Kind::Doctest,
                     id: "ab12cd34".into(),
                     hash: "ab12cd34".into(),
                     unparsed: false,
@@ -221,6 +254,7 @@ mod tests {
                     ],
                 },
                 Group {
+                    kind: crate::Kind::Doctest,
                     id: "ef56gh78".into(),
                     hash: "ef56gh78".into(),
                     unparsed: false,
@@ -231,7 +265,52 @@ mod tests {
         };
         assert_eq!(
             human(&report, false),
-            "4 doctests, 2 unique, 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
+            "4 doctests (2 unique), 0 functions (0 unique), 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
+        );
+    }
+
+    /// A report holding one function group, the copies on `types`.
+    fn function_report(types: [Option<&str>; 2]) -> Report {
+        let mut sites = vec![
+            site("src/a.rs", 3, "m::A::run", "fn run() {}", &[]),
+            site("src/a.rs", 9, "m::B::run", "fn run() {}", &[]),
+        ];
+        for (site, ty) in sites.iter_mut().zip(types) {
+            site.self_type = ty.map(ToString::to_string);
+        }
+        Report {
+            total: 0,
+            unique: 0,
+            functions: 7,
+            unique_functions: 6,
+            groups: vec![Group {
+                kind: crate::Kind::Function,
+                id: "cd34ef56".into(),
+                hash: "cd34ef56".into(),
+                unparsed: false,
+                tokens: 40,
+                sites,
+            }],
+        }
+    }
+
+    #[test]
+    fn human_names_function_groups_and_their_allow_comment() {
+        assert_eq!(
+            human(&function_report([Some("A"), Some("A")]), false),
+            "0 doctests (0 unique), 7 functions (6 unique), 1 duplicated groups\n\n[cd34ef56] 2 functions, 40 tokens\n  src/a.rs:3  m::A::run\n  src/a.rs:9  m::B::run\n\nRemove or update the functions listed above, or keep one on purpose with a `// dejadoc: allow` comment above it\n"
+        );
+    }
+
+    #[test]
+    fn function_annotations_suggest_deleting_only_same_type_copies() {
+        assert_eq!(
+            annotations(&function_report([Some("A"), Some("A")]), false),
+            "::error file=src/a.rs,line=9,title=dejadoc::m::B::run duplicates the function m::A::run at src/a.rs:3, group cd34ef56\n"
+        );
+        assert_eq!(
+            annotations(&function_report([Some("A"), Some("B")]), false),
+            "::error file=src/a.rs,line=9,title=dejadoc::m::B::run repeats m::A::run at src/a.rs:3 on another type, a generic or a macro can share it, group cd34ef56\n"
         );
     }
 
@@ -257,6 +336,8 @@ mod tests {
         let clean = Report {
             total: 3,
             unique: 3,
+            functions: 0,
+            unique_functions: 0,
             groups: Vec::new(),
         };
         assert_eq!(annotations(&clean, false), "");

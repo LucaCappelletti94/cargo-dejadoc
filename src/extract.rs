@@ -637,6 +637,7 @@ fn blocks(src: &DocSource, item: &str, root: &str) -> Vec<DocTest> {
             info,
             code: f.code,
             allow,
+            self_type: None,
         });
     }
     out
@@ -731,7 +732,7 @@ fn macro_name(ident: Option<&Ident>, mac: &Macro) -> String {
 }
 
 /// Last path segment of a type, for `Type::name` item paths.
-fn type_name(ty: &Type) -> String {
+pub(crate) fn type_name(ty: &Type) -> String {
     match ty {
         Type::Path(p) => p
             .path
@@ -805,6 +806,7 @@ mod tests {
             info: info.iter().map(ToString::to_string).collect(),
             code: code.into(),
             allow,
+            self_type: None,
         }
     }
 

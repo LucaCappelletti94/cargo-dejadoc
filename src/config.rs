@@ -11,6 +11,11 @@ pub(crate) struct Config {
     /// Skip blocks with fewer tokens than this.
     #[serde(rename = "min-tokens")]
     pub(crate) min_tokens: Option<usize>,
+    /// Whether the duplicate function check runs.
+    pub(crate) functions: Option<bool>,
+    /// Skip functions with fewer tokens than this.
+    #[serde(rename = "fn-min-tokens")]
+    pub(crate) fn_min_tokens: Option<usize>,
 }
 
 /// Load `path`, or the default config when the file is absent.
@@ -40,10 +45,16 @@ mod tests {
     fn loads_parameters() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join(".dejadoc.toml");
-        std::fs::write(&path, "threshold = 3\nmin-tokens = 4\n").unwrap();
+        std::fs::write(
+            &path,
+            "threshold = 3\nmin-tokens = 4\nfunctions = false\nfn-min-tokens = 50\n",
+        )
+        .unwrap();
         let cfg = load(&path).unwrap();
         assert_eq!(cfg.threshold, Some(3));
         assert_eq!(cfg.min_tokens, Some(4));
+        assert_eq!(cfg.functions, Some(false));
+        assert_eq!(cfg.fn_min_tokens, Some(50));
     }
 
     #[test]
