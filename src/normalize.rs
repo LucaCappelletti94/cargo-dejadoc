@@ -1645,6 +1645,43 @@ fn f() {}"#,
     }
 
     #[test]
+    fn std_derives_merge_in_any_order_or_split() {
+        let pairs = [
+            (
+                "#[derive(Debug, Clone)]\nstruct S;",
+                "#[derive(Clone, Debug)]\nstruct S;",
+            ),
+            (
+                "#[derive(Debug)]\n#[derive(Clone)]\nstruct S;",
+                "#[derive(Clone, Debug)]\nstruct S;",
+            ),
+            (
+                "#[derive(Debug)]\n#[repr(C)]\n#[derive(Clone)]\nstruct S;",
+                "#[derive(Clone, Debug)]\n#[repr(C)]\nstruct S;",
+            ),
+            (
+                "#[derive(PartialEq, Eq, Debug)]\nenum E { A }",
+                "#[derive(Debug, Eq, PartialEq)]\nenum E { A }",
+            ),
+        ];
+        for (written, sorted) in pairs {
+            assert_eq!(
+                canonicalize(written).text,
+                canonicalize(sorted).text,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_derive_list_with_a_proc_macro_keeps_its_order() {
+        assert_ne!(
+            canonicalize("#[derive(Serialize, Debug)]\nstruct S;").text,
+            canonicalize("#[derive(Debug, Serialize)]\nstruct S;").text
+        );
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");

@@ -308,6 +308,12 @@ impl VisitMut for Drift {
         if let Some(attrs) = item_attrs(item) {
             strip_inert_attrs(attrs);
         }
+        if let syn::Item::Struct(syn::ItemStruct { attrs, .. })
+        | syn::Item::Enum(syn::ItemEnum { attrs, .. })
+        | syn::Item::Union(syn::ItemUnion { attrs, .. }) = item
+        {
+            fold_std_derives(attrs);
+        }
         syn::visit_mut::visit_item_mut(self, item);
     }
 
@@ -607,6 +613,57 @@ fn drop_anonymous_lifetimes(arguments: &mut syn::PathArguments) {
     if angle.args.is_empty() {
         *arguments = syn::PathArguments::None;
     }
+}
+
+/// The derives whose expansions are independent of each other, so their
+/// order and grouping carry no meaning.
+const STD_DERIVES: [&str; 9] = [
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+
+/// Merge an item's `derive` attributes into one sorted list at the place of
+/// the first, when every derive among them is a std one. A proc macro derive
+/// can depend on what ran before it, so any other name keeps them as written.
+fn fold_std_derives(attrs: &mut Vec<syn::Attribute>) {
+    use syn::parse::Parser;
+
+    let mut names: Vec<syn::Ident> = Vec::new();
+    let mut first = None;
+    for (index, attr) in attrs.iter().enumerate() {
+        if !attr.path().is_ident("derive") {
+            continue;
+        }
+        let syn::Meta::List(list) = &attr.meta else {
+            return;
+        };
+        let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
+        let Ok(paths) = parser.parse2(list.tokens.clone()) else {
+            return;
+        };
+        for path in paths {
+            match path.get_ident() {
+                Some(name) if STD_DERIVES.contains(&name.to_string().as_str()) => {
+                    names.push(name.clone());
+                }
+                _ => return,
+            }
+        }
+        first.get_or_insert(index);
+    }
+    let Some(first) = first else {
+        return;
+    };
+    names.sort_by_cached_key(ToString::to_string);
+    attrs.retain(|attr| !attr.path().is_ident("derive"));
+    attrs.insert(first, syn::parse_quote!(#[derive(#(#names),*)]));
 }
 
 /// Elides the `'static` of references in a `const` or `static` type, where an
