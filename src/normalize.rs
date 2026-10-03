@@ -201,13 +201,7 @@ fn map_line(line: &str) -> String {
     }
 }
 
-/// Strips the leading `../` components of path literals passed to
-/// `include`-style macros (`include!`, `include_str!`, egui's
-/// `include_image!`). The depth is an artifact of the file spelling the
-/// include, rustdoc compiles a doctest from the package root, so either
-/// spelling resolves to the same file, while a `println!` or `File::open`
-/// path is runtime content and every component of it matters. Every
-/// `include` call sits in the tokens of a macro or an attribute.
+/// Strip the leading `../` of `include`-style macro paths, which rustdoc resolves from the package root.
 struct IncludeDepth;
 
 impl VisitMut for IncludeDepth {
@@ -230,11 +224,7 @@ fn is_include(ident: &proc_macro2::Ident) -> bool {
     name == "include" || name.starts_with("include_")
 }
 
-/// Walks one token list. `strip` is set by a macro name (`include` or
-/// `include_…`) and kept only by the following `!`, so strip mode is
-/// entered exactly by macro call syntax, never by a method or a binding
-/// named `includes`. In include mode the delimiter's string literals
-/// lose their leading `../` components. Any group or literal ends it.
+/// Flatten include paths in one token list, `strip` set by an `include` macro name and kept only by its `!`.
 fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2::TokenStream {
     use proc_macro2::{Group, TokenTree};
 

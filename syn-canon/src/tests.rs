@@ -10,9 +10,7 @@ struct Canon {
     text: String,
 }
 
-/// `code` canonicalized the way a doctest compiles, a file holding `fn main`
-/// as written, anything else wrapped in `fn main() { … }`. Panics when the
-/// body does not parse, so every test also asserts that it parses.
+/// `code` canonicalized the way a doctest compiles, panicking when it does not parse.
 fn canonicalize(code: &str) -> Canon {
     let is_main = |item: &syn::Item| matches!(item, syn::Item::Fn(f) if f.sig.ident == "main");
     let file = match syn::parse_str::<syn::File>(code) {
@@ -2239,8 +2237,7 @@ fn inert_attrs_on_closure_parameter_patterns_merge() {
 
 #[test]
 fn inert_attrs_on_built_or_and_guard_patterns_merge() {
-    // A parsed tree never puts an attribute on an or-pattern or a guard,
-    // a tree built in code, a proc macro's output for one, can.
+    // Only a tree built in code, a proc macro's output for one, attributes these.
     use quote::ToTokens as _;
     use syn::visit_mut::VisitMut;
 

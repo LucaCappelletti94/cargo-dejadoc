@@ -14,8 +14,7 @@ use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 
-/// The canonical token stream of `file`, equal for two files that differ
-/// only in formatting drift and in the names of local binders.
+/// The canonical token stream of `file`, equal across formatting drift and local binder names.
 #[must_use]
 pub fn canonicalize(mut file: syn::File) -> TokenStream {
     drift::normalize_file(&mut file);
@@ -25,12 +24,7 @@ pub fn canonicalize(mut file: syn::File) -> TokenStream {
         .collect()
 }
 
-/// Walks one token list for the token-level folds. Every group loses its
-/// trailing comma, a one-tuple keeps its meaning because the fold of
-/// redundant parentheses already separates it from the parenthesised
-/// expression of the same element. Literals take their canonical spelling
-/// unless `opaque`, set inside the tokens of a macro call or an attribute,
-/// which a procedural macro may read verbatim.
+/// Drop each group's trailing comma and respell literals outside `opaque` macro and attribute tokens.
 fn fold_tokens(stream: TokenStream, opaque: bool) -> Vec<TokenTree> {
     let mut out: Vec<TokenTree> = Vec::new();
     for tree in stream {
@@ -40,6 +34,7 @@ fn fold_tokens(stream: TokenStream, opaque: bool) -> Vec<TokenTree> {
                     || matches!(out.last(), Some(TokenTree::Punct(p)) if matches!(p.as_char(), '!' | '#'));
                 drift::map_group(&group, |inner| {
                     let mut inner = fold_tokens(inner, shut);
+                    // A one-tuple keeps its comma, the paren fold already told it apart.
                     if matches!(inner.last(), Some(TokenTree::Punct(p)) if p.as_char() == ',') {
                         inner.pop();
                     }

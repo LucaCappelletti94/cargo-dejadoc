@@ -652,10 +652,7 @@ fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !is_inert_attr(attr));
 }
 
-/// An attribute on an untyped closure parameter sits on the pattern itself,
-/// arm and named-parameter attributes sit on the arm or `FnArg` instead.
-/// Every pattern kind can carry one, a range for example parses with its
-/// attribute and reprints it as `#[a] (1..=5)`.
+/// Strip inert attributes from a pattern, where an untyped closure parameter's attribute sits.
 fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
     let attrs = match pat {
         syn::Pat::Const(p) => &mut p.attrs,
