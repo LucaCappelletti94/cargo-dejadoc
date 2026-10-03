@@ -191,7 +191,12 @@ impl Dejadoc {
             self.min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
         );
         if !self.no_functions {
-            let sites = targets.iter().flat_map(|target| {
+            // Targets sharing a root file are one crate, walked once.
+            let mut roots = BTreeSet::new();
+            let crates = targets
+                .iter()
+                .filter(|target| roots.insert(target.files.first().map(|f| f.path.as_str())));
+            let sites = crates.flat_map(|target| {
                 let crate_root = target.files.first().map_or("", |f| {
                     f.path
                         .strip_prefix(root)
@@ -790,6 +795,24 @@ mod tests {
                 "{one} {two}"
             );
         }
+    }
+
+    #[test]
+    fn two_targets_sharing_a_root_file_are_one_crate() {
+        // allo-isolate lists `tests/containers.rs` as both an example and a test.
+        let src = format!("fn one{BODY}\nfn two{BODY}\n");
+        let targets = [
+            target_from("containers", "tests/containers.rs", &[], &src),
+            target_from("containers", "tests/containers.rs", &[], &src),
+        ];
+        let report = Dejadoc::default().run_targets("", &targets, &|_f, _i| None);
+        let items: Vec<Vec<&str>> = report
+            .groups
+            .iter()
+            .map(|g| g.sites.iter().map(|s| s.item.as_str()).collect())
+            .collect();
+        assert_eq!(items, [["containers::one", "containers::two"]]);
+        assert_eq!((report.functions, report.unique_functions), (2, 1));
     }
 
     #[test]
