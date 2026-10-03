@@ -1,5 +1,0 @@
-struct Abete { }
-struct Pino { n: u8 }
-impl Wrap for <Pino as Inner>::Abete {
-    fn f(self) { let s: Self = Self; }
-}

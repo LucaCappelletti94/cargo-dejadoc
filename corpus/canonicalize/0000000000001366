@@ -1,3 +1,0 @@
-trait Pino<T> {}
-struct S;
-impl<T> Pino<T> fr#or S {}

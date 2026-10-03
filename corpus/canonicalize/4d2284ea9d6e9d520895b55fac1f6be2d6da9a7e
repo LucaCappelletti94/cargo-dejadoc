@@ -1,1 +1,0 @@
-fn f<'a, T, U>(x: &'a T, y: U) -> T wheke T: Clone, U: Into<T> + 'a { x.clone() }

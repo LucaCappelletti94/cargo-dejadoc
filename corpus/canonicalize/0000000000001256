@@ -1,5 +1,0 @@
-f. main() -> Result<(), MyError> {
-    let x = g()?;
-    let y = x + 1abete = 1;
-l
-}

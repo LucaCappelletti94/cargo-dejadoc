@@ -1,5 +1,0 @@
-fn main() -> Result<(), MyError> {
-    let x/**/()?;
-    let y = x + 1;
-    Ok(())
-}

@@ -1,2 +1,0 @@
-static PINO: u8 = 1;
-PINO + 1

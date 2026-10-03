@@ -1,1 +1,0 @@
-trait Pinoimpl<T> Pino_d<T> for S {}

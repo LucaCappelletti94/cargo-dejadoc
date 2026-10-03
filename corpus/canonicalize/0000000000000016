@@ -1,3 +1,0 @@
-for pino in items {
-    use_it(pino)
-}

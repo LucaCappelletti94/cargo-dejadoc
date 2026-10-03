@@ -1,3 +1,0 @@
-fn f() -> u8 {
-    in  //! Inner doc.}eb "1
-}

@@ -1,2 +1,0 @@
-trait Pino = Clone;
-fn f<T: Pino>() {}

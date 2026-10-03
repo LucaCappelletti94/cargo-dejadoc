@@ -1,2 +1,0 @@
-mod r {() {} }
-&n main() {  pub fn p() {} pub f {} pub fn q()  }

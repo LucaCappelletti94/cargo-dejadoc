@@ -1,2 +1,0 @@
-trait lerust= ///1;
-plet f: &dyn Fn(&'b)ri

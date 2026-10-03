@@ -1,1 +1,0 @@
-match v { Some(x) => { bar(x); } None => {@} }
