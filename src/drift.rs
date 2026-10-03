@@ -131,10 +131,15 @@ fn canon_float_str(s: &str) -> String {
 
 /// Fold arm braces, doc attributes, and `use` shapes in place.
 pub(crate) fn normalize_file(file: &mut syn::File) {
-    Drift.visit_file_mut(file);
+    Drift::default().visit_file_mut(file);
 }
 
-struct Drift;
+#[derive(Default)]
+struct Drift {
+    /// Inside an impl header's trait path or self type, where a path may not
+    /// elide its lifetime (E0726).
+    in_impl_header: bool,
+}
 
 impl VisitMut for Drift {
     #[expect(
@@ -243,6 +248,46 @@ impl VisitMut for Drift {
     fn visit_generics_mut(&mut self, generics: &mut syn::Generics) {
         syn::visit_mut::visit_generics_mut(self, generics);
         bounds_to_where(generics);
+    }
+
+    fn visit_type_reference_mut(&mut self, node: &mut syn::TypeReference) {
+        syn::visit_mut::visit_type_reference_mut(self, node);
+        if node.lifetime.as_ref().is_some_and(|l| l.ident == "_") {
+            node.lifetime = None;
+        }
+    }
+
+    fn visit_path_arguments_mut(&mut self, node: &mut syn::PathArguments) {
+        syn::visit_mut::visit_path_arguments_mut(self, node);
+        if !self.in_impl_header {
+            drop_anonymous_lifetimes(node);
+        }
+    }
+
+    fn visit_item_impl_mut(&mut self, node: &mut syn::ItemImpl) {
+        for attr in &mut node.attrs {
+            self.visit_attribute_mut(attr);
+        }
+        self.visit_generics_mut(&mut node.generics);
+        let outer = core::mem::replace(&mut self.in_impl_header, true);
+        if let Some((path, _)) = &mut node.trait_ {
+            self.visit_path_mut(path);
+        }
+        self.visit_type_mut(&mut node.self_ty);
+        self.in_impl_header = outer;
+        for item in &mut node.items {
+            self.visit_impl_item_mut(item);
+        }
+    }
+
+    fn visit_item_const_mut(&mut self, node: &mut syn::ItemConst) {
+        syn::visit_mut::visit_item_const_mut(self, node);
+        StaticRefs.visit_type_mut(&mut node.ty);
+    }
+
+    fn visit_item_static_mut(&mut self, node: &mut syn::ItemStatic) {
+        syn::visit_mut::visit_item_static_mut(self, node);
+        StaticRefs.visit_type_mut(&mut node.ty);
     }
 
     fn visit_signature_mut(&mut self, sig: &mut syn::Signature) {
@@ -543,6 +588,47 @@ fn bounds_to_where(generics: &mut syn::Generics) {
     let written = core::mem::take(&mut clause.predicates);
     clause.predicates.extend(moved);
     clause.predicates.extend(written);
+}
+
+/// Drop every `'_` argument from angle-bracketed path arguments, and the
+/// brackets once nothing is left, `Foo<'_>` spelling `Foo`.
+fn drop_anonymous_lifetimes(arguments: &mut syn::PathArguments) {
+    let syn::PathArguments::AngleBracketed(angle) = arguments else {
+        return;
+    };
+    let anonymous = |arg: &syn::GenericArgument| matches!(arg, syn::GenericArgument::Lifetime(l) if l.ident == "_");
+    if !angle.args.iter().any(anonymous) {
+        return;
+    }
+    angle.args = core::mem::take(&mut angle.args)
+        .into_iter()
+        .filter(|arg| !anonymous(arg))
+        .collect();
+    if angle.args.is_empty() {
+        *arguments = syn::PathArguments::None;
+    }
+}
+
+/// Elides the `'static` of references in a `const` or `static` type, where an
+/// elided lifetime is `'static`. Inside a fn pointer or `Fn` sugar elision
+/// means a fresh higher-ranked lifetime, so neither is entered.
+struct StaticRefs;
+
+impl VisitMut for StaticRefs {
+    fn visit_type_reference_mut(&mut self, node: &mut syn::TypeReference) {
+        if node.lifetime.as_ref().is_some_and(|l| l.ident == "static") {
+            node.lifetime = None;
+        }
+        syn::visit_mut::visit_type_reference_mut(self, node);
+    }
+
+    fn visit_type_fn_ptr_mut(&mut self, _: &mut syn::TypeFnPtr) {}
+
+    fn visit_parenthesized_generic_arguments_mut(
+        &mut self,
+        _: &mut syn::ParenthesizedGenericArguments,
+    ) {
+    }
 }
 
 /// True for attributes that carry no program meaning for doctests: doc

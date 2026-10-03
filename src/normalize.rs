@@ -1592,6 +1592,59 @@ fn f() {}"#,
     }
 
     #[test]
+    fn elidable_lifetimes_merge_with_their_elided_form() {
+        let pairs = [
+            ("const S: &'static str = \"a\";", "const S: &str = \"a\";"),
+            (
+                "static S: &'static [&'static str] = &[];",
+                "static S: &[&str] = &[];",
+            ),
+            (
+                "const F: &'static dyn Fn(&'static str) = &g;",
+                "const F: &dyn Fn(&'static str) = &g;",
+            ),
+            (
+                "fn f(x: &'_ str) -> usize { x.len() }",
+                "fn f(x: &str) -> usize { x.len() }",
+            ),
+            ("fn f(x: Wrap<'_>) {}", "fn f(x: Wrap) {}"),
+            ("fn f(x: Wrap<'_, u8>) {}", "fn f(x: Wrap<u8>) {}"),
+        ];
+        for (written, elided) in pairs {
+            assert_eq!(
+                canonicalize(written).text,
+                canonicalize(elided).text,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn lifetimes_whose_elision_means_something_else_stay() {
+        let pairs = [
+            // In a fn pointer or `Fn` sugar elision is higher ranked, not `'static`.
+            ("const F: fn(&'static str) = g;", "const F: fn(&str) = g;"),
+            (
+                "const F: &dyn Fn(&'static str) = &g;",
+                "const F: &dyn Fn(&str) = &g;",
+            ),
+            // An impl header may not elide a path lifetime (E0726).
+            (
+                "trait Tr {}\nimpl Tr for Wrap<'_> {}",
+                "trait Tr {}\nimpl Tr for Wrap {}",
+            ),
+            ("fn f<'a>(x: &'a str) {}", "fn f(x: &str) {}"),
+        ];
+        for (written, other) in pairs {
+            assert_ne!(
+                canonicalize(written).text,
+                canonicalize(other).text,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");
