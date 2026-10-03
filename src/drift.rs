@@ -131,10 +131,15 @@ fn canon_float_str(s: &str) -> String {
 
 /// Fold arm braces, doc attributes, and `use` shapes in place.
 pub(crate) fn normalize_file(file: &mut syn::File) {
-    Drift.visit_file_mut(file);
+    Drift::default().visit_file_mut(file);
 }
 
-struct Drift;
+#[derive(Default)]
+struct Drift {
+    /// Inside an impl header's trait path or self type, where a path may not
+    /// elide its lifetime (E0726).
+    in_impl_header: bool,
+}
 
 impl VisitMut for Drift {
     #[expect(
@@ -205,6 +210,9 @@ impl VisitMut for Drift {
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
         syn::visit_mut::visit_expr_mut(self, expr);
         fold_paren_expr(expr);
+        if let syn::Expr::If(expr_if) = expr {
+            collapse_else_if(expr_if);
+        }
         if let syn::Expr::Closure(closure) = expr {
             if let syn::Expr::Block(block) = closure.body.as_mut() {
                 fold_tail_return(&mut block.block.stmts);
@@ -237,6 +245,51 @@ impl VisitMut for Drift {
         fold_paren_type(ty);
     }
 
+    fn visit_generics_mut(&mut self, generics: &mut syn::Generics) {
+        syn::visit_mut::visit_generics_mut(self, generics);
+        bounds_to_where(generics);
+    }
+
+    fn visit_type_reference_mut(&mut self, node: &mut syn::TypeReference) {
+        syn::visit_mut::visit_type_reference_mut(self, node);
+        if node.lifetime.as_ref().is_some_and(|l| l.ident == "_") {
+            node.lifetime = None;
+        }
+    }
+
+    fn visit_path_arguments_mut(&mut self, node: &mut syn::PathArguments) {
+        syn::visit_mut::visit_path_arguments_mut(self, node);
+        if !self.in_impl_header {
+            drop_anonymous_lifetimes(node);
+        }
+    }
+
+    fn visit_item_impl_mut(&mut self, node: &mut syn::ItemImpl) {
+        for attr in &mut node.attrs {
+            self.visit_attribute_mut(attr);
+        }
+        self.visit_generics_mut(&mut node.generics);
+        let outer = core::mem::replace(&mut self.in_impl_header, true);
+        if let Some((path, _)) = &mut node.trait_ {
+            self.visit_path_mut(path);
+        }
+        self.visit_type_mut(&mut node.self_ty);
+        self.in_impl_header = outer;
+        for item in &mut node.items {
+            self.visit_impl_item_mut(item);
+        }
+    }
+
+    fn visit_item_const_mut(&mut self, node: &mut syn::ItemConst) {
+        syn::visit_mut::visit_item_const_mut(self, node);
+        StaticRefs.visit_type_mut(&mut node.ty);
+    }
+
+    fn visit_item_static_mut(&mut self, node: &mut syn::ItemStatic) {
+        syn::visit_mut::visit_item_static_mut(self, node);
+        StaticRefs.visit_type_mut(&mut node.ty);
+    }
+
     fn visit_signature_mut(&mut self, sig: &mut syn::Signature) {
         syn::visit_mut::visit_signature_mut(self, sig);
         fold_unit_return(&mut sig.output);
@@ -254,6 +307,12 @@ impl VisitMut for Drift {
     fn visit_item_mut(&mut self, item: &mut syn::Item) {
         if let Some(attrs) = item_attrs(item) {
             strip_inert_attrs(attrs);
+        }
+        if let syn::Item::Struct(syn::ItemStruct { attrs, .. })
+        | syn::Item::Enum(syn::ItemEnum { attrs, .. })
+        | syn::Item::Union(syn::ItemUnion { attrs, .. }) = item
+        {
+            fold_std_derives(attrs);
         }
         syn::visit_mut::visit_item_mut(self, item);
     }
@@ -350,6 +409,25 @@ fn unwrap_single_expr_block(body: &mut Box<syn::Expr>) {
     }
 }
 
+/// An `else { if … }` whose block holds only that `if`, with no attribute
+/// on it, becomes `else if …`. An else block itself never carries a label
+/// or attributes.
+fn collapse_else_if(expr_if: &mut syn::ExprIf) {
+    let Some((_, otherwise)) = &mut expr_if.else_branch else {
+        return;
+    };
+    let syn::Expr::Block(block) = otherwise.as_mut() else {
+        return;
+    };
+    if !matches!(block.block.stmts.as_slice(), [syn::Stmt::Expr(syn::Expr::If(inner), None)] if inner.attrs.is_empty())
+    {
+        return;
+    }
+    if let Some(syn::Stmt::Expr(inner, None)) = block.block.stmts.pop() {
+        **otherwise = inner;
+    }
+}
+
 /// Remove every bare empty statement from `stmts`.
 fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
     stmts.retain(|stmt| {
@@ -363,28 +441,29 @@ fn drop_empty_stmts(stmts: &mut Vec<syn::Stmt>) {
 /// Replace a tail `return expr`, with or without the semicolon, with
 /// `expr`, then propagate through every tail position forwarding its value,
 /// an `if` only with an `else` clause because rustc rejects a valued return
-/// in a discarded then position (`E0317`). A return keeping a live
-/// attribute, `#[cfg]` for instance, must not fold, the fold would drop
-/// the condition.
+/// in a discarded then position (`E0317`). A tail unit `return` adds
+/// nothing and goes. A return keeping a live attribute, `#[cfg]` for
+/// instance, must not fold, the fold would drop the condition.
 fn fold_tail_return(stmts: &mut Vec<syn::Stmt>) {
-    let n = stmts.len();
-    if n != 0 {
-        let mut fold_now = false;
-        if let Some(syn::Stmt::Expr(syn::Expr::Return(ret), _)) = stmts.last_mut() {
+    let Some(last) = stmts.last_mut() else {
+        return;
+    };
+    match last {
+        syn::Stmt::Expr(syn::Expr::Return(ret), _) => {
             strip_inert_attrs(&mut ret.attrs);
-            fold_now = ret.expr.is_some() && ret.attrs.is_empty();
-        }
-        if fold_now {
-            let last = stmts.remove(n - 1);
-            if let syn::Stmt::Expr(syn::Expr::Return(mut ret), _) = last
-                && let Some(mut inner) = ret.expr.take()
-            {
-                fold_tail_expr(&mut inner);
-                stmts.push(syn::Stmt::Expr(*inner, None));
+            if !ret.attrs.is_empty() {
+                return;
             }
-        } else if let Some(syn::Stmt::Expr(expr, None)) = stmts.last_mut() {
-            fold_tail_expr(expr);
+            if let Some(mut inner) = ret.expr.take() {
+                fold_tail_expr(&mut inner);
+                *last = syn::Stmt::Expr(*inner, None);
+            } else {
+                stmts.pop();
+                fold_tail_return(stmts);
+            }
         }
+        syn::Stmt::Expr(expr, None) => fold_tail_expr(expr),
+        _ => {}
     }
 }
 
@@ -404,6 +483,16 @@ fn fold_tail_expr(expr: &mut syn::Expr) {
             for arm in &mut expr_match.arms {
                 fold_tail_expr(&mut arm.body);
                 unwrap_single_expr_block(&mut arm.body);
+            }
+        }
+        // An arm body `return value`, written bare or as a block the arm fold unwrapped.
+        syn::Expr::Return(ret) => {
+            strip_inert_attrs(&mut ret.attrs);
+            if ret.attrs.is_empty()
+                && let Some(inner) = ret.expr.take()
+            {
+                *expr = *inner;
+                fold_tail_expr(expr);
             }
         }
         _ => {}
@@ -465,11 +554,149 @@ fn fold_paren_type(ty: &mut syn::Type) {
     }
 }
 
+/// Move the bounds written on type and lifetime parameters into the `where`
+/// clause, ahead of its own predicates and in parameter order, the place
+/// they would take written there.
+fn bounds_to_where(generics: &mut syn::Generics) {
+    let mut moved = Vec::new();
+    for param in &mut generics.params {
+        match param {
+            syn::GenericParam::Type(ty) if !ty.bounds.is_empty() => {
+                ty.colon_token = None;
+                moved.push(syn::WherePredicate::Type(syn::PredicateType {
+                    attrs: Vec::new(),
+                    lifetimes: None,
+                    bounded_ty: syn::Type::Path(syn::TypePath {
+                        attrs: Vec::new(),
+                        qself: None,
+                        path: ty.ident.clone().into(),
+                    }),
+                    colon_token: syn::token::Colon::default(),
+                    bounds: core::mem::take(&mut ty.bounds),
+                }));
+            }
+            syn::GenericParam::Lifetime(lifetime) if !lifetime.bounds.is_empty() => {
+                lifetime.colon_token = None;
+                moved.push(syn::WherePredicate::Lifetime(syn::PredicateLifetime {
+                    attrs: Vec::new(),
+                    lifetime: lifetime.lifetime.clone(),
+                    colon_token: syn::token::Colon::default(),
+                    bounds: core::mem::take(&mut lifetime.bounds),
+                }));
+            }
+            _ => {}
+        }
+    }
+    if moved.is_empty() {
+        return;
+    }
+    let clause = generics.make_where_clause();
+    let written = core::mem::take(&mut clause.predicates);
+    clause.predicates.extend(moved);
+    clause.predicates.extend(written);
+}
+
+/// Drop every `'_` argument from angle-bracketed path arguments, and the
+/// brackets once nothing is left, `Foo<'_>` spelling `Foo`.
+fn drop_anonymous_lifetimes(arguments: &mut syn::PathArguments) {
+    let syn::PathArguments::AngleBracketed(angle) = arguments else {
+        return;
+    };
+    let anonymous = |arg: &syn::GenericArgument| matches!(arg, syn::GenericArgument::Lifetime(l) if l.ident == "_");
+    if !angle.args.iter().any(anonymous) {
+        return;
+    }
+    angle.args = core::mem::take(&mut angle.args)
+        .into_iter()
+        .filter(|arg| !anonymous(arg))
+        .collect();
+    if angle.args.is_empty() {
+        *arguments = syn::PathArguments::None;
+    }
+}
+
+/// The derives whose expansions are independent of each other, so their
+/// order and grouping carry no meaning.
+const STD_DERIVES: [&str; 9] = [
+    "Clone",
+    "Copy",
+    "Debug",
+    "Default",
+    "Eq",
+    "Hash",
+    "Ord",
+    "PartialEq",
+    "PartialOrd",
+];
+
+/// Merge an item's `derive` attributes into one sorted list at the place of
+/// the first, when every derive among them is a std one. A proc macro derive
+/// can depend on what ran before it, so any other name keeps them as written.
+fn fold_std_derives(attrs: &mut Vec<syn::Attribute>) {
+    use syn::parse::Parser;
+
+    let mut names: Vec<syn::Ident> = Vec::new();
+    let mut first = None;
+    for (index, attr) in attrs.iter().enumerate() {
+        if !attr.path().is_ident("derive") {
+            continue;
+        }
+        let syn::Meta::List(list) = &attr.meta else {
+            return;
+        };
+        let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
+        let Ok(paths) = parser.parse2(list.tokens.clone()) else {
+            return;
+        };
+        for path in paths {
+            match path.get_ident() {
+                Some(name) if STD_DERIVES.contains(&name.to_string().as_str()) => {
+                    names.push(name.clone());
+                }
+                _ => return,
+            }
+        }
+        first.get_or_insert(index);
+    }
+    let Some(first) = first else {
+        return;
+    };
+    names.sort_by_cached_key(ToString::to_string);
+    attrs.retain(|attr| !attr.path().is_ident("derive"));
+    attrs.insert(first, syn::parse_quote!(#[derive(#(#names),*)]));
+}
+
+/// Elides the `'static` of references in a `const` or `static` type, where an
+/// elided lifetime is `'static`. Inside a fn pointer or `Fn` sugar elision
+/// means a fresh higher-ranked lifetime, so neither is entered.
+struct StaticRefs;
+
+impl VisitMut for StaticRefs {
+    fn visit_type_reference_mut(&mut self, node: &mut syn::TypeReference) {
+        if node.lifetime.as_ref().is_some_and(|l| l.ident == "static") {
+            node.lifetime = None;
+        }
+        syn::visit_mut::visit_type_reference_mut(self, node);
+    }
+
+    fn visit_type_fn_ptr_mut(&mut self, _: &mut syn::TypeFnPtr) {}
+
+    fn visit_parenthesized_generic_arguments_mut(
+        &mut self,
+        _: &mut syn::ParenthesizedGenericArguments,
+    ) {
+    }
+}
+
 /// True for attributes that carry no program meaning for doctests: doc
-/// comments and lint-level directives.
+/// comments, lint-level directives, and the `rustfmt::` tool attributes.
 fn is_inert_attr(attr: &syn::Attribute) -> bool {
     let p = attr.path();
-    p.is_ident("doc") || p.is_ident("allow") || p.is_ident("expect") || p.is_ident("warn")
+    p.is_ident("doc")
+        || p.is_ident("allow")
+        || p.is_ident("expect")
+        || p.is_ident("warn")
+        || p.segments.first().is_some_and(|s| s.ident == "rustfmt")
 }
 
 /// Drop inert attributes from the list.

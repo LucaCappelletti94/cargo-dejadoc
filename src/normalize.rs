@@ -1473,10 +1473,246 @@ fn f() {}"#,
     }
 
     #[test]
-    fn bare_return_stays() {
-        let a = canonicalize("fn f() { return; }");
-        let b = canonicalize("fn f() {}");
-        assert_ne!(a.text, b.text);
+    fn a_trailing_unit_return_folds_away() {
+        let plain = canonicalize("fn f() { g(); }");
+        assert_eq!(canonicalize("fn f() { g(); return; }").text, plain.text);
+        assert_eq!(canonicalize("fn f() { g(); return }").text, plain.text);
+        assert_eq!(
+            canonicalize("fn f() { return; }").text,
+            canonicalize("fn f() {}").text
+        );
+        assert_eq!(
+            canonicalize("fn f(c: bool) { if c { g(); return; } else { h(); } }").text,
+            canonicalize("fn f(c: bool) { if c { g(); } else { h(); } }").text
+        );
+    }
+
+    #[test]
+    fn an_attributed_or_early_unit_return_stays() {
+        let plain = canonicalize("fn f() { g(); }");
+        assert_ne!(
+            canonicalize("fn f() { g(); #[cfg(unix)] return; }").text,
+            plain.text
+        );
+        assert_ne!(canonicalize("fn f() { return; g(); }").text, plain.text);
+    }
+
+    #[test]
+    fn a_return_arm_of_a_tail_match_folds() {
+        let plain = canonicalize("fn f(v: u8) -> u8 { match v { 1 => 2, _ => 0 } }");
+        for arm in ["1 => return 2,", "1 => { return 2 }"] {
+            let source = format!("fn f(v: u8) -> u8 {{ match v {{ {arm} _ => 0 }} }}");
+            assert_eq!(canonicalize(&source).text, plain.text, "{arm}");
+        }
+    }
+
+    #[test]
+    fn an_attributed_return_arm_stays() {
+        let plain = canonicalize("fn f(v: u8) -> u8 { match v { 1 => 2, _ => 0 } }");
+        let attributed =
+            canonicalize("fn f(v: u8) -> u8 { match v { 1 => { #[cfg(unix)] return 2 } _ => 0 } }");
+        assert_ne!(attributed.text, plain.text);
+    }
+
+    #[test]
+    fn an_else_block_holding_only_an_if_collapses() {
+        assert_eq!(
+            canonicalize("let x = if a { 1 } else { if b { 2 } else { 3 } };").text,
+            canonicalize("let x = if a { 1 } else if b { 2 } else { 3 };").text
+        );
+        assert_eq!(
+            canonicalize("if a { f(); } else { if b { g(); } }").text,
+            canonicalize("if a { f(); } else if b { g(); }").text
+        );
+    }
+
+    #[test]
+    fn an_attributed_if_in_an_else_block_stays() {
+        assert_ne!(
+            canonicalize("if a { f(); } else { #[cfg(unix)] if b { g(); } }").text,
+            canonicalize("if a { f(); } else if b { g(); }").text
+        );
+    }
+
+    #[test]
+    fn rustfmt_attributes_are_inert() {
+        let plain = canonicalize("fn f() {}");
+        assert_eq!(canonicalize("#[rustfmt::skip]\nfn f() {}").text, plain.text);
+        assert_eq!(
+            canonicalize("#[rustfmt::skip::macros(vec)]\nfn f() {}").text,
+            plain.text
+        );
+    }
+
+    #[test]
+    fn other_tool_or_lookalike_attributes_stay() {
+        let plain = canonicalize("async fn f() {}");
+        for attr in ["#[rustfmt_skip]", "#[tokio::main]"] {
+            let source = format!("{attr}\nasync fn f() {{}}");
+            assert_ne!(canonicalize(&source).text, plain.text, "{attr}");
+        }
+    }
+
+    #[test]
+    fn inline_bounds_merge_with_their_where_form() {
+        let pairs = [
+            (
+                "fn f<T: Clone>(t: T) -> T { t.clone() }",
+                "fn f<T>(t: T) -> T where T: Clone { t.clone() }",
+            ),
+            (
+                "trait Tr {}\nstruct S<T>(T);\nimpl<T: Clone> Tr for S<T> {}",
+                "trait Tr {}\nstruct S<T>(T);\nimpl<T> Tr for S<T> where T: Clone {}",
+            ),
+            ("struct S<T: Clone>(T);", "struct S<T>(T) where T: Clone;"),
+            (
+                "fn f<'a, 'b: 'a>(x: &'a u8, y: &'b u8) {}",
+                "fn f<'a, 'b>(x: &'a u8, y: &'b u8) where 'b: 'a {}",
+            ),
+            (
+                "fn f<T: Clone>(t: T) where T: Copy {}",
+                "fn f<T>(t: T) where T: Clone, T: Copy {}",
+            ),
+        ];
+        for (inline, clause) in pairs {
+            assert_eq!(
+                canonicalize(inline).text,
+                canonicalize(clause).text,
+                "{inline}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_impl_trait_argument_stays_apart_from_a_generic_parameter() {
+        assert_ne!(
+            canonicalize("fn f(x: impl Clone) {}").text,
+            canonicalize("fn f<T: Clone>(x: T) {}").text
+        );
+    }
+
+    #[test]
+    fn elidable_lifetimes_merge_with_their_elided_form() {
+        let pairs = [
+            ("const S: &'static str = \"a\";", "const S: &str = \"a\";"),
+            (
+                "static S: &'static [&'static str] = &[];",
+                "static S: &[&str] = &[];",
+            ),
+            (
+                "const F: &'static dyn Fn(&'static str) = &g;",
+                "const F: &dyn Fn(&'static str) = &g;",
+            ),
+            (
+                "fn f(x: &'_ str) -> usize { x.len() }",
+                "fn f(x: &str) -> usize { x.len() }",
+            ),
+            ("fn f(x: Wrap<'_>) {}", "fn f(x: Wrap) {}"),
+            ("fn f(x: Wrap<'_, u8>) {}", "fn f(x: Wrap<u8>) {}"),
+        ];
+        for (written, elided) in pairs {
+            assert_eq!(
+                canonicalize(written).text,
+                canonicalize(elided).text,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn lifetimes_whose_elision_means_something_else_stay() {
+        let pairs = [
+            // In a fn pointer or `Fn` sugar elision is higher ranked, not `'static`.
+            ("const F: fn(&'static str) = g;", "const F: fn(&str) = g;"),
+            (
+                "const F: &dyn Fn(&'static str) = &g;",
+                "const F: &dyn Fn(&str) = &g;",
+            ),
+            // An impl header may not elide a path lifetime (E0726).
+            (
+                "trait Tr {}\nimpl Tr for Wrap<'_> {}",
+                "trait Tr {}\nimpl Tr for Wrap {}",
+            ),
+            ("fn f<'a>(x: &'a str) {}", "fn f(x: &str) {}"),
+        ];
+        for (written, other) in pairs {
+            assert_ne!(
+                canonicalize(written).text,
+                canonicalize(other).text,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn std_derives_merge_in_any_order_or_split() {
+        let pairs = [
+            (
+                "#[derive(Debug, Clone)]\nstruct S;",
+                "#[derive(Clone, Debug)]\nstruct S;",
+            ),
+            (
+                "#[derive(Debug)]\n#[derive(Clone)]\nstruct S;",
+                "#[derive(Clone, Debug)]\nstruct S;",
+            ),
+            (
+                "#[derive(Debug)]\n#[repr(C)]\n#[derive(Clone)]\nstruct S;",
+                "#[derive(Clone, Debug)]\n#[repr(C)]\nstruct S;",
+            ),
+            (
+                "#[derive(PartialEq, Eq, Debug)]\nenum E { A }",
+                "#[derive(Debug, Eq, PartialEq)]\nenum E { A }",
+            ),
+        ];
+        for (written, sorted) in pairs {
+            assert_eq!(
+                canonicalize(written).text,
+                canonicalize(sorted).text,
+                "{written}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_derive_list_with_a_proc_macro_keeps_its_order() {
+        assert_ne!(
+            canonicalize("#[derive(Serialize, Debug)]\nstruct S;").text,
+            canonicalize("#[derive(Debug, Serialize)]\nstruct S;").text
+        );
+    }
+
+    #[test]
+    fn a_leading_colon_on_an_unbound_crate_path_folds() {
+        let pairs = [
+            (
+                "let v = ::std::vec::Vec::<u8>::new();",
+                "let v = std::vec::Vec::<u8>::new();",
+            ),
+            (
+                "let v: ::std::vec::Vec<u8> = Vec::new();",
+                "let v: std::vec::Vec<u8> = Vec::new();",
+            ),
+            (
+                "use ::std::fmt;\nlet _ = fmt::Error;",
+                "use std::fmt;\nlet _ = fmt::Error;",
+            ),
+            ("::std::println!(\"x\");", "std::println!(\"x\");"),
+        ];
+        for (rooted, plain) in pairs {
+            assert_eq!(
+                canonicalize(rooted).text,
+                canonicalize(plain).text,
+                "{rooted}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_leading_colon_past_a_local_item_of_that_name_stays() {
+        assert_ne!(
+            canonicalize("mod std { pub fn f() {} }\n::std::mem::drop(1);").text,
+            canonicalize("mod std { pub fn f() {} }\nstd::mem::drop(1);").text
+        );
     }
 
     #[test]
