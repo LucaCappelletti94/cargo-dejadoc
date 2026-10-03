@@ -155,18 +155,19 @@ fn mod_decls(
         if !crate::cfg::allows(&moditem.attrs) {
             continue;
         }
-        // A raw identifier names its file without the `r#`.
+        // A raw identifier names its file without the `r#`, the module
+        // path keeps it as rustdoc does.
         let name = moditem.ident.unraw().to_string();
         let mut segments = prefix.to_vec();
         if let Some((_, children)) = &moditem.content {
             let inner = base.join(&name);
-            segments.push(name);
+            segments.push(moditem.ident.to_string());
             mod_decls(children, &inner, &inner, &segments, out);
             continue;
         }
         match resolve_mod_path(dir, base, &name, &moditem.attrs) {
             Some((path, mod_rs)) if path.exists() => {
-                segments.push(name);
+                segments.push(moditem.ident.to_string());
                 out.push((path, segments, mod_rs));
             }
             Some((path, _)) => eprintln!("dejadoc: missing module file {}", path.display()),
@@ -193,12 +194,14 @@ fn resolve_mod_path(
         return Some((dir.join(crate::cfg::lit_str(&nv.value)?.value()), true));
     }
     let cfg_attr_path = attrs.iter().find_map(|attr| {
-        crate::cfg::cfg_attr_metas(attr)?.find_map(|meta| match meta {
-            Meta::NameValue(nv) if nv.path.is_ident("path") => {
-                crate::cfg::lit_str(&nv.value).map(syn::LitStr::value)
-            }
-            _ => None,
-        })
+        crate::cfg::cfg_attr_metas(attr)?
+            .into_iter()
+            .find_map(|meta| match meta {
+                Meta::NameValue(nv) if nv.path.is_ident("path") => {
+                    crate::cfg::lit_str(&nv.value).map(syn::LitStr::value)
+                }
+                _ => None,
+            })
     });
     if let Some(path) = cfg_attr_path {
         return Some((dir.join(path), true));
@@ -375,8 +378,8 @@ mod tests {
 
     #[test]
     fn module_tree_reports_module_path_segments() {
-        // File modules carry their module path, including raw-ident names
-        // and companion-directory nesting.
+        // File modules carry their module path, a raw-ident name spelled
+        // with its `r#` as rustdoc names the test, and companion nesting.
         let modules: Vec<String> = walk(&[
             ("lib.rs", "pub mod r#extern;\npub mod a;\n"),
             ("extern.rs", "pub fn g() {}\n"),
@@ -386,7 +389,7 @@ mod tests {
         .into_iter()
         .map(|(_, module)| module)
         .collect();
-        assert_eq!(modules, ["", "extern", "a", "a::b"]);
+        assert_eq!(modules, ["", "r#extern", "a", "a::b"]);
     }
 
     #[test]

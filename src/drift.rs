@@ -16,62 +16,10 @@ pub(crate) fn map_group(group: &Group, f: impl FnOnce(TokenStream) -> TokenStrea
     TokenTree::Group(rebuilt)
 }
 
-/// Drop the trailing comma of every token group. A one-tuple keeps its
-/// meaning because the fold of redundant parentheses already separates
-/// it from the parenthesised expression of the same element.
-pub(crate) fn strip_trailing_commas(stream: TokenStream) -> TokenStream {
-    stream
-        .into_iter()
-        .map(|tree| match tree {
-            TokenTree::Group(group) => map_group(&group, |inner| {
-                strip_last_comma(strip_trailing_commas(inner))
-            }),
-            other => other,
-        })
-        .collect()
-}
-
-/// `stream` without its last comma.
-fn strip_last_comma(stream: TokenStream) -> TokenStream {
-    let mut tokens: Vec<TokenTree> = stream.into_iter().collect();
-    if tokens.last().is_some_and(is_comma) {
-        tokens.pop();
-    }
-    tokens.into_iter().collect()
-}
-
-fn is_comma(tree: &TokenTree) -> bool {
-    matches!(tree, TokenTree::Punct(p) if p.as_char() == ',')
-}
-
-/// Rewrite every literal token in `stream` to its canonical decimal spelling.
-///
-/// Skips the token tree of a macro call and of an attribute, both of
-/// which a procedural macro receives verbatim, so the spelling of a
-/// literal inside them can be observable.
-pub(crate) fn canonical_literals(stream: TokenStream) -> TokenStream {
-    let mut out = Vec::new();
-    let mut opaque = false;
-    for tree in stream {
-        let tree = match tree {
-            TokenTree::Literal(lit) => {
-                let span = lit.span();
-                match syn::parse_str::<syn::Lit>(&lit.to_string()) {
-                    Ok(parsed) => canon_one_lit(parsed, span),
-                    Err(_) => TokenTree::Literal(lit),
-                }
-            }
-            TokenTree::Group(group) if !opaque => map_group(&group, canonical_literals),
-            other => other,
-        };
-        opaque = matches!(&tree, TokenTree::Punct(p) if matches!(p.as_char(), '!' | '#'));
-        out.push(tree);
-    }
-    out.into_iter().collect()
-}
-
-fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
-    let rebuilt = match lit {
+/// `lit` in its canonical decimal spelling.
+pub(crate) fn canonical_literal(lit: proc_macro2::Literal) -> TokenTree {
+    let span = lit.span();
+    let rebuilt = match syn::Lit::new(lit) {
         syn::Lit::Int(i) => {
             let decimal = format!("{}{}", i.base10_digits(), i.suffix());
             match syn::parse_str::<syn::LitInt>(&decimal) {

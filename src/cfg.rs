@@ -4,7 +4,8 @@
 
 use alloc::string::ToString;
 
-use syn::{Expr, ExprLit, Lit, LitStr, Meta, Token, punctuated, punctuated::Punctuated};
+use alloc::vec::Vec;
+use syn::{Expr, ExprLit, Lit, LitStr, Meta, Token, punctuated::Punctuated};
 
 /// Whether every `#[cfg(…)]` in `attrs` holds.
 pub(crate) fn allows(attrs: &[syn::Attribute]) -> bool {
@@ -17,23 +18,37 @@ pub(crate) fn allows(attrs: &[syn::Attribute]) -> bool {
     })
 }
 
-/// The metas a `#[cfg_attr(pred, …)]` applies, `None` unless it is one
-/// and its predicate holds.
-pub(crate) fn cfg_attr_metas(attr: &syn::Attribute) -> Option<punctuated::IntoIter<Meta>> {
-    if !attr.path().is_ident("cfg_attr") {
-        return None;
-    }
-    let Meta::List(list) = &attr.meta else {
-        return None;
+/// The metas a `#[cfg_attr(pred, …)]` applies, nested ones expanded in
+/// place, `None` unless it is one and its predicate holds.
+pub(crate) fn cfg_attr_metas(attr: &syn::Attribute) -> Option<Vec<Meta>> {
+    let mut metas = Vec::new();
+    expand(&attr.meta, &mut metas).then_some(metas)
+}
+
+/// Push what `meta` applies onto `out` when it is a `cfg_attr` whose
+/// predicate holds, and tell whether it was.
+fn expand(meta: &Meta, out: &mut Vec<Meta>) -> bool {
+    let Meta::List(list) = meta else {
+        return false;
     };
-    let mut metas = list
-        .parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
-        .ok()?
-        .into_iter();
-    metas
-        .next()
-        .is_some_and(|pred| holds(&pred))
-        .then_some(metas)
+    if !list.path.is_ident("cfg_attr") {
+        return false;
+    }
+    let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated) else {
+        return false;
+    };
+    let mut metas = metas.into_iter();
+    if !metas.next().is_some_and(|pred| holds(&pred)) {
+        return false;
+    }
+    for meta in metas {
+        if meta.path().is_ident("cfg_attr") {
+            expand(&meta, out);
+        } else {
+            out.push(meta);
+        }
+    }
+    true
 }
 
 /// The string literal `expr` is, if any.
@@ -182,5 +197,33 @@ mod tests {
         assert!(!allows(&attrs("#[cfg(doc)]\n#[cfg(test)]")));
         assert!(allows(&attrs("#[inline]\n#[cfg(doc)]")));
         assert!(allows(&attrs("#[cfg]")));
+    }
+
+    #[test]
+    fn nested_cfg_attr_expands_in_place_when_its_predicate_holds() {
+        let names = |src: &str| -> Vec<alloc::string::String> {
+            attrs(src)
+                .iter()
+                .filter_map(cfg_attr_metas)
+                .flatten()
+                .map(|meta| meta.path().get_ident().unwrap().to_string())
+                .collect()
+        };
+        assert_eq!(
+            names(
+                "#[cfg_attr(unix, must_use, cfg_attr(feature = \"a\", doc = \"x\", cfg_attr(windows, cold)), inline)]"
+            ),
+            ["must_use", "doc", "inline"]
+        );
+        assert_eq!(
+            names("#[cfg_attr(windows, cfg_attr(unix, doc = \"x\"))]"),
+            Vec::<alloc::string::String>::new()
+        );
+        // A malformed `cfg_attr`, outer or nested, applies nothing.
+        assert_eq!(
+            names("#[cfg_attr]\n#[cfg_attr(unix, = x)]\n#[cfg_attr(unix, cfg_attr, inline)]"),
+            ["inline"]
+        );
+        assert!(cfg_attr_metas(&attrs("#[cfg_attr]")[0]).is_none());
     }
 }
