@@ -2912,12 +2912,57 @@ fn f() {}"#,
             "None",
             "1",
             "1..=5",
+            "..=5",
+            "a::B",
+            "<T>::C",
+            "const { 1 }",
+            "x: u8",
+            "..",
             "mac!()",
         ];
         for param in params {
             let with = canonicalize(&format!("let c = |#[expect(unused)] {param}| 0;"));
             let without = canonicalize(&format!("let c = |{param}| 0;"));
             assert_eq!(with.text, without.text, "param pattern {param}");
+        }
+    }
+
+    #[test]
+    fn inert_attrs_on_built_or_and_guard_patterns_merge() {
+        // A parsed tree never puts an attribute on an or-pattern or a guard,
+        // a tree built in code, a proc macro's output for one, can.
+        use quote::ToTokens as _;
+        use syn::visit_mut::VisitMut;
+
+        struct Attach;
+        impl VisitMut for Attach {
+            fn visit_pat_mut(&mut self, pat: &mut syn::Pat) {
+                let attr: syn::Attribute = syn::parse_quote!(#[expect(unused)]);
+                match pat {
+                    syn::Pat::Or(p) => p.attrs.push(attr),
+                    syn::Pat::Guard(p) => p.attrs.push(attr),
+                    _ => {}
+                }
+                syn::visit_mut::visit_pat_mut(self, pat);
+            }
+        }
+        let canon = |mut file: syn::File| {
+            crate::drift::normalize_file(&mut file);
+            crate::alpha::normalize_file(&mut file);
+            file.to_token_stream().to_string()
+        };
+        for src in [
+            "fn main() { match v { A | B => 1, _ => 2 }; }",
+            "fn main() { match v { A if c => 1, _ => 2 }; }",
+        ] {
+            let plain: syn::File = syn::parse_str(src).unwrap();
+            let mut marked = plain.clone();
+            Attach.visit_file_mut(&mut marked);
+            assert_ne!(
+                marked.to_token_stream().to_string(),
+                plain.to_token_stream().to_string()
+            );
+            assert_eq!(canon(marked), canon(plain), "{src}");
         }
     }
 

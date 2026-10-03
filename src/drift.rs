@@ -654,20 +654,26 @@ fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
 
 /// An attribute on an untyped closure parameter sits on the pattern itself,
 /// arm and named-parameter attributes sit on the arm or `FnArg` instead.
-/// `Path`, `Or`, `Range`, `Guard`, `Rest` and `Const` never keep an attribute
-/// in a parsed tree, a single-segment name parses as `Ident`, an or-pattern
-/// splits the parameter list and an attributed range reprints as a `Paren`.
+/// Every pattern kind can carry one, a range for example parses with its
+/// attribute and reprints it as `#[a] (1..=5)`.
 fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
     let attrs = match pat {
+        syn::Pat::Const(p) => &mut p.attrs,
+        syn::Pat::Guard(p) => &mut p.attrs,
         syn::Pat::Ident(p) => &mut p.attrs,
         syn::Pat::Lit(p) => &mut p.attrs,
         syn::Pat::Macro(p) => &mut p.attrs,
+        syn::Pat::Or(p) => &mut p.attrs,
         syn::Pat::Paren(p) => &mut p.attrs,
+        syn::Pat::Path(p) => &mut p.attrs,
+        syn::Pat::Range(p) => &mut p.attrs,
         syn::Pat::Reference(p) => &mut p.attrs,
+        syn::Pat::Rest(p) => &mut p.attrs,
         syn::Pat::Slice(p) => &mut p.attrs,
         syn::Pat::Struct(p) => &mut p.attrs,
         syn::Pat::Tuple(p) => &mut p.attrs,
         syn::Pat::TupleStruct(p) => &mut p.attrs,
+        syn::Pat::Type(p) => &mut p.attrs,
         syn::Pat::Wild(p) => &mut p.attrs,
         _ => return,
     };
