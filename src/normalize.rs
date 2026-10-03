@@ -1682,6 +1682,40 @@ fn f() {}"#,
     }
 
     #[test]
+    fn a_leading_colon_on_an_unbound_crate_path_folds() {
+        let pairs = [
+            (
+                "let v = ::std::vec::Vec::<u8>::new();",
+                "let v = std::vec::Vec::<u8>::new();",
+            ),
+            (
+                "let v: ::std::vec::Vec<u8> = Vec::new();",
+                "let v: std::vec::Vec<u8> = Vec::new();",
+            ),
+            (
+                "use ::std::fmt;\nlet _ = fmt::Error;",
+                "use std::fmt;\nlet _ = fmt::Error;",
+            ),
+            ("::std::println!(\"x\");", "std::println!(\"x\");"),
+        ];
+        for (rooted, plain) in pairs {
+            assert_eq!(
+                canonicalize(rooted).text,
+                canonicalize(plain).text,
+                "{rooted}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_leading_colon_past_a_local_item_of_that_name_stays() {
+        assert_ne!(
+            canonicalize("mod std { pub fn f() {} }\n::std::mem::drop(1);").text,
+            canonicalize("mod std { pub fn f() {} }\nstd::mem::drop(1);").text
+        );
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");

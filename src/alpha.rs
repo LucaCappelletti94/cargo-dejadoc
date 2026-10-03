@@ -180,6 +180,14 @@ impl Renamer {
         self.resolve(&[Ns::Label], &mut lifetime.ident);
     }
 
+    /// Drop a leading `::` when no local item binds the first segment `first`
+    /// of its path, `::std` and `std` then naming the same crate.
+    fn unroot(&self, leading_colon: &mut Option<syn::Token![::]>, first: Option<&Ident>) {
+        if first.is_some_and(|first| self.lookup(&[Ns::Type], &first.to_string()).is_none()) {
+            *leading_colon = None;
+        }
+    }
+
     /// Rewrite macro tokens the parser cannot read, an identifier before
     /// `!` resolving through the macro namespace too.
     fn rename_tokens(&mut self, tokens: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
@@ -772,6 +780,13 @@ impl VisitMut for Renamer {
 
     fn visit_item_use_mut(&mut self, item: &mut syn::ItemUse) {
         self.visit_attrs(&mut item.attrs);
+        let first = match &item.tree {
+            syn::UseTree::Path(path) => Some(&path.ident),
+            syn::UseTree::Name(name) => Some(&name.ident),
+            syn::UseTree::Rename(rename) => Some(&rename.ident),
+            syn::UseTree::Glob(_) | syn::UseTree::Group(_) => None,
+        };
+        self.unroot(&mut item.leading_colon, first);
         let glob = syn::UseTree::Glob(syn::UseGlob {
             star_token: <syn::Token![*]>::default(),
         });
@@ -883,6 +898,10 @@ impl VisitMut for Renamer {
         // through the saved frame of the local module before it. A type
         // position reads the type namespace only, rustc-valid programs
         // bind every name they show there in it.
+        self.unroot(
+            &mut path.leading_colon,
+            path.segments.first().map(|s| &s.ident),
+        );
         let ns: &[Ns] = if self.in_type {
             &[Ns::Type]
         } else {
@@ -932,6 +951,10 @@ impl VisitMut for Renamer {
     }
 
     fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {
+        self.unroot(
+            &mut mac.path.leading_colon,
+            mac.path.segments.first().map(|s| &s.ident),
+        );
         if let Some(first) = mac.path.segments.first_mut() {
             self.resolve(&[Ns::Macro], &mut first.ident);
         }
