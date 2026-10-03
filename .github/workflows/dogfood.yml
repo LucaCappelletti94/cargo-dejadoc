@@ -163,9 +163,12 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      # The released binary predates the code under review, so this job scans with the branch build.
+      - run: cargo install --path . --locked
       - uses: ./
         with:
           cwd: tests/fixtures/fnws
+          install: false
           dry-run: true
           annotations: false
       - name: Check the function findings

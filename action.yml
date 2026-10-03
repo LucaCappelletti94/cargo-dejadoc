@@ -35,6 +35,10 @@ inputs:
     description: The dejadoc version to install, empty for the latest
     required: false
     default: ''
+  install:
+    description: Install dejadoc, false uses the cargo dejadoc already on the path
+    required: false
+    default: 'true'
   cwd:
     description: The workspace directory to scan
     required: false
@@ -68,7 +72,7 @@ runs:
   using: 'composite'
   steps:
     - name: Install dejadoc
-      if: ${{ inputs.mode != 'post' }}
+      if: ${{ inputs.mode != 'post' && inputs.install == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}

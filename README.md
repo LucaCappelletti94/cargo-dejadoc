@@ -60,6 +60,8 @@ jobs:
           annotations: true
           # Render the review in the job summary instead of posting it.
           dry-run: false
+          # Use the cargo dejadoc already on the path instead of installing one, default true.
+          install: true
 ```
 
 Review mode reports only the duplicates your pull request introduces, comparing each site against a scan of the base commit. Comments land on the copies to remove, a kept copy never gets one. Each comment links the copy that survives and GitHub renders those lines right in the comment, long ones collapsed behind a show link. The link points at the base commit for pre-existing copies and at the first added copy for groups the pull request created, and the removal suggestion deletes the copy together with an empty line left behind. Sites GitHub cannot anchor get permalinks in the review body.
