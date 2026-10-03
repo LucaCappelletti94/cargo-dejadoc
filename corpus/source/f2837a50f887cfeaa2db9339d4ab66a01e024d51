@@ -1,2 +1,0 @@
-#[fordoc = r#"raw1`
-"#p]ub fn raw() {}

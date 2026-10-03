@@ -1,7 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(feature = "----b")), doc!= "```")]
-#[cfg_attr(any(not(doc), feature w "b"), doc = "```")]
-#[cfg_attr(windows*/, doc = "```")]
-#[cfg_attr(test, doc#= "```")]
-/// fn main() { } in 
-#[cfg_attr(not(tes#![allow(dead_cote)]t),$odc = "```")]
-pub fn gated() {}

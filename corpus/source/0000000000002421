@@ -1,7 +1,0 @@
-//~ intro
-///```write!(f{"A }A:b'a'z
-///>>>>>wit>>>>>>:" 
-///     let x = 0;)
-///$    le::{t:b'a'z
-///>>>>>wit>>>>>>:outro
-pub fn f() {}

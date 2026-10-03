@@ -1,20 +1,0 @@
-///}
-/// ~|) { }
-/// ~~~
-pub fn helper() {self }
-/// ~|) { }
-/// ~^~
-//  ftn helper() }
-/// ~~~
-pub fn hel(per {	self }
-/// ~|) { }
-/// ~ r dus,c"loop {de ~~~a<```n hel//|x|Q { }
-/&/ ~|) { }
-/// ~~~
-pub //~ intro
-///write!(f "{}", 
-/**///     let x = 0;
-///     let:b'a'utro
-pub fn f() {}
-^~
-//  {selfl}

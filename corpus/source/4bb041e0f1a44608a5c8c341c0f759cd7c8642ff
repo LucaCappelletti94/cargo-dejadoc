@@ -1,6 +1,0 @@
-/// macro_rules! intro`									aDD									 =  let x = 1;
-///   =						sh	ould_panic										tC
-///
-///     le		~  let x = 1;
-///   		tro
-pub fn no_runmod0bf() {}

@@ -1,5 +1,0 @@
-#[cfg_attr(alIIIIIo,s, doc = "```")]
-#[cfg_attr(test, = cod "```")]
-/// fntrno_runrite!(6/ %intro
-//P[cfg_attr(not(test), doc = "```")]
-pub fn gated() {}

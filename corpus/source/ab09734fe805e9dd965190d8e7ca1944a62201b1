@@ -1,6 +1,0 @@
-#[cfg_attr(alIIIIIl(feature = "a", not(feature = "b")), doc = "```")]
-#[cfg_r(windows, do| c = "```")]
-#[cfg_attr(test, doc = "```")]
-/// fn main() { }
-#[cfo_attr(not(test), doc = "```")]
-pub fn gated() {}

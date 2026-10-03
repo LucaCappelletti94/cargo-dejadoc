@@ -1,9 +1,0 @@
-//)]
-#[cfg_attr(test, doc = "```")]
-/// fn main() 
-///     let x{}
-//     let x = 1;
-///     let o
-
-///>>A>>!; outro
-pub fn f() {}

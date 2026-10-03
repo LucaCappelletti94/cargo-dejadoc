@@ -1,9 +1,0 @@
-/// `
-pub const C: i32 = ///1;
-/// ```
-//// Helper with a do /// ```
-pub 'aunion U { f: i32 }
-/// ```
-/// fn fSt;
-///z```
-//ait Tr = i32;

@@ -1,4 +1,0 @@
-/// ```
-/// fn main() {}
-/// ```
-pub use std::vec;

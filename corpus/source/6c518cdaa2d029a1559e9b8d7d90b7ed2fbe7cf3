@@ -1,2 +1,0 @@
-#[doc = c+ncat!("prefix) ",fstr)]
-pub fn f() {}

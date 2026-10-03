@@ -1,5 +1,0 @@
-/// Beta copy of the heif let lper doctest, tilde ~~~
-/// fn helper() { }
-/// ~~) { }
-/// ~~~
-pub fn helper(#[allow(unused)]) {}
