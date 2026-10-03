@@ -16,18 +16,10 @@ pub(crate) fn map_group(group: &Group, f: impl FnOnce(TokenStream) -> TokenStrea
     TokenTree::Group(rebuilt)
 }
 
-/// `lit` in its canonical decimal spelling, as written when it is no
-/// literal `syn` reads.
+/// `lit` in its canonical decimal spelling.
 pub(crate) fn canonical_literal(lit: proc_macro2::Literal) -> TokenTree {
     let span = lit.span();
-    match syn::parse_str::<syn::Lit>(&lit.to_string()) {
-        Ok(parsed) => canon_one_lit(parsed, span),
-        Err(_) => TokenTree::Literal(lit),
-    }
-}
-
-fn canon_one_lit(lit: syn::Lit, span: proc_macro2::Span) -> TokenTree {
-    let rebuilt = match lit {
+    let rebuilt = match syn::Lit::new(lit) {
         syn::Lit::Int(i) => {
             let decimal = format!("{}{}", i.base10_digits(), i.suffix());
             match syn::parse_str::<syn::LitInt>(&decimal) {

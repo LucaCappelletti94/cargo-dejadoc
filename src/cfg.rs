@@ -219,5 +219,11 @@ mod tests {
             names("#[cfg_attr(windows, cfg_attr(unix, doc = \"x\"))]"),
             Vec::<alloc::string::String>::new()
         );
+        // A malformed `cfg_attr`, outer or nested, applies nothing.
+        assert_eq!(
+            names("#[cfg_attr]\n#[cfg_attr(unix, = x)]\n#[cfg_attr(unix, cfg_attr, inline)]"),
+            ["inline"]
+        );
+        assert!(cfg_attr_metas(&attrs("#[cfg_attr]")[0]).is_none());
     }
 }
