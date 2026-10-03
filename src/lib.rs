@@ -798,6 +798,26 @@ mod tests {
     }
 
     #[test]
+    fn a_methods_name_does_not_bind_the_free_function_its_body_calls() {
+        // tauri-plugin-dialog: each method forwards to the free function of its own name.
+        let src = format!(
+            "struct A;\nimpl A {{ fn pick_files{BODY}\nfn pick_folders{BODY} }}\nimpl A {{\nfn one(self, values: &[u32], limit: u32) -> u32 {{ let mut total = 0; for value in values {{ if *value > limit {{ total += pick_files(values, limit); }} else {{ total -= 1; }} }} total }}\nfn two(self, values: &[u32], limit: u32) -> u32 {{ let mut total = 0; for value in values {{ if *value > limit {{ total += pick_folders(values, limit); }} else {{ total -= 1; }} }} total }}\n}}\n"
+        );
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            [["c::A::pick_files", "c::A::pick_folders"]]
+        );
+        let methods = "struct A;\nimpl A {\nfn one(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } total }\nfn two(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } total }\n}\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default(), methods),
+            Vec::<Vec<String>>::new()
+        );
+        // A free function's name is in scope, so recursion still renames with it.
+        let free = "fn one(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } total }\nfn two(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } total }\n";
+        assert_eq!(fn_groups(Dejadoc::default(), free), [["c::one", "c::two"]]);
+    }
+
+    #[test]
     fn two_targets_sharing_a_root_file_are_one_crate() {
         // allo-isolate lists `tests/containers.rs` as both an example and a test.
         let src = format!("fn one{BODY}\nfn two{BODY}\n");

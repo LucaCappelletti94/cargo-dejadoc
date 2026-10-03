@@ -243,7 +243,7 @@ impl Walk<'_> {
                 attrs: attrs.iter().filter(|a| live(&a.meta)).cloned().collect(),
                 vis: syn::Visibility::Inherited,
                 modifiers: syn::FnModifiers::default(),
-                sig: sig.clone(),
+                sig: compared_sig(sig, method.is_some()),
                 block: Box::new(block.clone()),
             },
             context: Context {
@@ -262,6 +262,16 @@ struct Parts<'a> {
     vis: &'a syn::Visibility,
     sig: &'a syn::Signature,
     block: &'a syn::Block,
+}
+
+/// The signature as compared. A method's name is not in scope in its body, where a bare
+/// path of that name reaches a free function, so the method's name becomes one no body names.
+fn compared_sig(sig: &syn::Signature, method: bool) -> syn::Signature {
+    let mut sig = sig.clone();
+    if method {
+        sig.ident = syn::Ident::new("__dejadoc_method", sig.ident.span());
+    }
+    sig
 }
 
 /// The printed `cfg` attributes among `attrs`.
