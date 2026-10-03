@@ -1,10 +1,10 @@
-//! Alpha-renaming of local binders in a parsed doctest.
+//! Alpha-renaming of local binders in a parsed file.
 //!
-//! Every identifier the doctest itself binds (`let` patterns, function
+//! Every identifier the file itself binds (`let` patterns, function
 //! names and parameters, closures, generics, lifetimes, local types,
 //! `const`/`static` items, local `macro_rules!` names, and `use`
-//! aliases) is rewritten to a positional name such as `_dejadoc_0`, so
-//! two bodies that differ only in local names collapse to the same
+//! aliases) is rewritten to a positional name such as `_canon_0`, so
+//! two files that differ only in local names collapse to the same
 //! canonical form. Free identifiers, field names, method names,
 //! attribute paths, and string literals are never rewritten.
 
@@ -23,7 +23,7 @@ use syn::visit_mut::VisitMut;
 
 /// A canonical binder name, positional in the deterministic traversal.
 fn canonical(counter: &mut usize) -> String {
-    let name = format!("_dejadoc_{counter}");
+    let name = format!("_canon_{counter}");
     *counter += 1;
     name
 }

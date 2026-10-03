@@ -207,8 +207,8 @@ fn float_trailing_zeros_agree() {
 
 #[test]
 fn a_float_canonicalizes_to_its_text_form() {
-    assert_eq!(canonicalize("1_000.50").text, "fn _dejadoc_0 () { 1000.5 }");
-    assert_eq!(canonicalize("1.0E+03").text, "fn _dejadoc_0 () { 1.0e3 }");
+    assert_eq!(canonicalize("1_000.50").text, "fn _canon_0 () { 1000.5 }");
+    assert_eq!(canonicalize("1.0E+03").text, "fn _canon_0 () { 1.0e3 }");
 }
 
 #[test]
@@ -1165,8 +1165,8 @@ fn alpha_shadowing_resolves_to_nearest_binder() {
     assert_eq!(a.text, b.text);
     // The inner use resolves to the inner binder and the trailing
     // use to the outer one, so both canonical names appear.
-    assert!(a.text.contains("_dejadoc_0"));
-    assert!(a.text.contains("_dejadoc_1"));
+    assert!(a.text.contains("_canon_0"));
+    assert!(a.text.contains("_canon_1"));
     let c = canonicalize("let y = 2;\n{ let y = 1; y }\ny\n");
     assert_ne!(a.text, c.text);
 }
@@ -1543,8 +1543,8 @@ fn alpha_renames_guard_pattern() {
 #[test]
 fn alpha_scope_end_releases_inner_bindings() {
     let a = canonicalize("let pino = 1;\n{ let pino = 2; pino }\npino\n");
-    assert_eq!(a.text.matches("_dejadoc_1").count(), 2);
-    assert_eq!(a.text.matches("_dejadoc_2").count(), 2);
+    assert_eq!(a.text.matches("_canon_1").count(), 2);
+    assert_eq!(a.text.matches("_canon_2").count(), 2);
 }
 
 #[test]
