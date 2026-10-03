@@ -683,6 +683,29 @@ mod tests {
     }
 
     #[test]
+    fn a_free_function_and_a_method_of_one_body_span_types() {
+        let src = format!(
+            "struct A;\nfn run{BODY}\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n"
+        );
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], &src)],
+            &|_f, _i| None,
+        );
+        let group = &report.groups[0];
+        let types: Vec<Option<&str>> = group.sites.iter().map(|s| s.self_type.as_deref()).collect();
+        assert_eq!(types, [None, Some("A"), Some("A")]);
+        assert!(group.spans_types());
+        let same = format!("struct A;\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n");
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], &same)],
+            &|_f, _i| None,
+        );
+        assert!(!report.groups[0].spans_types());
+    }
+
+    #[test]
     fn methods_of_different_self_types_group_and_report_their_types() {
         let src = format!(
             "struct A;\nstruct B;\nimpl A {{ fn run{BODY} }}\nimpl B {{ fn run{BODY} }}\ntrait T {{ fn go{BODY} }}\n"

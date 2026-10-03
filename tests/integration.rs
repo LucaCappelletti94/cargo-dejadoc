@@ -13,6 +13,82 @@ fn scan() -> Report {
     dejadoc::Dejadoc::default().run(FIXTURE).unwrap()
 }
 
+const FN_FIXTURE: &str = "tests/fixtures/fnws";
+
+/// A function group's items, self types and whether it spans types.
+type FnGroup<'a> = (Vec<&'a str>, Vec<Option<&'a str>>, bool);
+
+#[test]
+fn functions_group_per_module_across_targets_and_cfgs() {
+    let report = Dejadoc::default().run(FN_FIXTURE).unwrap();
+    assert_eq!(
+        (report.total, report.functions, report.unique_functions),
+        (0, 12, 6)
+    );
+    let mut groups: Vec<FnGroup<'_>> = report
+        .groups
+        .iter()
+        .map(|g| {
+            assert_eq!(g.kind, dejadoc::Kind::Function);
+            let items = g.sites.iter().map(|s| s.item.as_str()).collect();
+            let types = g.sites.iter().map(|s| s.self_type.as_deref()).collect();
+            (items, types, g.spans_types())
+        })
+        .collect();
+    groups.sort();
+    assert_eq!(
+        groups,
+        [
+            (
+                vec!["fnws::platform::width", "fnws::platform::height"],
+                vec![None, None],
+                false
+            ),
+            (
+                vec!["fnws::render::Alpha::render", "fnws::render::Beta::render"],
+                vec![Some("Alpha"), Some("Beta")],
+                true
+            ),
+            (
+                vec![
+                    "fnws::tests::totals_small_values",
+                    "fnws::tests::totals_large_values"
+                ],
+                vec![None, None],
+                false
+            ),
+            (
+                vec!["fnws::total_over", "fnws::sum_over"],
+                vec![None, None],
+                false
+            ),
+            (
+                vec!["it::renders_values", "it::renders_values_again"],
+                vec![None, None],
+                false
+            ),
+        ]
+    );
+    // A site runs from its first doc comment or attribute to its closing brace.
+    for site in report.groups.iter().flat_map(|g| &g.sites) {
+        let text = std::fs::read_to_string(Path::new(FN_FIXTURE).join(&site.file)).unwrap();
+        let lines: Vec<&str> = text.lines().collect();
+        let first = lines[site.line as usize - 1].trim_start();
+        let last = lines[site.end.unwrap() as usize - 1].trim();
+        assert!(
+            first.starts_with("///") || first.starts_with("#[") || first.contains("fn "),
+            "{site:?}"
+        );
+        assert_eq!(last, "}", "{site:?}");
+        assert_eq!(
+            site.code.lines().count(),
+            (site.end.unwrap() - site.line + 1) as usize
+        );
+    }
+    let off = Dejadoc::default().no_functions().run(FN_FIXTURE).unwrap();
+    assert_eq!((off.functions, off.groups.len()), (0, 0));
+}
+
 #[test]
 fn shared_group_spans_crates_and_variants() {
     let report = scan();
