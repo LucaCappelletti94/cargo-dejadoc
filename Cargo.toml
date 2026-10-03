@@ -31,6 +31,7 @@ quote = { version = "1.0.47", default-features = false }
 serde = { version = "1.0.229", default-features = false, features = ["derive", "alloc"] }
 serde_json = { version = "1.0.151", default-features = false, features = ["alloc"] }
 syn = { version = "3.0.5", default-features = false, features = ["full", "parsing", "printing", "clone-impls", "visit", "visit-mut"] }
+syn-canon = { version = "0.1.0", path = "syn-canon" }
 thiserror = { version = "2.0.20", optional = true }
 toml = { version = "1.1.6", optional = true }
 
@@ -40,7 +41,13 @@ tempfile = "3.27.0"
 [profile.release]
 strip = true
 
-[lints.rust]
+[lints]
+workspace = true
+
+[workspace]
+members = ["syn-canon"]
+
+[workspace.lints.rust]
 missing_docs = "forbid"
 unused_macro_rules = "forbid"
 unconditional_recursion = "forbid"
@@ -51,7 +58,7 @@ unsafe_code = "forbid"
 deprecated = "deny"
 unknown_lints = "allow"
 
-[lints.rustdoc]
+[workspace.lints.rustdoc]
 broken_intra_doc_links = "forbid"
 bare_urls = "forbid"
 invalid_codeblock_attributes = "forbid"
@@ -59,7 +66,7 @@ invalid_html_tags = "forbid"
 missing_crate_level_docs = "forbid"
 unescaped_backticks = "forbid"
 
-[lints.clippy]
+[workspace.lints.clippy]
 all = { level = "deny", priority = -1 }
 pedantic = { level = "deny", priority = -1 }
 allow_attributes = "deny"
