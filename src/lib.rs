@@ -15,13 +15,11 @@ use std::eprintln;
 #[cfg(feature = "std")]
 use std::path::{Path, PathBuf};
 
-mod alpha;
 mod cfg;
 #[cfg(feature = "std")]
 mod config;
 #[cfg(feature = "std")]
 mod discover;
-mod drift;
 pub mod extract;
 mod fence;
 mod normalize;

@@ -1,0 +1,19 @@
+[package]
+name = "syn-canon"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+authors = ["Luca Cappelletti"]
+description = "Canonical form of a syn file, equal across formatting drift and local binder names"
+license = "MIT"
+repository = "https://github.com/LucaCappelletti94/cargo-dejadoc"
+keywords = ["syn", "canonical", "normalize", "alpha-equivalence", "no-std"]
+categories = ["development-tools", "parser-implementations", "no-std"]
+
+[dependencies]
+proc-macro2 = { version = "1.0.107", default-features = false }
+quote = { version = "1.0.47", default-features = false }
+syn = { version = "3.0.5", default-features = false, features = ["full", "parsing", "printing", "clone-impls", "visit-mut"] }
+
+[lints]
+workspace = true

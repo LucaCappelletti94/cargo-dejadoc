@@ -200,6 +200,7 @@ dependencies = [
  "serde",
  "serde_json",
  "syn",
+ "syn-canon",
  "tempfile",
  "thiserror",
  "toml",
@@ -439,6 +440,15 @@ dependencies = [
  "proc-macro2",
  "quote",
  "unicode-ident",
+]
+
+[[package]]
+name = "syn-canon"
+version = "0.1.0"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]

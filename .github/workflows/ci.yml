@@ -16,11 +16,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - run: cargo fmt --check
-      - run: cargo clippy --all-targets -- -D warnings
-      - run: cargo doc --no-deps
-      - run: cargo test
-      - run: cargo clippy --lib --no-default-features -- -D warnings
-      - run: cargo test --lib --no-default-features
-      - run: cargo clippy --all-targets --no-default-features --features std -- -D warnings
-      - run: cargo test --no-default-features --features std
+      - run: cargo fmt --all --check
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+      - run: cargo doc --workspace --no-deps
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace --lib --no-default-features -- -D warnings
+      - run: cargo test --workspace --lib --no-default-features
+      - run: cargo clippy -p dejadoc --all-targets --no-default-features --features std -- -D warnings
+      - run: cargo test -p dejadoc --no-default-features --features std

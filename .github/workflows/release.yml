@@ -67,8 +67,19 @@ jobs:
         id: auth
         uses: rust-lang/crates-io-auth-action@c6f97d42243bad5fab37ca0427f495c86d5b1a18 # v1
 
+      - name: Publish syn-canon when its version is new
+        run: |
+          version="$(cargo metadata --no-deps --format-version 1 | jq -r '.packages[] | select(.name == "syn-canon") | .version')"
+          if curl -sf https://index.crates.io/sy/n-/syn-canon | jq -e --arg v "$version" 'select(.vers == $v)' > /dev/null; then
+            echo "syn-canon $version is already on crates.io"
+          else
+            cargo publish --locked -p syn-canon
+          fi
+        env:
+          CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
+
       - name: Publish crate
-        run: cargo publish --locked
+        run: cargo publish --locked -p dejadoc
         env:
           CARGO_REGISTRY_TOKEN: ${{ steps.auth.outputs.token }}
 
