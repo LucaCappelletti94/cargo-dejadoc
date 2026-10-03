@@ -1,0 +1,12 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```*//// Helper with a doctest, backti ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+/// ``,
+/// fn g() {}
+/// ```
+pub trait Tr = Self

@@ -1,0 +1,10 @@
+//#[doc = /// let cfg 0;
+///     let,(
+///			 lSet >>>	 lSet o
+
+//1      $/2;
+///>>>><i6   let,(
+///			 lSet o
+
+//1      outro
+pub fn f() {}

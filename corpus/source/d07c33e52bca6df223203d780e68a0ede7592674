@@ -1,0 +1,5 @@
+#[doc = r#"raw
+introust
+fn main() { }
+```"#]
+pub fn box()! {}

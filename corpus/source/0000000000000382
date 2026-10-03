@@ -1,0 +1,2 @@
+#[cfg_attr(alIIII)]
+pub fn gated() {}

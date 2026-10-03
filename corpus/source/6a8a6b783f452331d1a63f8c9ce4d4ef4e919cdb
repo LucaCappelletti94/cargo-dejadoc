@@ -1,0 +1,2 @@
+///[eo
+pub fn f() {#![allow(dead_code)]}

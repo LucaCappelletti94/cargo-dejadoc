@@ -1,0 +1,1 @@
+fn f() -> u8 { 'zz: loop { let d: &dyn for<'nq>( F&'q u8) = g; break 'zz 1; } }

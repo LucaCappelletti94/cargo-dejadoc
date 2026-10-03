@@ -1,0 +1,7 @@
+///[e**/i    ofA th/e"heif le-t lpt lpe],]r doctes'e```let lpt lpe],]r doctes'*ѽ**/ilde ~~~
+/// f*ѽ**let lpt lpe],]r doctes'*ѽ**/ilde ~~~
+/// f]*ѽ**/s'*ѽ**/ilde ~~~
+/// f*ѽ**let lpt lpr] ,e]doctes'*ѽ**/ilde ~~compile_fail~
+/// f]*ѽ**/ilde ~~@~
+///ATA[o
+pub fn f() {}

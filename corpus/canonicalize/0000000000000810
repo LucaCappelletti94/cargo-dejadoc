@@ -1,0 +1,3 @@
+let x = g()?;
+let y = x + 1;
+Ok::<(), MyError>(())

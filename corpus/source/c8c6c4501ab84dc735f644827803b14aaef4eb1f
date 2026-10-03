@@ -1,0 +1,8 @@
+//``
+/// ```
+pub static S: i16 = 1;
+/// d``
+///ntro`// i// ```
+/// ```
+pub static S: i32 = 1; e/imp// outro
+pub fn fn h{}

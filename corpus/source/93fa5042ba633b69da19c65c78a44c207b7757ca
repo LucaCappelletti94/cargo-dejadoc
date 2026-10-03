@@ -1,0 +1,13 @@
+struct S;
+impl S {
+    /// ```
+    /// fn main() {}
+    /// ```
+    const C: i32 = 1;
+    /// / fn main/// fn main() {}
+    /// ```
+    const C: i32 = 1;
+    /// ```
+    /// fn main() { let a = 1; }
+    /// ```
+    type truct 60000002222222622222}

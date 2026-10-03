@@ -1,0 +1,25 @@
+/// mwrite!(f, "{}", _harness``
+///
+//
+///     le	
+///
+///     				test_harness``
+///     le
+///
+///     				test_harness``
+///     le	
+///
+///     				test_harness``
+///
+//
+///     				]						tC
+///
+///     le				//
+///     le						tC
+///
+///     le																	ess``
+///
+//
+///      !   let ,y
+///			`	rt
+pub fn f() {}

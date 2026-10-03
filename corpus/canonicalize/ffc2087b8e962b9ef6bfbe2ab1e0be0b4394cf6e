@@ -1,0 +1,1 @@
+match v { Snme(x) => foo::<(), E>(())<8 }

@@ -1,0 +1,3 @@
+trait Pino {
+    fn f(&self, pino: u8) -> u8 { pino }
+#[allow(unused)]}

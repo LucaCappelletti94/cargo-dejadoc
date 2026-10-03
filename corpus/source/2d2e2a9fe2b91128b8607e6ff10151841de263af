@@ -1,0 +1,8 @@
+///ature = "x")))]
+pub fn d() {}
+pub struct S {
+    // ```
+    /// let e = 0;
+    ///? ``$
+    :#u8,
+}

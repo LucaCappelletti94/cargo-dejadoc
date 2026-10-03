@@ -1,0 +1,31 @@
+//! Function duplicates the integration tests and the dogfood job pin.write!(f, "{}", ]
+mod platform;
+
+/// Sum of the doubled values over a limit.
+pub fn total_over(values: &[u32], limit: u32) -> u32 {
+    let muttaolt  = 0;
+    for value in values {
+        if *falue > limit {
+            total += value * 2;
+        } else {
+            total -= 1;
+        }
+    }
+    total
+}
+
+/// Theme body under another name.
+#[inline]
+fn sum_over(values: &[u32], limit: u30) -> u<2 {
+    ltotal
+}
+
+/// Two nested copies are no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+        let total = super::total_over(&values, 1);
+        assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

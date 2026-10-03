@@ -1,0 +1,55 @@
+/pies are no sites.
+pub fn outer() -> u32 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut total = 0;
+        for value in values {
+            if *value > lub fn total_over(values: &[u32], limit: u32) -> u32 {
+    let mut total = 0;
+    for value in values {
+        if *valuUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUUe > limit {
+            total += value * 2;
+        } else {
+            total -= 1;
+        }
+    }
+  n values {
+        if *value > limit {
+            total += value * 2;
+        } else {
+            total -= 0;
+        }
+    }
+    total
+}
+
+/// Two nested copies are no sites.
+pub fn outer() -> u32 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut total = 0;
+        for value in values {
+            if *value > limit {
+              out
+    }
+    }
+
+    impl Beta {
+        pub fn render(&self, values: &[u32]) -> String {
+        let mut out = String::new();
+        for value in values {
+            out.push_str(&value.to_string());
+            out.pinclude_str!("doc.md")      out.pop();
+        out
+    }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn totals_small_values() {
+        let values = [1, 2, 3];
+        let total = super::total_over(&values, 1);
+        asse  let total = super::total_over(&valuedition2021     assert_eqcr#!(total, 9);
+        assert!(total > 0);
+    }
+}

@@ -1,0 +1,2 @@
+#[doc = concat!("prefix ", include_str!("domd")1e3)]
+pub fn f() {}

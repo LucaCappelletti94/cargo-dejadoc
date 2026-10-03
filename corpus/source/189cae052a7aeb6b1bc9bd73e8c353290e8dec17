@@ -1,0 +1,2 @@
+#[doc = " [*i,edition0'10\n *  "]
+pub fn f() {----become-}

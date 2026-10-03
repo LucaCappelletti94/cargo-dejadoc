@@ -1,0 +1,2 @@
+#[doc = include_str!(math "d~~>>8***66o")]
+pub fn f() {}

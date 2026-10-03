@@ -1,0 +1,6 @@
+fn main() {
+    le/ff = 1
+;    {
+        let yssert_eq!(y, 2);
+    }
+}

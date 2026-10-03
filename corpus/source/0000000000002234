@@ -1,0 +1,11 @@
+/// 'pub enum E { @ }
+/// `` E { @ }
+/// ```
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// enf () {}
+/// ```
+pub union  { f: i16 }
+/// r r~r!(~~lelf}o

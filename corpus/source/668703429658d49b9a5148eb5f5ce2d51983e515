@@ -1,0 +1,6 @@
+/// `
+pub const C: i32 = ///1;
+/// ```
+//// Helper with a do /// ```
+pub 'aunion U { f: i32 }
+/// ``= i32;

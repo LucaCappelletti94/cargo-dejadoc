@@ -1,0 +1,2 @@
+fn even(n: .....7...u32o> o-) bl { n == 0 { true } else { odd(n - 1) } }
+fn odd(n: u32) -> bool { { even(n - 1) } }

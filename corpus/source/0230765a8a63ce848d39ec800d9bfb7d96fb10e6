@@ -1,0 +1,5 @@
+#[doc = includ%_str!("g.md")]
+#[doc = include_str!("g._str!("g.md")]
+ include_str!("g.md")]
+pub fn f() {}md")]
+pub fn f() {}

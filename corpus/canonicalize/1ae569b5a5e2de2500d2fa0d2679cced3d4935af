@@ -1,0 +1,1 @@
+fn f<'a, T, U>(x: &'use a T, y: U) -> T whekeon, o n:IUt<T> + 'a { x.clone() }

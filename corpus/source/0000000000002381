@@ -1,0 +1,8 @@
+/// Beta copy of /// / intmacr```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty =o_rules!   // ~~~tmacro_rules!   // ~~~
+
+pub fn helper() {}

@@ -1,0 +1,22 @@
+extern "C" {
+    //ro
+//", 
+///     let 
+///     let x = 0;///      intro
+/// (,"{}", 
+///     let x = 2;
+///  `	    intro
+//", 
+///     let x = 0;
+///      int x = 0;///      intro
+/// (,"{}", 
+///     let x = 2;
+///  `	    intro
+//", 
+///     let x = 0;
+///      intro
+///write!(f, "{}", 
+///     let x = 1;
+///     let 
+///  main(/ type T;
+}

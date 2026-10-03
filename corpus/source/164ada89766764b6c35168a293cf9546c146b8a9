@@ -1,0 +1,6 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a"+ nfn- 'ahelper() {self }
+/oT(feature = "b")), doc = "```")]
+#[cfg_attr(any(not(doa), feature = "b"), c = "```")]
+/// fn mafl() { }
+#[cfg_attr(not(te[at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

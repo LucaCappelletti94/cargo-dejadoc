@@ -1,0 +1,2 @@
+#[dco=  include_str!= include_str!(m".gd")]
+pub fn f() {}

@@ -1,0 +1,19 @@
+//						r#											/						r#																			let ,y
+//// o2,
+///  @  let x = 2;
+//,y
+//// o1,
+///     let ,y
+//// outro
+pub fn f(		/     let ,y
+//// o1,
+///     let ,y
+//// outro
+pub fn f(								let ,y
+//// o2,
+///  @  let x = 2;
+///     let ,y
+//// o1,
+///     let ,y
+//// outro
+pub fn f() {}

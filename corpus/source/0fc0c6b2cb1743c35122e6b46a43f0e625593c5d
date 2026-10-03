@@ -1,0 +1,9 @@
+/// intro
+///write!(f, "{}", 
+///     let x = 1;
+/// #[cfg_attr(unix, doc = "{}", 
+///     let  let x = 1;
+/// #[cfg_attr( = 1;
+///     ley = = 2;
+///>>>>>>>>>>outro
+pub fn f() {}

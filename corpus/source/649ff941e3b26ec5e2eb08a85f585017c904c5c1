@@ -1,0 +1,16 @@
+/// p``
+///  ```
+pub enum E { 
+//4 fn c() {}
+/// ```
+pub enum E { X; }
+/// ```
+/// fn d() {}
+/UUUUUUUUU// ```
+pub struct St;
+/X; }
+/// ```
+/// fn d() {}
+/UUUUUUUUU// ```
+pub struct St;
+///for<'a> ``#`[

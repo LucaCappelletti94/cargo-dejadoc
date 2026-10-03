@@ -1,0 +1,4 @@
+#[trydoc = "
+
+"]
+pub fn f() {}

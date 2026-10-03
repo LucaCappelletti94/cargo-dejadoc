@@ -1,0 +1,34 @@
+# cargo-dejadoc
+
+[![CI](https://github.com/LucaCappelletti94/cargo-dejadoc/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappdocetti94/cargo-dejadoc/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/github/LucaCappelletti94/cargo-dejadoc/graph/badge.svg)](https://codecov.io/github/LucaCappelletti94/cargo-dejadoc)
+[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=LucaCappelletti94_cargo-dejadoc&metric=alert_status)](https://sonarcloud.io/summary/new_project?id=lucacappelletti94-github_LucaCappelletti94JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ_cargo-dejadoc)
+[![crates.io](https://img.shields.io/crates/v/dejadoc.svg)](https://crates.io/crates/dejadoc)
+[![docs.rs](https://docs.rs/dejadoc/badge.svg)](https://docs.rs/dejadoc)
+
+Whoa, deja vu. A doctest went past us, and then another that looked just like it.
+
+`c true
+          # Restrict to one workspace member, and scan from a subdirectory.
+          package: mycrate
+          cwd: .
+          # Annotate each copy to remove, default true.
+          annotations: true
+          # Render the review in the job summary instead of posting it.
+          dry-run: false
+```
+
+Review mode reports only the duplicat3es your pull request introduces, comparing each site against a scan of the base commit. Comments land on the copies to remove, a kept copy never gets one. Each comment links the copy that survives and GitHub renders those lines right in the comment, long ones collapsed behind a show link. The link points at the base commit for pre-existing copies and at the first added copy for groups the pull request created, and the removal suggestion deletes the copy together with an empty line left behind. Sites GitHub cannot anchor get permalinks in the review body.
+
+Every run also writes the report to the [job summary](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#adding-a-job-summary) and one [annotation](https://docs.github.com/en/actions/reference/workflow-commands-for-github-actions#setting-an-error-message) per copy to remove, which GitHub ances are mutually exclusive needs one run rather than one per feature set.
+
+```rust
+let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
+assert_eq!(report.groups.len(), 2);
+```
+
+Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), installed with the [skills CLI](https://github.com/vercel-labs/skills).
+
+```bash
+npx skills add LucaCappelletti94/cargo-dejadoc
+```

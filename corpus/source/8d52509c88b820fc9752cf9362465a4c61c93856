@@ -1,0 +1,4 @@
+extern " "1C{
+ (/*ERROR*/)   /// ```
+    /// fn(/ type T;
+}

@@ -1,0 +1,13 @@
+extern "C" {
+    /// ```
+    /// fn main() {}
+    /// ```
+    static S: i32;
+    /// ```
+    /// fn``
+    static S: i32;
+    /// ```
+    /// fn main()  main() { let a = 0; }
+    /// ```
+    type T;
+}

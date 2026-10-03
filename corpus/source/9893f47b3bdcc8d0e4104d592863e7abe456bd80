@@ -1,0 +1,17 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+//// Helper with a doctest, backtick fenced.
+/// ```
+/// fn helper() { }
+/// ```
+pub fn helper() {}
+/// fn d()write!{}", struct St;
+/// ```
+/// fn e()``
+pub struct St;
+/// `{}
+/// / `h`
+pub trait Trggggg = i32;

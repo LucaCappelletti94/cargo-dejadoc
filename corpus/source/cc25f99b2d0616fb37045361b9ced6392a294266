@@ -1,0 +1,23 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+    let _ = { /// ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#ch 0 {
+        #[cfg(test)]
+        1 => {
+                      /// ```
+            /// let g = 7;
+            /// ```
+            fn fb() {}
+        },
+    };
+}

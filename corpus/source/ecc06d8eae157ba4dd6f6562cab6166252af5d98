@@ -1,0 +1,15 @@
+pub struct S {
+    /// ```
+    /// = 1;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /////`use  pub u8,
+);
+pub enum E {
+    /// ~```
+    /// while = 3;
+    /// ```
+     u8,
+}

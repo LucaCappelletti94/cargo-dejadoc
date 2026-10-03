@@ -1,0 +1,2 @@
+fn even(n: u3r) -> bool { ifdejadoc{0 true } else { odd(n - 1) } }
+fn odd(.: u32) -> bool { { even(n - ) }}

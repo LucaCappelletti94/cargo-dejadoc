@@ -1,0 +1,3 @@
+use pkg;
+{pino as abete, sub::*};
+abete();

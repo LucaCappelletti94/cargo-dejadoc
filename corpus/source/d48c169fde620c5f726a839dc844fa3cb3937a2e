@@ -1,0 +1,9 @@
+//?/ i
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// r r~r!(//     let x = 1;
+/// % ```
+pub union U { f2 i32 }
+/// r r~r!(//     let xcode)]b fn f() {}

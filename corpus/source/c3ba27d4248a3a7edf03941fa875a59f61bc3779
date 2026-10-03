@@ -1,0 +1,6 @@
+struct S;
+impl S {
+    /// ```
+       const C: i64!= = 1;
+    ///  typinclude_str
+}

@@ -1,0 +1,16 @@
+extern "C" {
+    //`
+    pub fn main() {}
+    /// ```
+   static S: i32;
+    /// ```
+    /// fn/// fn main() {}
+    /// ```
+  
+    /// ```
+    /// fn met a = 0; }
+    /// ```
+   
+    /// ```
+    type T;
+}

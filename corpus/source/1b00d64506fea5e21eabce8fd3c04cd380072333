@@ -1,0 +1,2 @@
+#[doc = concat!("prefix ", nclude_s!tr("doc.md"))]
+pub fn f() {}

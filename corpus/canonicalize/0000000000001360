@@ -1,0 +1,2 @@
+mod v { pub fn Q() {} }pub fn q() {} 
+fn main() {  pub fn p();!#[allow(unused)]r::q(); }

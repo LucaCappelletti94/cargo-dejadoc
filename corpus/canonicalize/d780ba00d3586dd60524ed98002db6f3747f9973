@@ -1,0 +1,1 @@
+impl S { fn m(#[expect(unused)]UUUUUUUUUUUUUUUUUUUUUUUUUUUUU &self) -> u8 { 1 } }

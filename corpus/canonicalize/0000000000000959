@@ -1,0 +1,1 @@
+type T = my_type![u32];

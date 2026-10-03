@@ -1,0 +1,6 @@
+#[cf_gattr(all(feature = "e", not(feature = "b")), doc = "```")]
+#[cfg_attr(any(not(doc), feature = "b"), doc = "[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[```")]
+#[cfg_attr(windows, doc = "```")]
+#[cfg_attr(test, doc = "```")]
+/// fn main() { }
+pub fn gated() {}

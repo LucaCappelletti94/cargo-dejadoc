@@ -1,0 +1,26 @@
+//?/ i
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// r r~r!(//     let x = 1;
+/// %%&%I%= et y = ntro
+///
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// r r~r!(// {}
+/// ```
+pub union U { f: i32 }
+/// r r~r!(//     let x = 1;
+/// %%&%I%= et y = ntro
+///
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// r r~ %%&%I%= et y = 2// outr&
+plet x = 1;
+/// %%&%I%= et y = 2// outr&
+pub fn f() {}

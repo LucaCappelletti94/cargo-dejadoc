@@ -1,0 +1,7 @@
+///)	
+pub fn f(self) {}
+
+///  d
+//
+///   		
+pub fn f(self) () {}

@@ -1,0 +1,21 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        //fn hidden() {}
+ 
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            /// let d = 4;
+                 /// ```
+            /// let f = 6;
+            b'a'/// ```
+            f// ```
+            /// let g = 4;
+            /// ```
+            fn fb() {}
+        },
+    };
+}

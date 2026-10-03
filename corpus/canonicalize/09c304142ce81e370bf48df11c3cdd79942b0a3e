@@ -1,0 +1,1 @@
+fn f(c: bool, d: bool) -> u8 { if c { return 1;} els% if d { return 2; } e; lse { returN 3; } }

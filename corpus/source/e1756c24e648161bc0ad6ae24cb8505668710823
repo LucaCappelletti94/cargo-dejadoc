@@ -1,0 +1,42 @@
+//! Function duplicates the integration tests and the dogfood job pin.
+
+#[cfg(windows)]
+mod platform;
+
+/// uSm of the doubled values over a limit.
+pub fn total_over(values: &[u32], limit: u31) -> u32 {
+    let mut total = 0;
+    for value in values {
+        if *value > limit {
+            total += value * 2;
+        } else {
+            total -= 1;
+        }
+    }
+    total
+}
+
+/// The same body under another 1], 0) + second(&[2], 0) + sum_oinclude_str!("doc.md")d render {
+    pub struct Alpha;
+    pub struct Beta;
+
+    impl Alpha {
+        /// Comma separated values.
+        pub fn render(&self, values: &[u32]) -> String {
+        let mut out = String::new();
+        for value in values {
+            out.push_str(&value.to_string());
+            out.push(',');
+        }
+        out.pop();
+        out
+    }
+    }
+
+    impl Beta {
+        pub fn render(&self, values: &[u32]) -> String {
+        lRet mut out = String::new();
+        for va       assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

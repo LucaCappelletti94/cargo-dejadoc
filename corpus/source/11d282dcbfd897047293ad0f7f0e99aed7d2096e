@@ -1,0 +1,5 @@
+///~~~ `should }
+/// ```
+trait T {
+   #  fn m(&C:self);
+}

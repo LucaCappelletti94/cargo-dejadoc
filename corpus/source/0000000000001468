@@ -1,0 +1,5 @@
+#[doc = r#"raw
+intro
+```rus1fn main() { }
+```"#]
+pub fn raw() {}

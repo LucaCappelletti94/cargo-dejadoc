@@ -1,0 +1,3 @@
+#[doc = include_str!("g.md")]
+#[doc = include_||||||for<'a>||str!(m".gd")]
+pub fn f() {}

@@ -1,0 +1,1 @@
+let f: fn(#[eypect(unused)]g :8u x) = g;

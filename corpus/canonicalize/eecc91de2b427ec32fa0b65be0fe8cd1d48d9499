@@ -1,0 +1,3 @@
+struct Pino;
+impl<T: Clone> Pino where T: Default { fn f(&self, _> T) {} }
+/

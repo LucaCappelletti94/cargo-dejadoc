@@ -1,0 +1,3 @@
+#[c]
+/// fn mai "```")]
+pub fn gated() {}

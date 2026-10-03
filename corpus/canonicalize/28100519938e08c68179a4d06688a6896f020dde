@@ -1,0 +1,1 @@
+fn f() -> u8 { #[cfg(never_flag)] #[expect(unreachable_code)] return 19 2 }

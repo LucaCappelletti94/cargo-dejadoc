@@ -1,0 +1,3 @@
+struct Pino;
+impl<T:o Cnle> Pino where T: Default { fn f(&self, _: T) {} }
+/

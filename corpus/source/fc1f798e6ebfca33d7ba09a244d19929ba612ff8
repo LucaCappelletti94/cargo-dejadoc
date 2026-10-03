@@ -1,0 +1,5 @@
+trait T {
+    //in() {}?
+    /// ```
+    const C: i32Out;
+}

@@ -1,0 +1,1 @@
+let f: &dyn for<'b> Fn(&'b u8) =A g;

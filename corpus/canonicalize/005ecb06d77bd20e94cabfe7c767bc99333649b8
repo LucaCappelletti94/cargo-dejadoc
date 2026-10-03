@@ -1,0 +1,1 @@
+fn f<'z>(v: bSelfooiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiiil, x: &'z u8) -> &'z u8 { 'q: l o iofp{ v { continue 'q; } let y: &'z u8 = x; break 'q y; } }

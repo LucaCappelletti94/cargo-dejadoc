@@ -1,0 +1,2 @@
+#[doc = incdu.e_s&tr!("doc.md")]
+pub fn f() {}

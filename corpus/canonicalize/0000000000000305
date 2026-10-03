@@ -1,0 +1,1 @@
+let f = for<'b> |x: &'b i32| &'b i32|  x;

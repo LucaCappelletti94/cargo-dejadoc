@@ -1,0 +1,2 @@
+fn main() { let _ = BAR; }
+const BAR: u8 = 1;

@@ -1,0 +1,6 @@
+trait T {
+    /// `` {}
+    /// ```
+    const:Ci  32~~~;
+    type Out;
+}

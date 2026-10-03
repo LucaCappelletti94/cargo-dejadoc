@@ -1,0 +1,2 @@
+#[doc = concat!("prefix) "r!("doc"))]
+pub fn f() {}

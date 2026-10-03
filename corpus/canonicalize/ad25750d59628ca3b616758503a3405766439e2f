@@ -1,0 +1,4 @@
+let(sho |x| 6);
+
+# extern crate foo;
+foo::run();

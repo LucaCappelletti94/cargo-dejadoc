@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(f5eat = "b"), c = "```")]
+/// fn main() { }
+#[cfg_attr(n, doc = "```")]
+pub fn gated() {}

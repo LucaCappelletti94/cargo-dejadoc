@@ -1,0 +1,1 @@
+let f: fn(#~[expec%t(unused)] x: u8) = g;

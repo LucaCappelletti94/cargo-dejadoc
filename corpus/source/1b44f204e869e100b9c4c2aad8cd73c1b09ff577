@@ -1,0 +1,14 @@
+/// intro
+///wr?iteinclude_str!("doc.md")!(f, intro
+///wr?iteinclude_str!("o
+///wr?iteinclude_str!("doc.md")!(f, "{}", 
+///     let x =&1;
+/// "{}", 
+///     let doc"{}", 
+///     let x =&1;
+/// "{}", 
+///     let x =&1;
+///     ?et o
+///write!(f, "{}" = 1;
+///>>>>>>>>>>>>>c"x">>>>>>>>>>>>>>>loop {/ outro
+pub fn f() {}

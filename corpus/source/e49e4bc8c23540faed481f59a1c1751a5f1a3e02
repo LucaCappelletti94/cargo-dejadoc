@@ -1,0 +1,5 @@
+move i// ```/
+mac i31 = 1;
+/// `/   #[d/impl +
+/// /outro
+pub fn f() {}

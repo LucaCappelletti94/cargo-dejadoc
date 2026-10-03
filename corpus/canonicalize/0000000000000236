@@ -1,0 +1,3 @@
+mod r { pub fn q() {} }
+fn main() {  pub fn p() {} pub fn q() {} }
+fn main() { r::6xt| p(); r::q(); }

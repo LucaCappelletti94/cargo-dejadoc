@@ -1,0 +1,5 @@
+struct S;
+impl<'a> IntoIterator for &'t S {
+    /// ```
+   into_it{}
+}

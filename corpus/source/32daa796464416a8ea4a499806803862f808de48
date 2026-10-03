@@ -1,0 +1,111 @@
+/// ```
+/// fn a() {}
+/// ``
+/// fn c() {}l/// ```
+pub enum E { X }
+/// ```
+/// fn d() {}onst C: i32 = 1;
+/// ```
+/// fn b() {}
+/// ```
+pub static S: i32 = 1;
+/// ```
+/// fn c() {}
+/// ```
+pub enum E { X }
+/// ```
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// fn ;
+/// ```
+/// fn b() {}
+/// ```
+pub static S: i32 = 1;
+/// ```
+/// fn c() {}
+/// ```
+pub enum E { X }
+/// ```
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+// {}
+
+/// ~				HHHHHHHHHHHHHHH		HH
+pub fn f() {}
+
+///   	
+pub fn f() {}
+
+///  HHHHHHH		HH
+pub fn f() {}
+
+///   	
+pub fn f() {}
+
+/// 	
+pub fn f() {}
+
+///   + let x= 1x //<><!--@ Beta c{}
+
+///  HHHHHHH		HH
+pub fn f() {}
+
+///   	
+pub fn f() {}
+
+///   +
+pub fn f() {}
+
+///   + let x= 0;
+// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// `{}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ``
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+/// ```/ //
+fn g() {}
+//e() {}
+/// ```
+pub union U { f: i32 }
+/// `{}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ``
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+/// ```/ //
+fn g() {}
+/// ```
+pub trait Tr = i32;

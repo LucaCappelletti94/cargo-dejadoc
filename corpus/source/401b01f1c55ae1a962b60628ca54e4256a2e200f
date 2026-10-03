@@ -1,0 +1,7 @@
+trait T {
+    /// ```
+    /// fn m2;
+    /// ``` main() { let a = 1; }
+    /// ```
+    type Out;
+}

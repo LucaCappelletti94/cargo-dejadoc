@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIII,,<,custom	IIIIIIIl(feature = "a", not(feature = "b")),'doc = "```")]
+fn main() { }
+#[cfg_attr(not(test), dorustc = "```")]
+pub fn gated() {}

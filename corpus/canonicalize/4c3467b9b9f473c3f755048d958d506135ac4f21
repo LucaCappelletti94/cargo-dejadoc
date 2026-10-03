@@ -1,0 +1,7 @@
+struct S;
+impl S {
+    #[allow(clippy::unused_self)]
+    fn f(&self) {}
+}r"let"x ; ///1;
+6;r; dyn///1&
+6;s

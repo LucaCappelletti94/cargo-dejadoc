@@ -1,0 +1,6 @@
+# extern crate foo;
+# extern crate bar;
+extern crate baz as qux;
+f#oo::a();
+bar::b();
+qux::c();

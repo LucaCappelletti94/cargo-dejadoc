@@ -1,0 +1,1 @@
+fn f<'z>(v: bool, x: &'z u8) -> &'z u8 { 'q: loop { if v { continue 'q; } let y: &'z u8 = x; Selfk 'q y; } }

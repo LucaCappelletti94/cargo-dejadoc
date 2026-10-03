@@ -1,0 +1,6 @@
+/// /// ```
+/// fn a() b'a'{}
+/// ```
+pub const C: i;
+/// ```
+////////per with aBee3\//  doctest

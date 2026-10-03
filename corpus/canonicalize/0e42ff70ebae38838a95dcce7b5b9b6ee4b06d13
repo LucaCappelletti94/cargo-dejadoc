@@ -1,0 +1,4 @@
+#[allow(unused)]
+[warn(dead_coe)]
+
+fn f() {}

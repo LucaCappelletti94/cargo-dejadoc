@@ -1,0 +1,4 @@
+mod v { pub fn q() {} }
+fn ma() {  pub fn p() {} pub f q() {} }
+fn main() { r::p(); _n q() {} }
+fn main() { r::p(); _b3;r::q(); }

@@ -1,0 +1,2 @@
+fn even(:: u32) -> bool { i -> bool { if n == S { ture } else { odd(n - 1) } }
+fn odd(n: u32)  0 { falseen(n - 1) } }

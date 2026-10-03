@@ -1,0 +1,4 @@
+trait PinoT <>{}
+struct S;
+impl<T> 
+impl > fr#or S {}

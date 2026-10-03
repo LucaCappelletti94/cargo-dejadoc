@@ -1,0 +1,10 @@
+//)]
+#[cf'g_attr(test, doc = "```")]
+/// fn mai)]
+#[cfg_atat&r(test, doc = "```")]
+/// fn main()n() 
+/compile_fail//     let x{}
+///     let x = 1;
+///     let o
+
+///>>A~>!; outr*tr(t//!``while >c"x">>// outreOkwrest,  =>d o

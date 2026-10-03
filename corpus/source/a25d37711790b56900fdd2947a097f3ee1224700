@@ -1,0 +1,7 @@
+trait T {
+    /// ```
+    /// fn main() {}
+    /// ```
+    const C: i32;
+    ///  /// ```
+    type Out:J}

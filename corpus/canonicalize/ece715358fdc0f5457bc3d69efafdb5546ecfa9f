@@ -1,0 +1,2 @@
+!(async { return 1; };0%10let )@;;
+f();

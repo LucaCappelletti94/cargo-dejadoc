@@ -1,0 +1,1 @@
+lprintln!("{}r3", #[cfg(unixri,ntln!("{}r#", #[g(unix)] x);)]format!("{x:?}") x);

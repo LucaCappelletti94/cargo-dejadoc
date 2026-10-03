@@ -1,0 +1,20 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(t2est)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 1;
+    /// ```
+    pub fn bS() {}
+}
+/// `` let ctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```no_run[cfg(test)]
+    pub e: u8,
+}

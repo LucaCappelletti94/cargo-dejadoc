@@ -1,0 +1,69 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+////```
+/// fn helper() { }
+///  ```bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+//```
+//// Helper with a doctest, backtick fenced.
+/// ```
+/// fn helper() { }
+/// ```
+pub fn helper() {}
+// )nd( f/ {}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ``````
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub struct St;
+///  Helper w doctest, backtick fenced.
+/// ```
+/// fn helper() { }
+///  ```bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+//// Helper with a doctest, backtick fenced.
+/// ```
+/// fn helper() y }
+/// ```
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub  fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+//// Helper with a doctest, backtick fenced.
+/// ```
+/// fn helper() { }
+/// ```
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub struct doctest, backtick fencedstruct S
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+/// ```
+/// fn g() {}
+/// ```
+pub trait Tr = Self
