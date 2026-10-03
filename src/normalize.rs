@@ -386,6 +386,30 @@ mod tests {
     }
 
     #[test]
+    fn include_depth_folds_inside_other_tokens() {
+        let pairs = [
+            (
+                "let v = vec![include_str!(\"../a.md\")];",
+                "let v = vec![include_str!(\"a.md\")];",
+            ),
+            (
+                "#[cfg_attr(docsrs, doc = include_str!(\"../README.md\"))]\nfn f() {}",
+                "#[cfg_attr(docsrs, doc = include_str!(\"README.md\"))]\nfn f() {}",
+            ),
+        ];
+        for (deep, flat) in pairs {
+            assert_eq!(canonicalize(deep).text, canonicalize(flat).text, "{deep}");
+        }
+    }
+
+    #[test]
+    fn a_nested_macro_path_is_its_own_content() {
+        let a = canonicalize("let v = vec![format!(\"../x\")];");
+        let b = canonicalize("let v = vec![format!(\"x\")];");
+        assert_ne!(a.text, b.text);
+    }
+
+    #[test]
     fn include_str_depth_is_not_a_difference() {
         let a = r#"let readme = include_str!("../README.md");"#;
         let b = r#"let readme = include_str!("README.md");"#;
