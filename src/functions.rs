@@ -61,7 +61,7 @@ impl Walk<'_> {
                     }
                 }
                 syn::Item::Impl(i) => {
-                    let self_type = crate::extract::type_name(&i.self_ty);
+                    let self_type = type_text(&i.self_ty);
                     for member in &i.items {
                         if let syn::ImplItem::Fn(f) = member {
                             self.push(module, Some(&self_type), f, &f.attrs, &f.sig, &f.block);
@@ -143,4 +143,18 @@ fn compared(attr: &syn::Attribute) -> bool {
     ]
     .iter()
     .any(|name| attr.path().is_ident(name))
+}
+
+/// The whole type as written, `Foo<u8>` and `a::Foo` telling apart types one last segment would merge.
+fn type_text(ty: &syn::Type) -> String {
+    let printed = quote::ToTokens::to_token_stream(ty).to_string();
+    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
+    let mut out = String::with_capacity(printed.len());
+    let mut chars = printed.chars().peekable();
+    while let Some(c) = chars.next() {
+        if c != ' ' || (word(out.chars().last()) && word(chars.peek().copied())) {
+            out.push(c);
+        }
+    }
+    out
 }

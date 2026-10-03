@@ -191,7 +191,11 @@ impl Dejadoc {
         );
         if !self.no_functions {
             let sites = targets.iter().flat_map(|target| {
-                let crate_root = target.files.first().map_or("", |f| f.path.as_str());
+                let crate_root = target.files.first().map_or("", |f| {
+                    f.path
+                        .strip_prefix(root)
+                        .map_or(f.path.as_str(), |p| p.trim_start_matches('/'))
+                });
                 target.files.iter().flat_map(move |file| {
                     functions::functions(&module_prefix(target, file), file, root, crate_root)
                 })
@@ -653,6 +657,43 @@ mod tests {
             fn_groups(Dejadoc::default(), &src),
             [["c::one", "c::two", "c::three"]]
         );
+    }
+
+    #[test]
+    fn function_hashes_do_not_depend_on_the_workspace_location() {
+        let src = format!("fn one{BODY}\nfn two{BODY}\n");
+        let hash = |root: &str| {
+            let target = target_from("c", &format!("{root}/src/lib.rs"), &[], &src);
+            Dejadoc::default()
+                .run_targets(root, &[target], &|_f, _i| None)
+                .groups[0]
+                .hash
+                .clone()
+        };
+        assert_eq!(hash("/base"), hash("/head"));
+    }
+
+    #[test]
+    fn methods_of_types_sharing_a_last_segment_span_types() {
+        for (one, two) in [
+            ("Foo<u8>", "Foo<u16>"),
+            ("a::Foo", "b::Foo"),
+            ("dyn Shape", "dyn Area"),
+        ] {
+            let src = format!("impl {one} {{ fn run{BODY} }}\nimpl {two} {{ fn run{BODY} }}\n");
+            let report = Dejadoc::default().run_targets(
+                "",
+                &[target_from("c", "src/lib.rs", &[], &src)],
+                &|_f, _i| None,
+            );
+            let types: Vec<Option<&str>> = report.groups[0]
+                .sites
+                .iter()
+                .map(|s| s.self_type.as_deref())
+                .collect();
+            assert_eq!(types, [Some(one), Some(two)]);
+            assert!(report.groups[0].spans_types(), "{one} {two}");
+        }
     }
 
     #[test]

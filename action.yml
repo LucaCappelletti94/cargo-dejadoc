@@ -293,6 +293,8 @@ runs:
           head_sha="$(jq -r '.head_sha' "$meta")"
           out_of_range="$(jq -r '.out_of_range' "$meta")"
           findings="$(jq -r '.findings' "$meta")"
+          findings_span=0
+          grep -q ' on another type$' <<< "$findings" && findings_span=1
         else
         # The head SHA and changed file list, empty when there is no pull request.
         head_sha=''
