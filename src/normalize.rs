@@ -1473,10 +1473,45 @@ fn f() {}"#,
     }
 
     #[test]
-    fn bare_return_stays() {
-        let a = canonicalize("fn f() { return; }");
-        let b = canonicalize("fn f() {}");
-        assert_ne!(a.text, b.text);
+    fn a_trailing_unit_return_folds_away() {
+        let plain = canonicalize("fn f() { g(); }");
+        assert_eq!(canonicalize("fn f() { g(); return; }").text, plain.text);
+        assert_eq!(canonicalize("fn f() { g(); return }").text, plain.text);
+        assert_eq!(
+            canonicalize("fn f() { return; }").text,
+            canonicalize("fn f() {}").text
+        );
+        assert_eq!(
+            canonicalize("fn f(c: bool) { if c { g(); return; } else { h(); } }").text,
+            canonicalize("fn f(c: bool) { if c { g(); } else { h(); } }").text
+        );
+    }
+
+    #[test]
+    fn an_attributed_or_early_unit_return_stays() {
+        let plain = canonicalize("fn f() { g(); }");
+        assert_ne!(
+            canonicalize("fn f() { g(); #[cfg(unix)] return; }").text,
+            plain.text
+        );
+        assert_ne!(canonicalize("fn f() { return; g(); }").text, plain.text);
+    }
+
+    #[test]
+    fn a_return_arm_of_a_tail_match_folds() {
+        let plain = canonicalize("fn f(v: u8) -> u8 { match v { 1 => 2, _ => 0 } }");
+        for arm in ["1 => return 2,", "1 => { return 2 }"] {
+            let source = format!("fn f(v: u8) -> u8 {{ match v {{ {arm} _ => 0 }} }}");
+            assert_eq!(canonicalize(&source).text, plain.text, "{arm}");
+        }
+    }
+
+    #[test]
+    fn an_attributed_return_arm_stays() {
+        let plain = canonicalize("fn f(v: u8) -> u8 { match v { 1 => 2, _ => 0 } }");
+        let attributed =
+            canonicalize("fn f(v: u8) -> u8 { match v { 1 => { #[cfg(unix)] return 2 } _ => 0 } }");
+        assert_ne!(attributed.text, plain.text);
     }
 
     #[test]
