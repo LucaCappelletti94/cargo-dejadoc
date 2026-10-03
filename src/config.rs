@@ -16,6 +16,12 @@ pub(crate) struct Config {
     /// Skip functions with fewer tokens than this.
     #[serde(rename = "fn-min-tokens")]
     pub(crate) fn_min_tokens: Option<usize>,
+    /// Scan files marked generated as well.
+    #[serde(rename = "scan-generated")]
+    pub(crate) scan_generated: Option<bool>,
+    /// More phrases that mark a file generated in its first lines.
+    #[serde(rename = "generated-markers")]
+    pub(crate) generated_markers: Option<alloc::vec::Vec<alloc::string::String>>,
 }
 
 /// Load `path`, or the default config when the file is absent.
@@ -34,6 +40,7 @@ pub(crate) fn load(path: &Path) -> crate::Result<Config> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::string::ToString;
 
     #[test]
     fn missing_file_is_default() {
@@ -47,7 +54,7 @@ mod tests {
         let path = dir.path().join(".dejadoc.toml");
         std::fs::write(
             &path,
-            "threshold = 3\nmin-tokens = 4\nfunctions = false\nfn-min-tokens = 50\n",
+            "threshold = 3\nmin-tokens = 4\nfunctions = false\nfn-min-tokens = 50\nscan-generated = true\ngenerated-markers = [\"by rust-bindgen\"]\n",
         )
         .unwrap();
         let cfg = load(&path).unwrap();
@@ -55,6 +62,11 @@ mod tests {
         assert_eq!(cfg.min_tokens, Some(4));
         assert_eq!(cfg.functions, Some(false));
         assert_eq!(cfg.fn_min_tokens, Some(50));
+        assert_eq!(cfg.scan_generated, Some(true));
+        assert_eq!(
+            cfg.generated_markers,
+            Some(alloc::vec!["by rust-bindgen".to_string()])
+        );
     }
 
     #[test]

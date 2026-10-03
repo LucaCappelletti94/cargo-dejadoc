@@ -15,6 +15,8 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function check off, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
+Generated files are skipped, a file being generated when one of its first five lines contains `@generated` or is a `// Code generated … DO NOT EDIT.` line. In `.dejadoc.toml`, `generated-markers = ["…"]` adds phrases of your own generators and `scan-generated = true` scans them anyway.
+
 The first copy of a group is the one to keep. A copy whose code names its own item comes first, so a test copied from `parse` onto `lex` stays on `parse`. Otherwise file and line order decides.
 
 To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of its code block. rustdoc ignores the word and runs the doctest as before.

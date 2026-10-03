@@ -41,6 +41,8 @@ pub struct Dejadoc {
     min_tokens: Option<usize>,
     no_functions: bool,
     fn_min_tokens: Option<usize>,
+    scan_generated: bool,
+    generated_markers: Vec<String>,
 }
 
 impl Dejadoc {
@@ -86,6 +88,20 @@ impl Dejadoc {
         self
     }
 
+    /// Scan files marked generated, which are skipped otherwise.
+    #[must_use]
+    pub fn scan_generated(mut self) -> Self {
+        self.scan_generated = true;
+        self
+    }
+
+    /// Also treat a file as generated when one of its first lines contains `marker`.
+    #[must_use]
+    pub fn generated_marker(mut self, marker: impl Into<String>) -> Self {
+        self.generated_markers.push(marker.into());
+        self
+    }
+
     /// Fill unset parameters from the `.dejadoc.toml` at `path`, before the workspace root one under `run`.
     ///
     /// # Errors
@@ -104,6 +120,12 @@ impl Dejadoc {
             min_tokens: self.min_tokens.or(file.min_tokens),
             no_functions: self.no_functions || file.functions == Some(false),
             fn_min_tokens: self.fn_min_tokens.or(file.fn_min_tokens),
+            scan_generated: self.scan_generated || file.scan_generated == Some(true),
+            generated_markers: self
+                .generated_markers
+                .into_iter()
+                .chain(file.generated_markers.iter().flatten().cloned())
+                .collect(),
             ..self
         }
     }
@@ -185,8 +207,11 @@ impl Dejadoc {
             .filter(|t| self.package.as_deref().is_none_or(|p| p == t.name))
             .collect();
         let threshold = self.threshold.unwrap_or(DEFAULT_THRESHOLD);
+        let scanned = |file: &SourceFile| {
+            self.scan_generated || !is_generated(&file.text, &self.generated_markers)
+        };
         let mut report = group_doctests(
-            &extract_all(targets.iter().copied(), root, read),
+            &extract_all(targets.iter().copied(), root, read, &scanned),
             threshold,
             self.min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
         );
@@ -202,15 +227,19 @@ impl Dejadoc {
                         .strip_prefix(root)
                         .map_or(f.path.as_str(), |p| p.trim_start_matches('/'))
                 });
-                target.files.iter().flat_map(move |file| {
-                    functions::functions(
-                        &module_prefix(target, file),
-                        file,
-                        root,
-                        crate_root,
-                        target.library,
-                    )
-                })
+                target
+                    .files
+                    .iter()
+                    .filter(|file| scanned(file))
+                    .flat_map(move |file| {
+                        functions::functions(
+                            &module_prefix(target, file),
+                            file,
+                            root,
+                            crate_root,
+                            target.library,
+                        )
+                    })
             });
             let (total, unique, groups) = group_functions(
                 sites,
@@ -277,15 +306,27 @@ fn module_prefix(target: &TargetScan, file: &SourceFile) -> String {
     }
 }
 
-/// The doctests of every file of `targets` rustdoc collects from.
+/// Whether `text` declares itself generated in its first five lines, where rustfmt looks: by
+/// `@generated`, by Go's `// Code generated … DO NOT EDIT.` line, or by one of `markers`.
+fn is_generated(text: &str, markers: &[String]) -> bool {
+    text.lines().take(5).any(|line| {
+        let line = line.trim();
+        line.contains("@generated")
+            || (line.starts_with("// Code generated ") && line.ends_with(" DO NOT EDIT."))
+            || markers.iter().any(|marker| line.contains(marker.as_str()))
+    })
+}
+
+/// The doctests of every file of `targets` rustdoc collects from and `scanned` keeps.
 fn extract_all<'t>(
     targets: impl IntoIterator<Item = &'t TargetScan>,
     root: &str,
     read: &IncludeRead<'_>,
+    scanned: &dyn Fn(&SourceFile) -> bool,
 ) -> Vec<DocTest> {
     let mut blocks = Vec::new();
     for target in targets {
-        for file in target.files.iter().filter(|f| f.rustdoc) {
+        for file in target.files.iter().filter(|f| f.rustdoc && scanned(f)) {
             blocks.extend(extract::extract(
                 &module_prefix(target, file),
                 &file.path,
@@ -655,6 +696,43 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std")]
+    fn config_marks_more_files_generated_or_scans_them_anyway() {
+        let dir = tempfile::tempdir().unwrap();
+        let groups = |header: &str, toml: &str, builder: Dejadoc| {
+            let file = dir.path().join("config.toml");
+            std::fs::write(&file, toml).unwrap();
+            let src = format!("{header}fn one() -> u8 {{ 1 + 2 }}\nfn two() -> u8 {{ 1 + 2 }}\n");
+            fn_groups(builder.fn_min_tokens(0).config(&file).unwrap(), &src).len()
+        };
+        let marked = "// @generated\n";
+        let bindgen = "/* automatically generated by rust-bindgen */\n";
+        assert_eq!(groups(marked, "", Dejadoc::default()), 0);
+        assert_eq!(
+            groups(marked, "scan-generated = true\n", Dejadoc::default()),
+            1
+        );
+        assert_eq!(
+            groups(marked, "scan-generated = false\n", Dejadoc::default()),
+            0
+        );
+        assert_eq!(
+            groups(
+                bindgen,
+                "generated-markers = [\"rust-bindgen\"]\n",
+                Dejadoc::default()
+            ),
+            0
+        );
+        // A builder marker survives a config file that names other markers.
+        let builder = Dejadoc::default().generated_marker("rust-bindgen");
+        assert_eq!(
+            groups(bindgen, "generated-markers = [\"protoc\"]\n", builder),
+            0
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
     fn config_bad_toml_fails_at_build() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("bad.toml");
@@ -795,6 +873,45 @@ mod tests {
                 "{one} {two}"
             );
         }
+    }
+
+    #[test]
+    fn a_file_marked_generated_in_its_first_five_lines_is_skipped() {
+        let body = format!(
+            "/// ```\n/// let x = 1;\n/// let y = x + 1;\n/// ```\nfn one{BODY}\n/// ```\n/// let x = 1;\n/// let y = x + 1;\n/// ```\nfn two{BODY}\n"
+        );
+        let scan = |header: &str, dejadoc: Dejadoc| {
+            let target = target_from("c", "src/lib.rs", &[], &format!("{header}{body}"));
+            let report = dejadoc.run_targets("", &[target], &|_f, _i| None);
+            (report.total, report.functions, report.groups.len())
+        };
+        for header in [
+            "// This file is @generated by syn-internal-codegen.\n",
+            "\n\n\n\n// @generated\n",
+            "// Code generated by software.amazon.smithy.rust.codegen.smithy-rs. DO NOT EDIT.\n",
+        ] {
+            assert_eq!(scan(header, Dejadoc::default()), (0, 0, 0), "{header}");
+            assert_eq!(
+                scan(header, Dejadoc::default().scan_generated()),
+                (2, 2, 2),
+                "{header}"
+            );
+        }
+        for header in [
+            "\n\n\n\n\n// @generated\n",
+            "// Code generated by hand, edit freely.\n",
+            "/* automatically generated by rust-bindgen 0.72.1 */\n",
+        ] {
+            assert_eq!(scan(header, Dejadoc::default()), (2, 2, 2), "{header}");
+        }
+        let bindgen = "/* automatically generated by rust-bindgen 0.72.1 */\n";
+        assert_eq!(
+            scan(
+                bindgen,
+                Dejadoc::default().generated_marker("by rust-bindgen")
+            ),
+            (0, 0, 0)
+        );
     }
 
     #[test]
