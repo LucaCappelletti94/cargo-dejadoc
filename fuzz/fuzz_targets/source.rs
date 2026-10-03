@@ -1,4 +1,4 @@
-//! A whole source file through `syn` and extraction.
+//! A whole source file through `syn`, extraction and the function check.
 
 #![no_main]
 
@@ -12,6 +12,9 @@ fuzz_target!(|data: &[u8]| {
     dejadoc_fuzz::on_large_stack(move || {
         if let Some(blocks) = dejadoc_fuzz::extract(&source) {
             dejadoc_fuzz::check_spans(&blocks);
+        }
+        if let Some(report) = dejadoc_fuzz::functions(&source) {
+            dejadoc_fuzz::check_functions(&report);
         }
     });
 });

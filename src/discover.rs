@@ -15,6 +15,8 @@ pub(crate) struct Target {
     pub(crate) name: String,
     /// Absolute path of the target's source root file.
     pub(crate) src: PathBuf,
+    /// Whether its doctests are scanned.
+    pub(crate) doc: bool,
 }
 
 /// A resolved workspace root and the targets to scan.
@@ -47,12 +49,11 @@ pub(crate) fn workspace(
         .filter(|p| package.is_none_or(|want| p.name == want))
     {
         for target in &package.targets {
-            if scan_target(&target.kind, all_targets) {
-                targets.push(Target {
-                    name: target.name.clone(),
-                    src: target.src_path.clone().into(),
-                });
-            }
+            targets.push(Target {
+                name: target.name.clone(),
+                src: target.src_path.clone().into(),
+                doc: scan_target(&target.kind, all_targets),
+            });
         }
     }
     Ok(Workspace {
@@ -61,7 +62,7 @@ pub(crate) fn workspace(
     })
 }
 
-/// Whether a cargo target is scanned, from its kind list.
+/// Whether a cargo target's doctests are scanned, from its kind list.
 fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool {
     use cargo_metadata::TargetKind as CargoTargetKind;
 
@@ -87,64 +88,88 @@ fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool 
 pub(crate) fn module_tree(target: &Target) -> crate::Result<Vec<crate::SourceFile>> {
     let mut out = Vec::new();
     let mut visited = BTreeSet::new();
-    collect(&target.src, &[], true, &mut out, &mut visited)?;
+    let mut off = alloc::collections::VecDeque::new();
+    let root = Child {
+        path: target.src.clone(),
+        segments: Vec::new(),
+        mod_rs: true,
+        rustdoc: target.doc,
+    };
+    collect(root, &mut out, &mut visited, &mut off)?;
+    // A file declared on both sides of a `cfg` must reach rustdoc first.
+    while let Some(child) = off.pop_front() {
+        collect(child, &mut out, &mut visited, &mut off)?;
+    }
     Ok(out)
 }
 
-/// `mod_rs` marks a crate root, a `mod.rs` or a `#[path]` file, whose children sit
-/// beside it, every other file keeps them under a directory named after it.
+/// Collect `file` and the children rustdoc reaches, queueing the others in `off`.
 fn collect(
-    file: &std::path::Path,
-    prefix: &[String],
-    mod_rs: bool,
+    file: Child,
     out: &mut Vec<crate::SourceFile>,
     visited: &mut BTreeSet<PathBuf>,
+    off: &mut alloc::collections::VecDeque<Child>,
 ) -> crate::Result<()> {
-    let canonical = std::fs::canonicalize(file)?;
+    let canonical = std::fs::canonicalize(&file.path)?;
     if !visited.insert(canonical) {
         return Ok(());
     }
-    let text = match std::fs::read_to_string(file) {
+    let text = match std::fs::read_to_string(&file.path) {
         Ok(text) => text,
         Err(err) => {
-            eprintln!("dejadoc: cannot read {}: {err}", file.display());
+            eprintln!("dejadoc: cannot read {}: {err}", file.path.display());
             return Ok(());
         }
     };
     let parsed = match syn::parse_file(&text) {
         Ok(parsed) => parsed,
         Err(err) => {
-            eprintln!("dejadoc: cannot parse {}: {err}", file.display());
+            eprintln!("dejadoc: cannot parse {}: {err}", file.path.display());
             return Ok(());
         }
     };
-    let dir = file.parent().unwrap_or_else(|| std::path::Path::new("."));
-    let base = match file.file_stem() {
-        Some(stem) if !mod_rs => dir.join(stem),
+    let dir = file
+        .path
+        .parent()
+        .unwrap_or_else(|| std::path::Path::new("."));
+    let base = match file.path.file_stem() {
+        Some(stem) if !file.mod_rs => dir.join(stem),
         _ => dir.to_path_buf(),
     };
     let mut children = Vec::new();
-    mod_decls(&parsed.items, dir, &base, prefix, &mut children);
+    mod_decls(
+        &parsed.items,
+        dir,
+        &base,
+        &file.segments,
+        file.rustdoc,
+        &mut children,
+    );
     out.push(crate::SourceFile {
-        path: file.to_string_lossy().into_owned(),
-        segments: prefix.to_vec(),
+        path: file.path.to_string_lossy().into_owned(),
+        segments: file.segments,
         parsed,
+        text,
+        rustdoc: file.rustdoc,
     });
-    for (child, sub, mod_rs) in children {
-        collect(&child, &sub, mod_rs, out, visited)?;
+    for child in children {
+        if child.rustdoc {
+            collect(child, out, visited, off)?;
+        } else {
+            off.push_back(child);
+        }
     }
     Ok(())
 }
 
-/// The `mod name;` files at every nesting depth whose `cfg` holds, each with its module
-/// path. `dir` is for explicit `#[path]`, `base` for implicit children, an inline module
-/// adds its name to both and to the path.
+/// The `mod name;` files at every nesting depth, `dir` resolving `#[path]` and `base` the implicit files.
 fn mod_decls(
     items: &[syn::Item],
     dir: &std::path::Path,
     base: &std::path::Path,
     prefix: &[String],
-    out: &mut Vec<(PathBuf, Vec<String>, bool)>,
+    rustdoc: bool,
+    out: &mut Vec<Child>,
 ) {
     use syn::{Item, ext::IdentExt};
 
@@ -152,9 +177,7 @@ fn mod_decls(
         let Item::Mod(moditem) = item else {
             continue;
         };
-        if !crate::cfg::allows(&moditem.attrs) {
-            continue;
-        }
+        let rustdoc = rustdoc && crate::cfg::allows(&moditem.attrs);
         // A raw identifier names its file without the `r#`, the module
         // path keeps it as rustdoc does.
         let name = moditem.ident.unraw().to_string();
@@ -162,18 +185,34 @@ fn mod_decls(
         if let Some((_, children)) = &moditem.content {
             let inner = base.join(&name);
             segments.push(moditem.ident.to_string());
-            mod_decls(children, &inner, &inner, &segments, out);
+            mod_decls(children, &inner, &inner, &segments, rustdoc, out);
             continue;
         }
         match resolve_mod_path(dir, base, &name, &moditem.attrs) {
             Some((path, mod_rs)) if path.exists() => {
                 segments.push(moditem.ident.to_string());
-                out.push((path, segments, mod_rs));
+                out.push(Child {
+                    path,
+                    segments,
+                    mod_rs,
+                    rustdoc,
+                });
             }
-            Some((path, _)) => eprintln!("dejadoc: missing module file {}", path.display()),
-            None => {}
+            Some((path, _)) if rustdoc => {
+                eprintln!("dejadoc: missing module file {}", path.display());
+            }
+            _ => {}
         }
     }
+}
+
+/// A module file declared by its parent.
+struct Child {
+    path: PathBuf,
+    segments: Vec<String>,
+    /// A crate root, `mod.rs` or `#[path]` file, whose children sit beside it.
+    mod_rs: bool,
+    rustdoc: bool,
 }
 
 /// File for `mod name;` and whether it is a mod-rs file. A top-level `#[path]` first, then
@@ -221,6 +260,7 @@ mod tests {
         Target {
             name: "mycrate".into(),
             src: src.to_path_buf(),
+            doc: true,
         }
     }
 
@@ -399,17 +439,61 @@ mod tests {
     }
 
     #[test]
-    fn cfg_test_mod_files_are_not_collected() {
-        let got = paths(&[
+    fn cfg_off_mod_files_are_collected_outside_rustdoc() {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in [
             (
                 "lib.rs",
-                "#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod inner { mod deep; }\n#[cfg(not(test))]\npub mod kept;\n",
+                "#[cfg(test)]\nmod tests;\n#[cfg(test)]\nmod inner { mod deep; }\n#[cfg(not(test))]\npub mod kept;\n#[cfg(windows)]\nmod absent;\n",
             ),
             ("tests.rs", "pub fn g() {}\n"),
             ("inner/deep.rs", "pub fn g() {}\n"),
             ("kept.rs", "pub fn g() {}\n"),
-        ]);
-        assert_eq!(got, ["lib.rs", "kept.rs"]);
+        ] {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let got: Vec<(String, bool)> = module_tree(&target(&dir.path().join("lib.rs")))
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.path.rsplit('/').next().unwrap().to_string(), f.rustdoc))
+            .collect();
+        let want = [
+            ("lib.rs", true),
+            ("kept.rs", true),
+            ("tests.rs", false),
+            ("deep.rs", false),
+        ];
+        assert_eq!(got, want.map(|(p, r)| (p.to_string(), r)));
+        let mut lib = target(&dir.path().join("lib.rs"));
+        lib.doc = false;
+        assert!(module_tree(&lib).unwrap().iter().all(|f| !f.rustdoc));
+    }
+
+    #[test]
+    fn a_file_declared_under_exclusive_cfgs_stays_with_rustdoc() {
+        // diesel declares `exists` once per side of a feature flag, the off one first.
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in [
+            (
+                "lib.rs",
+                "#[cfg(not(feature = \"x\"))]\npub(crate) mod exists;\n#[cfg(feature = \"x\")]\npub mod exists;\n",
+            ),
+            ("exists.rs", "#[cfg(test)]\nmod inner;\npub fn g() {}\n"),
+            ("exists/inner.rs", "pub fn h() {}\n"),
+        ] {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let got: Vec<(String, bool)> = module_tree(&target(&dir.path().join("lib.rs")))
+            .unwrap()
+            .into_iter()
+            .map(|f| (f.path.rsplit('/').next().unwrap().to_string(), f.rustdoc))
+            .collect();
+        let want = [("lib.rs", true), ("exists.rs", true), ("inner.rs", false)];
+        assert_eq!(got, want.map(|(p, r)| (p.to_string(), r)));
     }
 
     #[test]
@@ -527,7 +611,7 @@ mod tests {
     }
 
     #[test]
-    fn default_is_lib_targets_only() {
+    fn every_target_is_listed_and_lib_targets_scan_doctests_by_default() {
         let dir = tempfile::tempdir().unwrap();
         cargo_package(
             dir.path(),
@@ -540,31 +624,44 @@ mod tests {
         std::fs::create_dir_all(&bin).unwrap();
         std::fs::write(bin.join("tool.rs"), "fn main() {}\n").unwrap();
         let ws = workspace(dir.path(), None, false).unwrap();
-        assert_eq!(ws.targets.len(), 1);
-        assert_eq!(ws.targets[0].name, "ws");
+        let targets: Vec<(&str, bool)> = ws
+            .targets
+            .iter()
+            .map(|t| (t.name.as_str(), t.doc))
+            .collect();
+        assert_eq!(targets, [("ws", true), ("tool", false)]);
         assert!(ws.targets[0].src.ends_with("src/lib.rs"));
         assert_eq!(ws.root, dir.path().to_path_buf());
     }
 
     #[test]
-    fn all_targets_includes_bins_and_examples() {
+    fn all_targets_scans_bin_and_example_doctests_never_test_targets() {
         let dir = tempfile::tempdir().unwrap();
         cargo_package(
             dir.path(),
             "ws",
             "[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n[workspace]\n",
         );
-        let bin = dir.path().join("src").join("bin");
-        std::fs::create_dir_all(&bin).unwrap();
-        std::fs::write(bin.join("tool.rs"), "fn main() {}\n").unwrap();
-        let ex = dir.path().join("examples");
-        std::fs::create_dir_all(&ex).unwrap();
-        std::fs::write(ex.join("demo.rs"), "fn main() {}\n").unwrap();
+        for (path, text) in [
+            ("src/bin/tool.rs", "fn main() {}\n"),
+            ("examples/demo.rs", "fn main() {}\n"),
+            ("tests/it.rs", "#[test]\nfn t() {}\n"),
+        ] {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
         let ws = workspace(dir.path(), None, true).unwrap();
-        let names: Vec<&str> = ws.targets.iter().map(|t| t.name.as_str()).collect();
-        assert!(names.contains(&"ws"));
-        assert!(names.contains(&"tool"));
-        assert!(names.contains(&"demo"));
+        let mut targets: Vec<(&str, bool)> = ws
+            .targets
+            .iter()
+            .map(|t| (t.name.as_str(), t.doc))
+            .collect();
+        targets.sort_unstable();
+        assert_eq!(
+            targets,
+            [("demo", true), ("it", false), ("tool", true), ("ws", true)]
+        );
     }
 
     #[test]

@@ -18,6 +18,7 @@ fuzz_target!(|data: &[u8]| {
         info: Vec::new(),
         code: code.into(),
         allow: false,
+        self_type: None,
     };
     let report = group(&[site(1), site(2)], 1, 0);
     assert_eq!(report.total, 2);

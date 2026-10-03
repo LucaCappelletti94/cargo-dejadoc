@@ -8,11 +8,11 @@
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
-`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, reporting any duplicates. Use it in your GitHub CI!
+`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, and every function, reporting any duplicates. Use it in your GitHub CI!
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
 
-The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token count, point at a config file, and switch the output to JSON.
+The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function check off, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
 The first copy of a group is the one to keep. A copy whose code names its own item comes first, so a test copied from `parse` onto `lex` stays on `parse`. Otherwise file and line order decides.
@@ -24,6 +24,8 @@ To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of i
 /// let parsed = mycrate::parse("1");
 /// ```
 ````
+
+Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. Copies on different self types are reported as a generic or a macro waiting to happen, without a suggestion to delete. Functions under 30 tokens are skipped. A `// dejadoc: allow` line above a function keeps it.
 
 In CI, one workflow covers it. The [action](https://github.com/marketplace/actions/dejadoc) installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
 
@@ -45,9 +47,13 @@ jobs:
           only-new: false
           # Report a group from this many copies, default 2.
           threshold: 2
-          # Ignore blocks below this token count, default 0.
+          # Ignore doctests below this token count, default 0.
           min-tokens: 0
-          # Scan bin and example targets as well as lib, default false.
+          # Check for duplicated functions, default true.
+          functions: true
+          # Ignore functions below this token count, default 30.
+          fn-min-tokens: 30
+          # Scan bin and example doctests as well as lib ones, default false.
           all-targets: true
           # Restrict to one workspace member, and scan from a subdirectory.
           package: mycrate
@@ -56,6 +62,8 @@ jobs:
           annotations: true
           # Render the review in the job summary instead of posting it.
           dry-run: false
+          # Use the cargo dejadoc already on the path instead of installing one, default true.
+          install: true
 ```
 
 Review mode reports only the duplicates your pull request introduces, comparing each site against a scan of the base commit. Comments land on the copies to remove, a kept copy never gets one. Each comment links the copy that survives and GitHub renders those lines right in the comment, long ones collapsed behind a show link. The link points at the base commit for pre-existing copies and at the first added copy for groups the pull request created, and the removal suggestion deletes the copy together with an empty line left behind. Sites GitHub cannot anchor get permalinks in the review body.
