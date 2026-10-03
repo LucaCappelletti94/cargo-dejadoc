@@ -1515,6 +1515,26 @@ fn f() {}"#,
     }
 
     #[test]
+    fn an_else_block_holding_only_an_if_collapses() {
+        assert_eq!(
+            canonicalize("let x = if a { 1 } else { if b { 2 } else { 3 } };").text,
+            canonicalize("let x = if a { 1 } else if b { 2 } else { 3 };").text
+        );
+        assert_eq!(
+            canonicalize("if a { f(); } else { if b { g(); } }").text,
+            canonicalize("if a { f(); } else if b { g(); }").text
+        );
+    }
+
+    #[test]
+    fn an_attributed_if_in_an_else_block_stays() {
+        assert_ne!(
+            canonicalize("if a { f(); } else { #[cfg(unix)] if b { g(); } }").text,
+            canonicalize("if a { f(); } else if b { g(); }").text
+        );
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");

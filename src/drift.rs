@@ -205,6 +205,9 @@ impl VisitMut for Drift {
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
         syn::visit_mut::visit_expr_mut(self, expr);
         fold_paren_expr(expr);
+        if let syn::Expr::If(expr_if) = expr {
+            collapse_else_if(expr_if);
+        }
         if let syn::Expr::Closure(closure) = expr {
             if let syn::Expr::Block(block) = closure.body.as_mut() {
                 fold_tail_return(&mut block.block.stmts);
@@ -347,6 +350,25 @@ fn unwrap_single_expr_block(body: &mut Box<syn::Expr>) {
     }
     if let Some(syn::Stmt::Expr(expr, None)) = block.block.stmts.pop() {
         **body = expr;
+    }
+}
+
+/// An `else { if … }` whose block holds only that `if`, with no attribute
+/// on it, becomes `else if …`. An else block itself never carries a label
+/// or attributes.
+fn collapse_else_if(expr_if: &mut syn::ExprIf) {
+    let Some((_, otherwise)) = &mut expr_if.else_branch else {
+        return;
+    };
+    let syn::Expr::Block(block) = otherwise.as_mut() else {
+        return;
+    };
+    if !matches!(block.block.stmts.as_slice(), [syn::Stmt::Expr(syn::Expr::If(inner), None)] if inner.attrs.is_empty())
+    {
+        return;
+    }
+    if let Some(syn::Stmt::Expr(inner, None)) = block.block.stmts.pop() {
+        **otherwise = inner;
     }
 }
 
