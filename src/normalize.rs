@@ -36,10 +36,10 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
     };
     crate::drift::normalize_file(&mut file);
     crate::alpha::normalize_file(&mut file);
-    let stream = flatten_include_depth(file.to_token_stream());
-    let stream = crate::drift::strip_trailing_commas(stream);
-    let stream = crate::drift::canonical_literals(stream);
-    from_stream(stream)
+    let tokens: proc_macro2::TokenStream = fold_tokens(file.to_token_stream(), false, false)
+        .into_iter()
+        .collect();
+    from_stream(tokens)
 }
 
 /// Deepest bracket and generic nesting a body may reach before it hashes as
@@ -205,53 +205,69 @@ fn map_line(line: &str) -> String {
     }
 }
 
-/// Strips the leading `../` components of path literals passed to
-/// `include`-style macros (`include!`, `include_str!`, egui's
-/// `include_image!`). The depth is an artifact of the file spelling the
-/// include: rustdoc compiles a doctest from the package root, so either
-/// spelling resolves to the same file, while a `println!` or `File::open`
-/// path is runtime content and every component of it matters.
-fn flatten_include_depth(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-    flatten_stream(stream, false)
-}
+/// Walks one token list for the token-level folds. Every group loses its
+/// trailing comma, a one-tuple keeps its meaning because the fold of
+/// redundant parentheses already separates it from the parenthesised
+/// expression of the same element.
+///
+/// `include` is set by a macro name (`include` or `include_…`) and kept
+/// only by the following `!`, so it is entered exactly by macro call
+/// syntax, never by a method or a binding named `includes`. Its string
+/// literals lose their leading `../` components, since rustdoc compiles a
+/// doctest from the package root and either spelling names the same file.
+/// Any group or literal ends it.
+///
+/// Literals take their canonical spelling unless `opaque`, set inside the
+/// tokens of a macro call or an attribute, which a procedural macro may
+/// read verbatim.
+fn fold_tokens(
+    stream: proc_macro2::TokenStream,
+    include: bool,
+    opaque: bool,
+) -> Vec<proc_macro2::TokenTree> {
+    use proc_macro2::TokenTree;
 
-/// Walks one token list. `strip` is set by a macro name (`include` or
-/// `include_…`) and kept only by the following `!`, so strip mode is
-/// entered exactly by macro call syntax, never by a method or a binding
-/// named `includes`. In include mode the delimiter's string literals
-/// lose their leading `../` components. Any group or literal ends it.
-fn flatten_stream(stream: proc_macro2::TokenStream, strip: bool) -> proc_macro2::TokenStream {
-    let mut out = proc_macro2::TokenStream::new();
-    let mut strip = strip;
+    let mut out: Vec<TokenTree> = Vec::new();
+    let mut include = include;
     for tree in stream {
-        match tree {
-            proc_macro2::TokenTree::Ident(id) => {
+        let tree = match tree {
+            TokenTree::Ident(id) => {
                 let name = id.unraw().to_string();
-                strip = name == "include" || name.starts_with("include_");
-                out.extend(core::iter::once(proc_macro2::TokenTree::Ident(id)));
+                include = name == "include" || name.starts_with("include_");
+                TokenTree::Ident(id)
             }
-            proc_macro2::TokenTree::Punct(p) => {
-                strip = strip && p.as_char() == '!';
-                out.extend(core::iter::once(proc_macro2::TokenTree::Punct(p)));
+            TokenTree::Punct(p) => {
+                include = include && p.as_char() == '!';
+                TokenTree::Punct(p)
             }
-            proc_macro2::TokenTree::Group(group) => {
-                out.extend(core::iter::once(crate::drift::map_group(&group, |inner| {
-                    flatten_stream(inner, strip)
-                })));
-                strip = false;
+            TokenTree::Group(group) => {
+                let shut = opaque
+                    || matches!(out.last(), Some(TokenTree::Punct(p)) if matches!(p.as_char(), '!' | '#'));
+                let tree = crate::drift::map_group(&group, |inner| {
+                    let mut inner = fold_tokens(inner, include, shut);
+                    if matches!(inner.last(), Some(TokenTree::Punct(p)) if p.as_char() == ',') {
+                        inner.pop();
+                    }
+                    inner.into_iter().collect()
+                });
+                include = false;
+                tree
             }
-            proc_macro2::TokenTree::Literal(lit) => {
-                let kept = if strip {
-                    flat_literal(&lit).map_or(proc_macro2::TokenTree::Literal(lit), |f| {
-                        proc_macro2::TokenTree::from(f)
-                    })
+            TokenTree::Literal(lit) => {
+                let lit = if include {
+                    flat_literal(&lit).unwrap_or(lit)
                 } else {
-                    proc_macro2::TokenTree::Literal(lit)
+                    lit
                 };
-                strip = false;
-                out.extend(core::iter::once(kept));
+                include = false;
+                if opaque {
+                    TokenTree::Literal(lit)
+                } else {
+                    crate::drift::canonical_literal(lit)
+                }
             }
-        }
+        };
+        out.push(tree);
     }
     out
 }
