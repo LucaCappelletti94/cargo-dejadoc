@@ -193,7 +193,7 @@ fn resolve_mod_path(
         return Some((dir.join(crate::cfg::lit_str(&nv.value)?.value()), true));
     }
     let cfg_attr_path = attrs.iter().find_map(|attr| {
-        crate::cfg::cfg_attr_metas(attr)?.find_map(|meta| match meta {
+        crate::cfg::cfg_attr_metas(attr)?.into_iter().find_map(|meta| match meta {
             Meta::NameValue(nv) if nv.path.is_ident("path") => {
                 crate::cfg::lit_str(&nv.value).map(syn::LitStr::value)
             }
