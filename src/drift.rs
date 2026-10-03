@@ -240,6 +240,11 @@ impl VisitMut for Drift {
         fold_paren_type(ty);
     }
 
+    fn visit_generics_mut(&mut self, generics: &mut syn::Generics) {
+        syn::visit_mut::visit_generics_mut(self, generics);
+        bounds_to_where(generics);
+    }
+
     fn visit_signature_mut(&mut self, sig: &mut syn::Signature) {
         syn::visit_mut::visit_signature_mut(self, sig);
         fold_unit_return(&mut sig.output);
@@ -496,6 +501,48 @@ fn fold_paren_type(ty: &mut syn::Type) {
     if let syn::Type::Paren(paren) = core::mem::replace(ty, dummy) {
         *ty = *paren.elem;
     }
+}
+
+/// Move the bounds written on type and lifetime parameters into the `where`
+/// clause, ahead of its own predicates and in parameter order, the place
+/// they would take written there.
+fn bounds_to_where(generics: &mut syn::Generics) {
+    let mut moved = Vec::new();
+    for param in &mut generics.params {
+        match param {
+            syn::GenericParam::Type(ty) if !ty.bounds.is_empty() => {
+                ty.colon_token = None;
+                moved.push(syn::WherePredicate::Type(syn::PredicateType {
+                    attrs: Vec::new(),
+                    lifetimes: None,
+                    bounded_ty: syn::Type::Path(syn::TypePath {
+                        attrs: Vec::new(),
+                        qself: None,
+                        path: ty.ident.clone().into(),
+                    }),
+                    colon_token: syn::token::Colon::default(),
+                    bounds: core::mem::take(&mut ty.bounds),
+                }));
+            }
+            syn::GenericParam::Lifetime(lifetime) if !lifetime.bounds.is_empty() => {
+                lifetime.colon_token = None;
+                moved.push(syn::WherePredicate::Lifetime(syn::PredicateLifetime {
+                    attrs: Vec::new(),
+                    lifetime: lifetime.lifetime.clone(),
+                    colon_token: syn::token::Colon::default(),
+                    bounds: core::mem::take(&mut lifetime.bounds),
+                }));
+            }
+            _ => {}
+        }
+    }
+    if moved.is_empty() {
+        return;
+    }
+    let clause = generics.make_where_clause();
+    let written = core::mem::take(&mut clause.predicates);
+    clause.predicates.extend(moved);
+    clause.predicates.extend(written);
 }
 
 /// True for attributes that carry no program meaning for doctests: doc

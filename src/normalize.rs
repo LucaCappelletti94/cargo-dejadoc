@@ -1554,6 +1554,44 @@ fn f() {}"#,
     }
 
     #[test]
+    fn inline_bounds_merge_with_their_where_form() {
+        let pairs = [
+            (
+                "fn f<T: Clone>(t: T) -> T { t.clone() }",
+                "fn f<T>(t: T) -> T where T: Clone { t.clone() }",
+            ),
+            (
+                "trait Tr {}\nstruct S<T>(T);\nimpl<T: Clone> Tr for S<T> {}",
+                "trait Tr {}\nstruct S<T>(T);\nimpl<T> Tr for S<T> where T: Clone {}",
+            ),
+            ("struct S<T: Clone>(T);", "struct S<T>(T) where T: Clone;"),
+            (
+                "fn f<'a, 'b: 'a>(x: &'a u8, y: &'b u8) {}",
+                "fn f<'a, 'b>(x: &'a u8, y: &'b u8) where 'b: 'a {}",
+            ),
+            (
+                "fn f<T: Clone>(t: T) where T: Copy {}",
+                "fn f<T>(t: T) where T: Clone, T: Copy {}",
+            ),
+        ];
+        for (inline, clause) in pairs {
+            assert_eq!(
+                canonicalize(inline).text,
+                canonicalize(clause).text,
+                "{inline}"
+            );
+        }
+    }
+
+    #[test]
+    fn an_impl_trait_argument_stays_apart_from_a_generic_parameter() {
+        assert_ne!(
+            canonicalize("fn f(x: impl Clone) {}").text,
+            canonicalize("fn f<T: Clone>(x: T) {}").text
+        );
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");
