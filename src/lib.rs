@@ -22,6 +22,7 @@ mod config;
 mod discover;
 pub mod extract;
 mod fence;
+mod functions;
 mod normalize;
 mod report;
 
@@ -38,6 +39,8 @@ pub struct Dejadoc {
     all_targets: bool,
     threshold: Option<usize>,
     min_tokens: Option<usize>,
+    no_functions: bool,
+    fn_min_tokens: Option<usize>,
 }
 
 impl Dejadoc {
@@ -69,19 +72,40 @@ impl Dejadoc {
         self
     }
 
-    /// Read parameters from a `.dejadoc.toml` file at `path`. The values
-    /// fill parameters that are not set yet. Under `run` the workspace
-    /// root `.dejadoc.toml` still applies as a fallback.
+    /// Skip the duplicate function check.
+    #[must_use]
+    pub fn no_functions(mut self) -> Self {
+        self.no_functions = true;
+        self
+    }
+
+    /// Ignore functions with fewer canonical tokens than this.
+    #[must_use]
+    pub fn fn_min_tokens(mut self, n: usize) -> Self {
+        self.fn_min_tokens = Some(n);
+        self
+    }
+
+    /// Fill unset parameters from the `.dejadoc.toml` at `path`, before the workspace root one under `run`.
     ///
     /// # Errors
     ///
     /// Fails when the file cannot be read or is not valid TOML.
     #[cfg(feature = "std")]
-    pub fn config(mut self, path: impl Into<PathBuf>) -> Result<Self> {
-        let file = config::load(&path.into())?;
-        self.threshold = self.threshold.or(file.threshold);
-        self.min_tokens = self.min_tokens.or(file.min_tokens);
-        Ok(self)
+    pub fn config(self, path: impl Into<PathBuf>) -> Result<Self> {
+        Ok(self.fill_from(&config::load(&path.into())?))
+    }
+
+    /// Fill unset parameters from `file`.
+    #[cfg(feature = "std")]
+    fn fill_from(self, file: &config::Config) -> Self {
+        Self {
+            threshold: self.threshold.or(file.threshold),
+            min_tokens: self.min_tokens.or(file.min_tokens),
+            no_functions: self.no_functions || file.functions == Some(false),
+            fn_min_tokens: self.fn_min_tokens.or(file.fn_min_tokens),
+            ..self
+        }
     }
 
     /// Scan `root` (any directory inside the workspace) and report
@@ -107,13 +131,7 @@ impl Dejadoc {
     /// `run` on the calling thread's stack.
     #[cfg(feature = "std")]
     fn run_here(self, root: &Path) -> Result<Report> {
-        let Self {
-            package,
-            all_targets,
-            threshold,
-            min_tokens,
-        } = self;
-        let workspace = discover::workspace(root, package.as_deref(), all_targets)?;
+        let workspace = discover::workspace(root, self.package.as_deref(), self.all_targets)?;
         let cfg = config::load(&workspace.root.join(".dejadoc.toml"))?;
         let root_str = workspace.root.to_string_lossy().into_owned();
         let read = |file: &str, p: &str| -> Option<(String, String)> {
@@ -134,11 +152,11 @@ impl Dejadoc {
                 files: discover::module_tree(target)?,
             });
         }
-        Ok(group_here(
-            &extract_all(&targets, &root_str, &read),
-            threshold.or(cfg.threshold).unwrap_or(DEFAULT_THRESHOLD),
-            min_tokens.or(cfg.min_tokens).unwrap_or(DEFAULT_MIN_TOKENS),
-        ))
+        let scan = Self {
+            package: None,
+            ..self.fill_from(&cfg)
+        };
+        Ok(scan.scan(&root_str, &targets, &read, group_here))
     }
 
     /// Scan resolved targets. Runs no `cargo metadata` and reads no files,
@@ -146,27 +164,52 @@ impl Dejadoc {
     /// `read` resolves an `include_str!` doc splice, given the file that
     /// contains it and the path as written, to the resolved path and text.
     /// `package` filters the passed targets by name. Values loaded
-    /// through `config` apply here too.
+    /// through `config` apply here too. Functions canonicalize on the
+    /// calling thread, which parsed them.
     #[must_use]
     pub fn run_targets(self, root: &str, targets: &[TargetScan], read: &IncludeRead<'_>) -> Report {
-        let Self {
-            package,
-            all_targets: _,
+        self.scan(root, targets, read, group)
+    }
+
+    /// Doctests of `targets` grouped through `group_doctests`, then their functions.
+    fn scan(
+        self,
+        root: &str,
+        targets: &[TargetScan],
+        read: &IncludeRead<'_>,
+        group_doctests: fn(&[DocTest], usize, usize) -> Report,
+    ) -> Report {
+        let targets: Vec<&TargetScan> = targets
+            .iter()
+            .filter(|t| self.package.as_deref().is_none_or(|p| p == t.name))
+            .collect();
+        let threshold = self.threshold.unwrap_or(DEFAULT_THRESHOLD);
+        let mut report = group_doctests(
+            &extract_all(targets.iter().copied(), root, read),
             threshold,
-            min_tokens,
-        } = self;
-        let blocks = extract_all(
-            targets
-                .iter()
-                .filter(|t| package.as_deref().is_none_or(|p| p == t.name)),
-            root,
-            read,
+            self.min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
         );
-        group(
-            &blocks,
-            threshold.unwrap_or(DEFAULT_THRESHOLD),
-            min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
-        )
+        if !self.no_functions {
+            let sites = targets.iter().flat_map(|target| {
+                let crate_root = target.files.first().map_or("", |f| {
+                    f.path
+                        .strip_prefix(root)
+                        .map_or(f.path.as_str(), |p| p.trim_start_matches('/'))
+                });
+                target.files.iter().flat_map(move |file| {
+                    functions::functions(&module_prefix(target, file), file, root, crate_root)
+                })
+            });
+            let (total, unique, groups) = group_functions(
+                sites,
+                threshold,
+                self.fn_min_tokens.unwrap_or(DEFAULT_FN_MIN_TOKENS),
+            );
+            report.functions = total;
+            report.unique_functions = unique;
+            report.groups.extend(groups);
+        }
+        report
     }
 }
 
@@ -175,7 +218,7 @@ impl Dejadoc {
 pub struct TargetScan {
     /// The target name, used as the item-path prefix.
     pub name: String,
-    /// The target's files.
+    /// The target's files, its root file first, whose path tells two targets of one name apart.
     pub files: Vec<SourceFile>,
 }
 
@@ -188,6 +231,10 @@ pub struct SourceFile {
     pub segments: Vec<String>,
     /// The parsed file.
     pub parsed: syn::File,
+    /// The file's source text.
+    pub text: String,
+    /// Whether rustdoc collects doctests from this file.
+    pub rustdoc: bool,
 }
 
 impl core::fmt::Debug for SourceFile {
@@ -205,7 +252,18 @@ const DEFAULT_THRESHOLD: usize = 2;
 /// Token floor when no `min-tokens` is set.
 const DEFAULT_MIN_TOKENS: usize = 0;
 
-/// The doctests of every file of `targets`.
+/// Token floor for functions when no `fn-min-tokens` is set.
+const DEFAULT_FN_MIN_TOKENS: usize = 30;
+
+/// The module path of `file` in `target`.
+fn module_prefix(target: &TargetScan, file: &SourceFile) -> String {
+    match file.segments.first() {
+        Some(_) => format!("{}::{}", target.name, file.segments.join("::")),
+        None => target.name.clone(),
+    }
+}
+
+/// The doctests of every file of `targets` rustdoc collects from.
 fn extract_all<'t>(
     targets: impl IntoIterator<Item = &'t TargetScan>,
     root: &str,
@@ -213,13 +271,9 @@ fn extract_all<'t>(
 ) -> Vec<DocTest> {
     let mut blocks = Vec::new();
     for target in targets {
-        for file in &target.files {
-            let prefix = match file.segments.first() {
-                Some(_) => format!("{}::{}", target.name, file.segments.join("::")),
-                None => target.name.clone(),
-            };
+        for file in target.files.iter().filter(|f| f.rustdoc) {
             blocks.extend(extract::extract(
-                &prefix,
+                &module_prefix(target, file),
                 &file.path,
                 &file.parsed,
                 root,
@@ -249,33 +303,48 @@ pub enum Error {
 #[cfg(feature = "std")]
 pub type Result<T, E = Error> = std::result::Result<T, E>;
 
-/// A doctest block as found in one doc site.
+/// A duplicated site, a doctest block or a function.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct DocTest {
-    /// File the block's text lives in, workspace-relative.
+    /// File the site's text lives in, workspace-relative.
     pub file: String,
-    /// Line of the opening fence, 1-based.
+    /// Line of the opening fence or of a function's first attribute, 1-based.
     pub line: u32,
-    /// Line of the closing fence or last indented line, 1-based, `None` when the block
-    /// spans an `include_str!` boundary or an escaped-newline literal.
+    /// Line of the closing fence, last indented line or closing brace, 1-based, `None` when a
+    /// block spans an `include_str!` boundary or an escaped-newline literal.
     pub end: Option<u32>,
     /// Item path, e.g. `mycrate::parser::parse`.
     pub item: String,
     /// Doctest attributes such as `no_run` and `should_panic`.
     pub info: Vec<String>,
-    /// Raw block body.
+    /// Raw block body, or a function's source text.
     pub code: String,
-    /// The block carries the `dejadoc` allow token.
+    /// The site carries the `dejadoc` allow token or comment.
     #[serde(skip)]
     pub allow: bool,
+    /// The self type of a method, the trait of a default method.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub self_type: Option<String>,
 }
 
-/// Duplicated doctests sharing one canonical form.
+/// What a group's sites are.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// Doctest blocks.
+    Doctest,
+    /// Functions of one module.
+    Function,
+}
+
+/// Duplicated sites sharing one canonical form.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Group {
+    /// What the sites are.
+    pub kind: Kind,
     /// Stable short id, blake3 hex prefix.
     pub id: String,
-    /// Full blake3 hex of the canonical form.
+    /// Full blake3 hex of the canonical form, with the module scope for functions.
     pub hash: String,
     /// True when the canonical form came from the text fallback, for a body
     /// that does not parse or exceeds the nesting or token cap.
@@ -286,6 +355,16 @@ pub struct Group {
     pub sites: Vec<DocTest>,
 }
 
+impl Group {
+    /// Whether the sites are methods of more than one self type.
+    #[must_use]
+    pub fn spans_types(&self) -> bool {
+        self.sites
+            .split_first()
+            .is_some_and(|(first, rest)| rest.iter().any(|s| s.self_type != first.self_type))
+    }
+}
+
 /// Outcome of a scan.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Report {
@@ -294,7 +373,11 @@ pub struct Report {
     pub total: usize,
     /// Distinct canonical forms among non-allowed doctests.
     pub unique: usize,
-    /// Groups with at least `threshold` sites, ordered by hash.
+    /// Functions scanned, allowed ones included.
+    pub functions: usize,
+    /// Distinct canonical forms among non-allowed functions, per module.
+    pub unique_functions: usize,
+    /// Doctest groups, then function groups, each ordered by hash.
     pub groups: Vec<Group>,
 }
 
@@ -361,24 +444,65 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
             .or_insert(block);
     }
     let total = by_site.len();
+    let entries = by_site.into_values().filter(|b| !b.allow).map(|block| {
+        let canonical = normalize::canonicalize(&block.code);
+        let hash = blake3::hash(canonical.text.as_bytes()).to_hex().to_string();
+        (hash, canonical.unparsed, canonical.tokens, block.clone())
+    });
+    let (unique, groups) = bucket(Kind::Doctest, entries, threshold, min_tokens);
+    Report {
+        total,
+        unique,
+        functions: 0,
+        unique_functions: 0,
+        groups,
+    }
+}
+
+/// The function count, distinct forms and groups, each function canonicalized as a one-item file.
+fn group_functions(
+    sites: impl Iterator<Item = functions::FnSite>,
+    threshold: usize,
+    min_tokens: usize,
+) -> (usize, usize, Vec<Group>) {
+    let mut total = 0;
+    let entries = sites
+        .inspect(|_| total += 1)
+        .filter(|f| !f.site.allow)
+        .map(|f| {
+            let file = syn::File {
+                shebang: None,
+                frontmatter: None,
+                attrs: Vec::new(),
+                items: alloc::vec![syn::Item::Fn(f.func)],
+            };
+            let canonical = syn_canon::canonicalize(file);
+            let tokens = normalize::count_tokens(canonical.clone());
+            let keyed = format!("{}\n{canonical}", f.scope);
+            let hash = blake3::hash(keyed.as_bytes()).to_hex().to_string();
+            (hash, false, tokens, f.site)
+        });
+    let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens);
+    (total, unique, groups)
+}
+
+/// The distinct hash count of `entries` and their groups of at least `threshold` sites and `min_tokens` tokens.
+fn bucket(
+    kind: Kind,
+    entries: impl Iterator<Item = (String, bool, usize, DocTest)>,
+    threshold: usize,
+    min_tokens: usize,
+) -> (usize, Vec<Group>) {
     let mut unique: BTreeSet<String> = BTreeSet::new();
     let mut by_hash: BTreeMap<String, (bool, usize, Vec<DocTest>)> = BTreeMap::new();
-    for block in by_site.into_values() {
-        if block.allow {
-            continue;
-        }
-        let canonical = normalize::canonicalize(&block.code);
-        let hash = blake3::hash(canonical.text.as_bytes())
-            .to_hex()
-            .as_str()
-            .to_string();
+    for (hash, unparsed, tokens, site) in entries {
         unique.insert(hash.clone());
-        if canonical.tokens >= min_tokens {
+        if tokens >= min_tokens {
             by_hash
                 .entry(hash)
-                .or_insert_with(|| (canonical.unparsed, canonical.tokens, Vec::new()))
+                .or_insert_with(|| (unparsed, tokens, Vec::new()))
                 .2
-                .push(block.clone());
+                .push(site);
         }
     }
     let groups = by_hash
@@ -387,6 +511,7 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         .map(|(hash, (unparsed, tokens, mut sites))| {
             sites.sort_by(|a, b| (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line)));
             Group {
+                kind,
                 id: hash[..8].to_string(),
                 hash,
                 unparsed,
@@ -395,11 +520,7 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
             }
         })
         .collect();
-    Report {
-        total,
-        unique: unique.len(),
-        groups,
-    }
+    (unique.len(), groups)
 }
 
 #[cfg(test)]
@@ -416,6 +537,7 @@ mod tests {
             info: Vec::new(),
             code: code.to_string(),
             allow,
+            self_type: None,
         }
     }
 
@@ -452,6 +574,27 @@ mod tests {
             .threshold(2)
             .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(report.groups.len(), 1);
+        std::fs::write(&file, "min-tokens = 1000\n").unwrap();
+        let report =
+            Dejadoc::default()
+                .config(&file)
+                .unwrap()
+                .run_targets("", &targets, &|_f, _i| None);
+        assert_eq!(report.groups, Vec::new());
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn config_turns_the_function_check_off_or_lowers_its_floor() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = "fn one() -> u8 { 1 + 2 }\nfn two() -> u8 { 1 + 2 }\n";
+        let scan_with = |toml: &str| {
+            let file = dir.path().join("config.toml");
+            std::fs::write(&file, toml).unwrap();
+            fn_groups(Dejadoc::default().config(&file).unwrap(), src).len()
+        };
+        assert_eq!(scan_with("fn-min-tokens = 0\n"), 1);
+        assert_eq!(scan_with("fn-min-tokens = 0\nfunctions = false\n"), 0);
     }
 
     #[test]
@@ -481,8 +624,245 @@ mod tests {
                     Ok(parsed) => parsed,
                     Err(err) => panic!("parse fixture: {err}"),
                 },
+                text: src.to_string(),
+                rustdoc: true,
             }],
         }
+    }
+
+    /// A function body of 30 or more canonical tokens.
+    const BODY: &str = "(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += value * 2; } else { total -= 1; } } total }";
+
+    /// The function groups of a one-file scan of `src`, as item lists.
+    fn fn_groups(scan: Dejadoc, src: &str) -> Vec<Vec<String>> {
+        let report = scan.run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], src)],
+            &|_f, _i| None,
+        );
+        report
+            .groups
+            .iter()
+            .filter(|g| g.kind == Kind::Function)
+            .map(|g| g.sites.iter().map(|s| s.item.clone()).collect())
+            .collect()
+    }
+
+    #[test]
+    fn functions_differing_in_name_visibility_and_inert_attributes_group() {
+        let src = format!(
+            "pub fn one{BODY}\n#[inline]\n#[cfg(unix)]\n/// Doc.\nfn two{BODY}\n#[must_use]\npub(crate) fn three{BODY}\n"
+        );
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            [["c::one", "c::two", "c::three"]]
+        );
+    }
+
+    #[test]
+    fn function_hashes_do_not_depend_on_the_workspace_location() {
+        let src = format!("fn one{BODY}\nfn two{BODY}\n");
+        let hash = |root: &str| {
+            let target = target_from("c", &format!("{root}/src/lib.rs"), &[], &src);
+            Dejadoc::default()
+                .run_targets(root, &[target], &|_f, _i| None)
+                .groups[0]
+                .hash
+                .clone()
+        };
+        assert_eq!(hash("/base"), hash("/head"));
+    }
+
+    #[test]
+    fn methods_of_types_sharing_a_last_segment_span_types() {
+        for (one, two) in [
+            ("Foo<u8>", "Foo<u16>"),
+            ("a::Foo", "b::Foo"),
+            ("dyn Shape", "dyn Area"),
+        ] {
+            let src = format!("impl {one} {{ fn run{BODY} }}\nimpl {two} {{ fn run{BODY} }}\n");
+            let report = Dejadoc::default().run_targets(
+                "",
+                &[target_from("c", "src/lib.rs", &[], &src)],
+                &|_f, _i| None,
+            );
+            let types: Vec<Option<&str>> = report.groups[0]
+                .sites
+                .iter()
+                .map(|s| s.self_type.as_deref())
+                .collect();
+            assert_eq!(types, [Some(one), Some(two)]);
+            assert!(report.groups[0].spans_types(), "{one} {two}");
+        }
+    }
+
+    #[test]
+    fn two_targets_sharing_a_name_are_two_crates() {
+        // Two packages may each hold a `show_posts` bin.
+        let src = format!("fn main{BODY}\n");
+        let targets = [
+            target_from("show_posts", "mysql/src/bin/show_posts.rs", &[], &src),
+            target_from("show_posts", "pg/src/bin/show_posts.rs", &[], &src),
+        ];
+        let report = Dejadoc::default().run_targets("", &targets, &|_f, _i| None);
+        assert_eq!(report.groups, Vec::new());
+        assert_eq!(report.unique_functions, 2);
+    }
+
+    #[test]
+    fn functions_compare_within_one_module_only() {
+        let src = format!("fn one{BODY}\nmod inner {{ fn two{BODY} }}\n");
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            Vec::<Vec<String>>::new()
+        );
+        let src = format!("mod inner {{ fn one{BODY}\nfn two{BODY} }}\n");
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            [["c::inner::one", "c::inner::two"]]
+        );
+    }
+
+    #[test]
+    fn a_free_function_and_a_method_of_one_body_span_types() {
+        let src = format!(
+            "struct A;\nfn run{BODY}\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n"
+        );
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], &src)],
+            &|_f, _i| None,
+        );
+        let group = &report.groups[0];
+        let types: Vec<Option<&str>> = group.sites.iter().map(|s| s.self_type.as_deref()).collect();
+        assert_eq!(types, [None, Some("A"), Some("A")]);
+        assert!(group.spans_types());
+        let same = format!("struct A;\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n");
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], &same)],
+            &|_f, _i| None,
+        );
+        assert!(!report.groups[0].spans_types());
+    }
+
+    #[test]
+    fn methods_of_different_self_types_group_and_report_their_types() {
+        let src = format!(
+            "struct A;\nstruct B;\nimpl A {{ fn run{BODY} }}\nimpl B {{ fn run{BODY} }}\ntrait T {{ fn go{BODY} }}\n"
+        );
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], &src)],
+            &|_f, _i| None,
+        );
+        let group = report
+            .groups
+            .iter()
+            .find(|g| g.kind == Kind::Function)
+            .unwrap();
+        let sites: Vec<(&str, Option<&str>)> = group
+            .sites
+            .iter()
+            .map(|s| (s.item.as_str(), s.self_type.as_deref()))
+            .collect();
+        assert_eq!(
+            sites,
+            [
+                ("c::A::run", Some("A")),
+                ("c::B::run", Some("B")),
+                ("c::T::go", Some("T"))
+            ]
+        );
+    }
+
+    #[test]
+    fn signature_and_test_attributes_keep_functions_apart() {
+        let wide = BODY.replace("u32", "u64");
+        for src in [
+            format!("fn one{BODY}\nfn two{wide}\n"),
+            format!("#[test]\nfn one{BODY}\nfn two{BODY}\n"),
+            format!("#[test]\n#[should_panic]\nfn one{BODY}\n#[test]\nfn two{BODY}\n"),
+            format!("#[test]\n#[ignore]\nfn one{BODY}\n#[test]\nfn two{BODY}\n"),
+        ] {
+            assert_eq!(
+                fn_groups(Dejadoc::default(), &src),
+                Vec::<Vec<String>>::new(),
+                "{src}"
+            );
+        }
+    }
+
+    #[test]
+    fn the_function_floor_defaults_to_30_tokens_and_is_settable() {
+        let src = "fn one() -> u8 { 1 + 2 }\nfn two() -> u8 { 1 + 2 }\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default(), src),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            [["c::one", "c::two"]]
+        );
+        let src = format!("fn one{BODY}\nfn two{BODY}\n");
+        assert_eq!(
+            fn_groups(Dejadoc::default().fn_min_tokens(1000), &src),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(
+            fn_groups(Dejadoc::default().no_functions(), &src),
+            Vec::<Vec<String>>::new()
+        );
+    }
+
+    #[test]
+    fn an_allow_comment_above_a_function_drops_its_site() {
+        let src = format!("fn one{BODY}\n// dejadoc: allow\n#[inline]\nfn two{BODY}\n");
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            Vec::<Vec<String>>::new()
+        );
+        let src = format!("fn one{BODY}\n// dejadoc: allow\n\nfn two{BODY}\n");
+        assert_eq!(fn_groups(Dejadoc::default(), &src), [["c::one", "c::two"]]);
+    }
+
+    #[test]
+    fn nested_functions_are_not_sites() {
+        let src = format!("fn outer() {{ fn one{BODY}\nfn two{BODY} }}\n");
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            Vec::<Vec<String>>::new()
+        );
+    }
+
+    #[test]
+    fn a_function_site_spans_its_attributes_and_counts_apart() {
+        let src = format!("/// One.\n#[inline]\nfn one{BODY}\n\nfn two{BODY}\n");
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], &src)],
+            &|_f, _i| None,
+        );
+        assert_eq!((report.total, report.unique), (0, 0));
+        assert_eq!((report.functions, report.unique_functions), (2, 1));
+        let sites = &report.groups[0].sites;
+        assert_eq!((sites[0].line, sites[0].end), (1, Some(3)));
+        assert_eq!((sites[1].line, sites[1].end), (5, Some(5)));
+        assert_eq!(sites[0].code, format!("/// One.\n#[inline]\nfn one{BODY}"));
+    }
+
+    #[test]
+    fn functions_in_a_file_rustdoc_skips_still_count() {
+        let mut target = target_from(
+            "c",
+            "src/lib.rs",
+            &[],
+            &format!("/// ```\n/// let x = 1;\n/// ```\nfn one{BODY}\nfn two{BODY}\n"),
+        );
+        target.files[0].rustdoc = false;
+        let report = Dejadoc::default().run_targets("", &[target], &|_f, _i| None);
+        assert_eq!(report.total, 0);
+        assert_eq!(report.groups.len(), 1);
     }
 
     #[test]

@@ -1,7 +1,7 @@
 name: dejadoc
 description: >-
-  Dejadoc scans and canonicalizes every doctest your workspace's rustdoc
-  would run, reporting any duplicates. Use it in your GitHub CI!
+  Dejadoc scans and canonicalizes your workspace's doctests and functions,
+  reporting any duplicates. Use it in your GitHub CI!
 
 branding:
   icon: 'copy'
@@ -15,6 +15,14 @@ inputs:
     description: Skip doctest bodies with fewer tokens than this
     required: false
     default: '0'
+  functions:
+    description: Check for duplicated functions, false skips the check
+    required: false
+    default: 'true'
+  fn-min-tokens:
+    description: Skip functions with fewer tokens than this
+    required: false
+    default: ''
   all-targets:
     description: Also scan bin and example targets
     required: false
@@ -27,6 +35,10 @@ inputs:
     description: The dejadoc version to install, empty for the latest
     required: false
     default: ''
+  install:
+    description: Install dejadoc, false uses the cargo dejadoc already on the path
+    required: false
+    default: 'true'
   cwd:
     description: The workspace directory to scan
     required: false
@@ -60,7 +72,7 @@ runs:
   using: 'composite'
   steps:
     - name: Install dejadoc
-      if: ${{ inputs.mode != 'post' }}
+      if: ${{ inputs.mode != 'post' && inputs.install == 'true' }}
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
@@ -112,7 +124,7 @@ runs:
         [ -n "$tag" ] && install+=(--version "$VERSION")
         cargo install "${install[@]}"
 
-    - name: Scan for duplicated doctests
+    - name: Scan for duplicates
       id: scan
       if: ${{ inputs.mode != 'post' }}
       shell: bash
@@ -124,26 +136,30 @@ runs:
         DRY_RUN: ${{ inputs.dry-run }}
         THRESHOLD: ${{ inputs.threshold }}
         MIN_TOKENS: ${{ inputs.min-tokens }}
+        FUNCTIONS: ${{ inputs.functions }}
+        FN_MIN_TOKENS: ${{ inputs.fn-min-tokens }}
         ANNOTATIONS: ${{ inputs.annotations }}
         CWD: ${{ inputs.cwd }}
       run: |
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
+        [ "$FUNCTIONS" != "true" ] && set -- --no-functions "$@"
+        [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
         if [ -n "$PR_NUMBER" ] || [ "$DRY_RUN" = "true" ]; then
           report="$RUNNER_TEMP/dejadoc-report.json"
           cargo dejadoc \
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
             --no-fail --json "$@" > "$report"
-          jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.groups | length) duplicated groups"' "$report"
+          jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.functions // 0) functions, \($r.unique_functions // 0) unique functions, \($r.groups | length) duplicated groups"' "$report"
           # The whole scan in the run summary, which needs no token, so a
           # fork pull request has it whatever the review can do.
           {
-            jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report"
+            jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.functions // 0) functions, \(.unique_functions // 0) unique functions, \(.groups | length) duplicated groups"' "$report"
             jq -r --arg cwd "$CWD" '
               def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-              .groups[] | "\n- group `\(.id)`, \(.sites | length) copies\n"
+              .groups[] | "\n- group `\(.id)`, \(.kind // "doctest"), \(.sites | length) copies\n"
                 + (.sites | map("  - `" + sp + ":" + (.line | tostring) + "`  " + .item)
                    | join("\n"))' "$report"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -199,6 +215,8 @@ runs:
         PACKAGE: ${{ inputs.package }}
         THRESHOLD: ${{ inputs.threshold }}
         MIN_TOKENS: ${{ inputs.min-tokens }}
+        FUNCTIONS: ${{ inputs.functions }}
+        FN_MIN_TOKENS: ${{ inputs.fn-min-tokens }}
       run: |
         # The base report lets the review ignore duplicates that already exist on the
         # base commit. Any failure degrades to reviewing the full report.
@@ -218,7 +236,9 @@ runs:
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
-        # Threshold 1 inventories every base doctest, a group the pull request
+        [ "$FUNCTIONS" != "true" ] && set -- --no-functions "$@"
+        [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
+        # Threshold 1 inventories every base site, a group the pull request
         # completes from a single existing copy must still be reported.
         if ! (cd "$dir" && cargo dejadoc \
           --threshold 1 \
@@ -273,6 +293,8 @@ runs:
           head_sha="$(jq -r '.head_sha' "$meta")"
           out_of_range="$(jq -r '.out_of_range' "$meta")"
           findings="$(jq -r '.findings' "$meta")"
+          findings_span=0
+          grep -q ' on another type$' <<< "$findings" && findings_span=1
         else
         # The head SHA and changed file list, empty when there is no pull request.
         head_sha=''
@@ -308,9 +330,10 @@ runs:
             { keys: [.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(sp)"],
               keep: (reduce .groups[] as $gr ({};
                 .[$gr.hash] = (($gr.sites[0] | sp) + ":" + ($gr.sites[0].line | tostring)))),
-              keep_end: (reduce .groups[] as $gr ({}; .[$gr.hash] = ($gr.sites[0].end // null))) }' "$base_report")"
+              keep_end: (reduce .groups[] as $gr ({}; .[$gr.hash] = ($gr.sites[0].end // null))),
+              keep_item: (reduce .groups[] as $gr ({}; .[$gr.hash] = $gr.sites[0].item)) }' "$base_report")"
         else
-          base_json='{"keys": [], "keep": {}, "keep_end": {}}'
+          base_json='{"keys": [], "keep": {}, "keep_end": {}, "keep_item": {}}'
         fi
 
         # Sites to comment on. In only-new mode a site must be introduced by this
@@ -337,7 +360,12 @@ runs:
               | .hash as $h
               | ((.sites[0] | spath) + ":" + (.sites[0].line | tostring)) as $first
               | (.sites[0].end // null) as $fend
+              | (.kind // "doctest") as $kind
+              | ([.sites[].self_type] as $t | ($t[0]) as $f | ($t[1:] | map(. != $f) | any)) as $spans
+              | (reduce (.sites[] | (.self_type // "free function")) as $t ([]; if index($t) == null then . + [$t] else . end) | join(", ")) as $selftypes
+              | (.sites[0].item) as $firstitem
               | ($base.keep[$h] // "") as $basekeep
+              | ($base.keep_item[$h] // "") as $baseitem
               | ([ .sites[] | ([$h, .item, (spath)] | join("\t")) ]) as $ks
               | [ .sites | to_entries[]
                   | (([$h, .value.item, (.value | spath)] | join("\t")) as $k
@@ -346,7 +374,9 @@ runs:
                      | { g: $g, c: (.key + 1), n: $n, first: $first, fend: $fend, s: .value,
                          p: (.value | spath),
                          isNew: ($idx > $bcount),
-                         basekeep: $basekeep, bend: ($base.keep_end[$h] // null) }) ] as $rows
+                         basekeep: $basekeep, bend: ($base.keep_end[$h] // null),
+                         kind: $kind, spans: $spans, selftypes: $selftypes, firstitem: $firstitem,
+                         baseitem: $baseitem }) ] as $rows
               | ($rows | map(select(.isNew)) | length) as $knew
               | $rows[] | . + { knew: $knew }
           ]
@@ -357,7 +387,9 @@ runs:
           | [$row.p, (.s.line | tostring), .s.item, (.g | tostring), (.c | tostring),
              (.n | tostring), .first, (if .isNew then "1" else "0" end),
              (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring),
-             (.s.end // "-" | tostring), (.fend // "-" | tostring), (.bend // "-" | tostring)]
+             (.s.end // "-" | tostring), (.fend // "-" | tostring), (.bend // "-" | tostring),
+             .kind, (if .spans then "1" else "0" end), .firstitem,
+             (if .baseitem == "" then "-" else .baseitem end), .selftypes]
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
@@ -425,9 +457,9 @@ runs:
         # The bare url GitHub previews as code, collapsed in a details block
         # when the block spans more than ten lines.
         preview_of() {
-          local n="${3:-$2}"
+          local n="${3:-$2}" label="${4:-the duplicated doctest}"
           if [ $((n - $2 + 1)) -gt 10 ]; then
-            printf '<details>\n<summary>Show the duplicated doctest</summary>\n\n%s\n\n</details>' "$1"
+            printf '<details>\n<summary>Show %s</summary>\n\n%s\n\n</details>' "$label" "$1"
           else
             printf '%s' "$1"
           fi
@@ -446,17 +478,21 @@ runs:
         }
         rendered=''
         findings=''
+        findings_span=0
         # One pass builds every comment, live posts them, the dry run renders them.
         # The end line of each block comes from the report, `-` when the crate has
         # none, a block spanning an include or an escaped literal, or an older binary.
         declare -A seen_first=() seen_first_end=()
-        while IFS=$'\t' read -r p line item g c n first new basekeep knew end fend bend; do
+        while IFS=$'\t' read -r p line item g c n first new basekeep knew end fend bend kind spans firstitem baseitem selftypes; do
           [ -n "$p" ] || continue
           site="$p:$line"
           [ "$basekeep" = "-" ] && basekeep=''
           [ "$end" = "-" ] && end=''
           [ "$fend" = "-" ] && fend=''
           [ "$bend" = "-" ] && bend=''
+          [ "$baseitem" = "-" ] && baseitem=''
+          kept_item="$firstitem"
+          [ -n "$baseitem" ] && kept_item="$baseitem"
           if [ "$new" = "1" ] && [ -z "${seen_first[$g]:-}" ]; then
             seen_first[$g]="$site"
             seen_first_end[$g]="$end"
@@ -482,43 +518,57 @@ runs:
           if [ "$ANNOTATIONS" = "true" ] && [ "$dry" != "true" ]; then
             keep="$basekeep"
             [ -z "$keep" ] && keep="$keepat"
-            printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
-              "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$keep")" "$g"
-            findings="$findings- \`$p:$line\`  $item, duplicates \`$keep\`"$'\n'
+            if [ "$kind" = "function" ]; then
+              if [ "$spans" = "1" ]; then
+                printf '::error file=%s,line=%s,title=dejadoc::%s repeats %s at %s on another type, a generic or a macro can share it, group %s\n' \
+                  "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$kept_item")" "$(escape_data "$keep")" "$g"
+                findings="$findings- \`$p:$line\`  $item, repeats \`$kept_item\` at \`$keep\` on another type"$'\n'
+                findings_span=1
+              else
+                printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the function %s at %s, group %s\n' \
+                  "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$kept_item")" "$(escape_data "$keep")" "$g"
+                findings="$findings- \`$p:$line\`  $item, duplicates the function \`$kept_item\` at \`$keep\`"$'\n'
+              fi
+            else
+              printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
+                "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$keep")" "$g"
+              findings="$findings- \`$p:$line\`  $item, duplicates \`$keep\`"$'\n'
+            fi
           fi
           close_line="$end"
           if [ -z "$close_line" ]; then
             out_of_range="$out_of_range- group $g  $(blob_link "$head_sha" "$p" "$line")  $item"$'\n'
             continue
           fi
-          # An empty line right after the block becomes a stray once the
-          # copy is gone, it joins the deleted range.
+          # The suggestion deletes the block plus the empty line right after
+          # it, which would become a stray once the copy is gone.
           delete_end="$close_line"
-          nx="$(awk -v l="$close_line" 'NR == l + 1 { print "x" $0; exit }' "$p" 2>/dev/null)"
-          if [ -n "$nx" ] && [ -z "$(printf '%s' "${nx#x}" | tr -d '[:space:]')" ]; then
-            delete_end=$((close_line + 1))
+          if [ "$kind" != "function" ] || [ "$spans" != "1" ]; then
+            nx="$(awk -v l="$close_line" 'NR == l + 1 { print "x" $0; exit }' "$p" 2>/dev/null)"
+            if [ -n "$nx" ] && [ -z "$(printf '%s' "${nx#x}" | tr -d '[:space:]')" ]; then
+              delete_end=$((close_line + 1))
+            fi
           fi
           url=''
+          loc=''
           pv_s=''
           pv_e=''
-          if [ "$onlynew" = "1" ]; then
-            if [ -n "$basekeep" ]; then
-              bp="${basekeep%:*}"
-              bl="${basekeep##*:}"
-              ce="$bend"
-              url="$(blob_url "$base_sha" "$bp" "$bl" "$ce")"
-              pv_s="$bl"
-              pv_e="$ce"
-              note="This doctest was added by this pull request and duplicates a copy that already exists at $(loc_md "$(loc_text "$bp" "$bl" "$ce")" "$url"), [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
-            else
-              kp="${keepat%:*}"
-              kl="${keepat##*:}"
-              ce="$keepat_end"
-              url="$(blob_url "$head_sha" "$kp" "$kl" "$ce")"
-              pv_s="$kl"
-              pv_e="$ce"
-              note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first added copy at $(loc_md "$(loc_text "$kp" "$kl" "$ce")" "$url") and removing this one."
-            fi
+          if [ "$onlynew" = "1" ] && [ -n "$basekeep" ]; then
+            bp="${basekeep%:*}"
+            bl="${basekeep##*:}"
+            ce="$bend"
+            url="$(blob_url "$base_sha" "$bp" "$bl" "$ce")"
+            pv_s="$bl"
+            pv_e="$ce"
+            loc="$(loc_md "$(loc_text "$bp" "$bl" "$ce")" "$url")"
+          elif [ "$onlynew" = "1" ]; then
+            kp="${keepat%:*}"
+            kl="${keepat##*:}"
+            ce="$keepat_end"
+            url="$(blob_url "$head_sha" "$kp" "$kl" "$ce")"
+            pv_s="$kl"
+            pv_e="$ce"
+            loc="$(loc_md "$(loc_text "$kp" "$kl" "$ce")" "$url")"
           else
             fp="${first%:*}"
             fl="${first##*:}"
@@ -526,11 +576,40 @@ runs:
             url="$(blob_url "$head_sha" "$fp" "$fl" "$ce")"
             pv_s="$fl"
             pv_e="$ce"
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first copy at $(loc_md "$(loc_text "$fp" "$fl" "$ce")" "$url") and removing this one."
+            loc="$(loc_md "$(loc_text "$fp" "$fl" "$ce")" "$url")"
+          fi
+          dejadoc_link='[dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc)'
+          if [ "$kind" = "function" ]; then
+            if [ "$spans" = "1" ]; then
+              preview='the repeated function'
+            else
+              preview='the duplicated function'
+            fi
+          else
+            preview='the duplicated doctest'
+          fi
+          if [ "$kind" = "function" ] && [ "$spans" = "1" ]; then
+            note="This method repeats \`$kept_item\` at $loc on another type ($selftypes). A generic or a macro can share one body."
+          elif [ "$kind" = "function" ]; then
+            if [ "$onlynew" = "1" ] && [ -n "$basekeep" ]; then
+              note="This function was added by this pull request and duplicates a copy that already exists at $loc, $dejadoc_link suggests deleting the added copy, or updating it if it was meant to differ."
+            elif [ "$onlynew" = "1" ]; then
+              note="This pull request adds $knew copies of the same function, $dejadoc_link suggests keeping the first added copy at $loc and deleting this one, or updating it if it was meant to differ."
+            else
+              note="This function appears $n times in this module, this is copy $c. $dejadoc_link suggests keeping the first copy at $loc and deleting this one, or updating it if it was meant to differ."
+            fi
+          elif [ "$onlynew" = "1" ] && [ -n "$basekeep" ]; then
+            note="This doctest was added by this pull request and duplicates a copy that already exists at $loc, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+          elif [ "$onlynew" = "1" ]; then
+            note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first added copy at $loc and removing this one."
+          else
+            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first copy at $loc and removing this one."
           fi
           comment="$note"
-          [ -n "$url" ] && comment="$comment"$'\n\n'"$(preview_of "$url" "$pv_s" "$pv_e")"
-          comment="$comment"$'\n\n```suggestion\n```'
+          [ -n "$url" ] && comment="$comment"$'\n\n'"$(preview_of "$url" "$pv_s" "$pv_e" "$preview")"
+          if [ "$kind" != "function" ] || [ "$spans" != "1" ]; then
+            comment="$comment"$'\n\n```suggestion\n```'
+          fi
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"
           if [ "$dry" = "true" ]; then
             rendered+="$comment"$'\n\n'
@@ -547,11 +626,11 @@ runs:
 
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then
-          stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.groups | length) duplicated groups"' "$report")"
+          stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.functions // 0) functions, \(.unique_functions // 0) unique functions, \(.groups | length) duplicated groups"' "$report")"
           groups_block="$(jq -r --arg cwd "$cwd" '
             def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
             .groups | to_entries | map(
-                "Group \(.key + 1), \(.value.sites | length) copies\n\n"
+                "Group \(.key + 1), \(.value.kind // "doctest"), \(.value.sites | length) copies\n\n"
                 + "```\n\(.value.sites[0].code)\n```\n\n"
                 + (.value.sites | to_entries | map(
                     (if .key == 0 then "first  " else "copy   " end)
@@ -560,7 +639,11 @@ runs:
                   ) | join("\n")) + "\n\n"
             ) | join("")' "$report")"
           {
-            echo 'Duplicated doctests found by dejadoc'
+            title='Duplicated doctests found by dejadoc'
+            if [ "$(jq '[.groups[] | select(.kind == "function")] | length' "$report")" -gt 0 ]; then
+              title='Duplicates found by dejadoc'
+            fi
+            printf '%s\n' "$title"
             echo 'dejadoc dry run, the review is not posted'
             echo
             printf '%s\n' "$stats"
@@ -601,7 +684,7 @@ runs:
             echo "dejadoc: no duplicate was introduced by this pull request, the review is not posted"
             echo "skipped-existing" > "$status"
           else
-            echo "dejadoc: no duplicated doctest is in the pull request diff, the review is not posted"
+            echo "dejadoc: no duplicate is in the pull request diff, the review is not posted"
             echo "skipped-nodiff" > "$status"
           fi
           exit 0
@@ -609,9 +692,11 @@ runs:
         # The reported copies in the run summary, beside the whole scan the
         # scan step wrote there.
         if [ -n "$findings" ] && [ "$dry" != "true" ]; then
+          findings_title='#### Copies to remove'
+          [ "$findings_span" = "1" ] && findings_title='#### Findings'
           {
             echo
-            echo '#### Copies to remove'
+            printf '%s\n' "$findings_title"
             echo
             printf '%s' "$findings"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -661,10 +746,10 @@ runs:
         review=(-f event=REQUEST_CHANGES)
         review_body=''
         if [ -n "$out_of_range" ]; then
-          review_body="$(printf 'These duplicated doctests are not on lines GitHub shows in this pull request diff, the inline comment cannot attach there. The links point at the copies on the head commit.\n\n%s' "$out_of_range")"
+          review_body="$(printf 'These duplicates are not on lines GitHub shows in this pull request diff, the inline comment cannot attach there. The links point at the copies on the head commit.\n\n%s' "$out_of_range")"
         fi
         if [ -n "$failed_sites" ]; then
-          failed_block="$(printf '\n\nDuplicated doctests dejadoc could not comment inline\n\n```\n%s```' "$failed_sites")"
+          failed_block="$(printf '\n\nDuplicates dejadoc could not comment inline\n\n```\n%s```' "$failed_sites")"
           review_body="$review_body$failed_block"
         fi
         if [ -n "$review_body" ]; then

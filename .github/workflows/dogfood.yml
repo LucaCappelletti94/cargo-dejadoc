@@ -155,3 +155,50 @@ jobs:
               exit 1
               ;;
           esac
+
+  functions:
+    name: Dogfood the function check on its fixture
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The released binary predates the code under review, so this job scans with the branch build.
+      - run: cargo install --path . --locked
+      - uses: ./
+        with:
+          cwd: tests/fixtures/fnws
+          install: false
+          dry-run: true
+          annotations: false
+      - name: Check the function findings
+        run: |
+          set -euo pipefail
+          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
+          body="$RUNNER_TEMP/dejadoc-review.md"
+          removable=0
+          spanning=0
+          while IFS=$'\t' read -r p line _ _ c _ _ _ _ _ end _ _ kind spans _; do
+            [ "$c" != "1" ] || continue
+            [ "$kind" = "function" ] || { echo "$p:$line is a $kind, the fixture holds functions only"; exit 1; }
+            if [ "$spans" = "1" ]; then
+              spanning=$((spanning + 1))
+              continue
+            fi
+            removable=$((removable + 1))
+            first="$(sed -n "${line}p" "$p" | sed 's/^[[:space:]]*//')"
+            last="$(sed -n "${end}p" "$p" | tr -d '[:space:]')"
+            case "$first" in
+              '///'*|'#['*|*'fn '*) ;;
+              *) echo "the suggestion on $p:$line does not start on a function: $first"; exit 1 ;;
+            esac
+            [ "$last" = "}" ] || { echo "the suggestion on $p:$line-$end does not end on the closing brace: $last"; exit 1; }
+            echo "verified $p:$line-$end deletes exactly one function"
+          done < "$RUNNER_TEMP/dejadoc-inline.tsv"
+          [ "$removable" = "4" ] || { echo "expected 4 removable copies, got $removable"; exit 1; }
+          [ "$spanning" = "1" ] || { echo "expected 1 copy on another type, got $spanning"; exit 1; }
+          suggestions="$(grep -c '^```suggestion' "$body")"
+          [ "$suggestions" = "4" ] || { echo "expected 4 delete suggestions, the copy on another type carries none, got $suggestions"; exit 1; }
+          grep -q 'on another type (Alpha, Beta)' "$body" || { echo "the generic or macro comment is missing"; exit 1; }
+          grep -q 'times in this module' "$body" || { echo "the function copy wording is missing"; exit 1; }

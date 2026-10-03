@@ -62,3 +62,39 @@ pub fn check_spans(blocks: &[DocTest]) {
         }
     }
 }
+
+/// The function report of `source` scanned as the modules `a` and `b` of one crate.
+pub fn functions(source: &str) -> Option<dejadoc::Report> {
+    let parsed = syn::parse_file(source).ok()?;
+    let file = |segment: &str| dejadoc::SourceFile {
+        path: format!("/r/src/{segment}.rs"),
+        segments: vec![segment.to_string()],
+        parsed: parsed.clone(),
+        text: source.to_string(),
+        rustdoc: false,
+    };
+    let target = dejadoc::TargetScan {
+        name: "c".into(),
+        files: vec![file("a"), file("b")],
+    };
+    Some(
+        dejadoc::Dejadoc::default()
+            .fn_min_tokens(0)
+            .run_targets("/r", &[target], &|_, _| None),
+    )
+}
+
+/// Every function group stays in one module, and both copies of the source group alike.
+pub fn check_functions(report: &dejadoc::Report) {
+    let mut per_file = [0usize; 2];
+    for group in &report.groups {
+        let file = &group.sites[0].file;
+        for site in &group.sites {
+            assert_eq!(&site.file, file, "{group:?}");
+            assert!(site.end.is_some_and(|end| end >= site.line), "{site:?}");
+        }
+        per_file[usize::from(file.ends_with("b.rs"))] += 1;
+    }
+    assert_eq!(per_file[0], per_file[1], "{report:?}");
+    assert_eq!(report.functions % 2, 0);
+}

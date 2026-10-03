@@ -290,7 +290,7 @@ fn from_stream(stream: proc_macro2::TokenStream) -> Canonical {
 }
 
 /// Number of leaf tokens in a token stream.
-fn count_tokens(stream: proc_macro2::TokenStream) -> usize {
+pub(crate) fn count_tokens(stream: proc_macro2::TokenStream) -> usize {
     stream.into_iter().map(count_tree).sum()
 }
 
