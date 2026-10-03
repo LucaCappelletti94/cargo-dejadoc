@@ -120,7 +120,13 @@ fn collect(
     visited: &mut BTreeSet<PathBuf>,
     off: &mut alloc::collections::VecDeque<Child>,
 ) -> crate::Result<()> {
-    let canonical = std::fs::canonicalize(&file.path)?;
+    let canonical = match std::fs::canonicalize(&file.path) {
+        Ok(canonical) => canonical,
+        Err(err) => {
+            eprintln!("dejadoc: cannot read {}: {err}", file.path.display());
+            return Ok(());
+        }
+    };
     if !visited.insert(canonical) {
         return Ok(());
     }
@@ -673,6 +679,24 @@ mod tests {
             targets,
             [("demo", true), ("it", false), ("tool", true), ("ws", true)]
         );
+    }
+
+    #[test]
+    fn a_target_file_missing_from_the_package_is_skipped() {
+        // Published crates often leave out the benches and tests their manifest lists.
+        let dir = tempfile::tempdir().unwrap();
+        cargo_package(
+            dir.path(),
+            "ws",
+            "[[bench]]\nname = \"gone\"\npath = \"benches/gone.rs\"\n[workspace]\n",
+        );
+        let ws = workspace(dir.path(), None, false).unwrap();
+        let files: Vec<usize> = ws
+            .targets
+            .iter()
+            .map(|t| module_tree(t).unwrap().len())
+            .collect();
+        assert_eq!(files, [1, 0]);
     }
 
     #[test]
