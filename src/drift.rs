@@ -499,10 +499,14 @@ fn fold_paren_type(ty: &mut syn::Type) {
 }
 
 /// True for attributes that carry no program meaning for doctests: doc
-/// comments and lint-level directives.
+/// comments, lint-level directives, and the `rustfmt::` tool attributes.
 fn is_inert_attr(attr: &syn::Attribute) -> bool {
     let p = attr.path();
-    p.is_ident("doc") || p.is_ident("allow") || p.is_ident("expect") || p.is_ident("warn")
+    p.is_ident("doc")
+        || p.is_ident("allow")
+        || p.is_ident("expect")
+        || p.is_ident("warn")
+        || p.segments.first().is_some_and(|s| s.ident == "rustfmt")
 }
 
 /// Drop inert attributes from the list.

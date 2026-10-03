@@ -1535,6 +1535,25 @@ fn f() {}"#,
     }
 
     #[test]
+    fn rustfmt_attributes_are_inert() {
+        let plain = canonicalize("fn f() {}");
+        assert_eq!(canonicalize("#[rustfmt::skip]\nfn f() {}").text, plain.text);
+        assert_eq!(
+            canonicalize("#[rustfmt::skip::macros(vec)]\nfn f() {}").text,
+            plain.text
+        );
+    }
+
+    #[test]
+    fn other_tool_or_lookalike_attributes_stay() {
+        let plain = canonicalize("async fn f() {}");
+        for attr in ["#[rustfmt_skip]", "#[tokio::main]"] {
+            let source = format!("{attr}\nasync fn f() {{}}");
+            assert_ne!(canonicalize(&source).text, plain.text, "{attr}");
+        }
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");
