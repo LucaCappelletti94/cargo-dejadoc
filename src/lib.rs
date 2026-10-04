@@ -514,7 +514,12 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
     let total = by_site.len();
     let entries = by_site.into_values().filter(|b| !b.allow).map(|block| {
         let canonical = normalize::canonicalize(&block.code);
-        let hash = blake3::hash(canonical.text.as_bytes()).to_hex().to_string();
+        let mut hashed = canonical.text.clone();
+        for tag in checked_attributes(&block.info) {
+            hashed.push('\n');
+            hashed.push_str(tag);
+        }
+        let hash = blake3::hash(hashed.as_bytes()).to_hex().to_string();
         (
             hash,
             canonical.unparsed,
@@ -530,6 +535,24 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         unique_functions: 0,
         groups,
     }
+}
+
+/// The doctest attributes that change what rustdoc checks, sorted: `compile_fail` with its
+/// error codes, `should_panic`, `test_harness` and the edition. `no_run` only skips running.
+fn checked_attributes(info: &[String]) -> Vec<&str> {
+    let mut tags: Vec<&str> = info
+        .iter()
+        .map(String::as_str)
+        .filter(|tag| {
+            matches!(*tag, "compile_fail" | "should_panic" | "test_harness")
+                || tag.starts_with("edition")
+                || (tag.len() == 5
+                    && tag.starts_with('E')
+                    && tag[1..].bytes().all(|b| b.is_ascii_digit()))
+        })
+        .collect();
+    tags.sort_unstable();
+    tags
 }
 
 /// The function count, distinct forms and groups, each function canonicalized as a one-item file.
@@ -636,6 +659,38 @@ mod tests {
             self_type: None,
             public: false,
         }
+    }
+
+    #[test]
+    fn attributes_that_change_what_rustdoc_checks_split_a_group() {
+        // diesel's connection docs compile on one backend and must fail on the others.
+        let pair = |a: &[&str], b: &[&str]| {
+            let mut one = dt("a.rs", 1, "m::f", "let x = 1;", false);
+            let mut two = dt("b.rs", 2, "m::g", "let x = 1;", false);
+            one.info = a.iter().map(ToString::to_string).collect();
+            two.info = b.iter().map(ToString::to_string).collect();
+            group(&[one, two], 2, 0).groups.len()
+        };
+        for split in [
+            (&["compile_fail"][..], &[][..]),
+            (&["should_panic"][..], &[][..]),
+            (&["test_harness"][..], &[][..]),
+            (&["edition2015"][..], &["edition2021"][..]),
+            (
+                &["compile_fail", "E0277"][..],
+                &["compile_fail", "E0308"][..],
+            ),
+        ] {
+            assert_eq!(pair(split.0, split.1), 0, "{split:?}");
+        }
+        assert_eq!(pair(&["no_run"], &[]), 1);
+        for unchecked in ["Eabcd", "12345", "E02777"] {
+            assert_eq!(pair(&[unchecked], &[]), 1, "{unchecked}");
+        }
+        assert_eq!(
+            pair(&["should_panic", "no_run"], &["no_run", "should_panic"]),
+            1
+        );
     }
 
     #[test]
