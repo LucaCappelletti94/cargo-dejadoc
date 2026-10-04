@@ -13,9 +13,21 @@ use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 
 /// The canonical token stream of `file`, equal across formatting drift and local binder names.
+/// `file` is taken to compile, so an unneeded `mut` and the semicolon of a `()` tail fold too.
 #[must_use]
-pub fn canonicalize(mut file: syn::File) -> TokenStream {
-    drift::normalize_file(&mut file);
+pub fn canonicalize(file: syn::File) -> TokenStream {
+    canonical(file, true)
+}
+
+/// `canonicalize` for a `file` meant to fail compilation, a `compile_fail` doctest for instance,
+/// keeping the `mut` and the semicolons that may be the error it shows.
+#[must_use]
+pub fn canonicalize_failing(file: syn::File) -> TokenStream {
+    canonical(file, false)
+}
+
+fn canonical(mut file: syn::File, compiles: bool) -> TokenStream {
+    drift::normalize_file(&mut file, compiles);
     alpha::normalize_file(&mut file);
     fold_tokens(file.to_token_stream(), false, false)
         .into_iter()
@@ -154,16 +166,20 @@ mod tests {
         text: String,
     }
 
-    /// `code` canonicalized the way a doctest compiles, panicking when it does not parse.
-    fn canonicalize(code: &str) -> Canon {
+    /// `code` parsed the way a doctest compiles, panicking when it does not parse.
+    fn parse(code: &str) -> syn::File {
         let is_main = |item: &syn::Item| matches!(item, syn::Item::Fn(f) if f.sig.ident == "main");
-        let file = match syn::parse_str::<syn::File>(code) {
+        match syn::parse_str::<syn::File>(code) {
             Ok(file) if file.items.iter().any(is_main) => file,
             _ => syn::parse_str::<syn::File>(&format!("fn main() {{ {code}\n}}"))
                 .unwrap_or_else(|e| panic!("{code}: {e}")),
-        };
+        }
+    }
+
+    /// `code` canonicalized the way a doctest compiles.
+    fn canonicalize(code: &str) -> Canon {
         Canon {
-            text: canon(file).to_string(),
+            text: canon(parse(code)).to_string(),
         }
     }
 
@@ -995,13 +1011,6 @@ mod tests {
         let with_run = canonicalize("fn run() {}");
         let bare = canonicalize("()");
         assert_ne!(with_run.text, bare.text);
-    }
-
-    #[test]
-    fn semicolon_drift_is_distinct() {
-        let a = canonicalize("1 + 1;");
-        let b = canonicalize("1 + 1");
-        assert_ne!(a.text, b.text);
     }
 
     #[test]
@@ -2614,5 +2623,205 @@ mod tests {
         assert_eq!(named.text, other.text);
         assert_eq!(named.text, discard.text);
         assert_eq!(named.text, bare.text);
+    }
+
+    /// Asserts each pair in `pairs` canonicalizes alike.
+    fn assert_merge(pairs: &[(&str, &str)]) {
+        for (a, b) in pairs {
+            assert_eq!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    /// Asserts each pair in `pairs` canonicalizes apart.
+    fn assert_split(pairs: &[(&str, &str)]) {
+        for (a, b) in pairs {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn an_unneeded_binding_mut_merges() {
+        assert_merge(&[
+            (
+                "let mut v = vec![1]; f(v.len());",
+                "let v = vec![1]; f(v.len());",
+            ),
+            ("let mut v: u8 = 1; f(v);", "let v: u8 = 1; f(v);"),
+            ("let h = |mut x: u8| x + 1;", "let h = |x: u8| x + 1;"),
+            ("let h = |mut x| x + 1;", "let h = |x| x + 1;"),
+            ("fn h(mut x: u8) -> u8 { x }", "fn h(x: u8) -> u8 { x }"),
+            ("for mut x in v { f(x) }", "for x in v { f(x) }"),
+            ("match v { mut x => f(x) }", "match v { x => f(x) }"),
+            (
+                "match v { mut x if x > 1 => f(x), _ => {} }",
+                "match v { x if x > 1 => f(x), _ => {} }",
+            ),
+            ("if let mut x = v { f(x) }", "if let x = v { f(x) }"),
+            (
+                "let mut x @ 1..=3 = v else { return };",
+                "let x @ 1..=3 = v else { return };",
+            ),
+            (
+                "impl S { fn h(mut self) -> u8 { self.0 } }",
+                "impl S { fn h(self) -> u8 { self.0 } }",
+            ),
+            (
+                "impl S { fn h(mut self: Box<Self>) -> u8 { self.0 } }",
+                "impl S { fn h(self: Box<Self>) -> u8 { self.0 } }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn a_mut_that_changes_the_type_or_the_binding_mode_stays() {
+        assert_split(&[
+            (
+                "impl S { fn h(&mut self) -> u8 { self.0 } }",
+                "impl S { fn h(&self) -> u8 { self.0 } }",
+            ),
+            (
+                "let Some(ref mut x) = o else { return };",
+                "let Some(ref x) = o else { return };",
+            ),
+            ("let &mut x = r;", "let &x = r;"),
+            ("let r = &mut v; f(r);", "let r = &v; f(r);"),
+            ("static mut S: u8 = 1;", "static S: u8 = 1;"),
+            ("let p: *mut u8 = q;", "let p: *const u8 = q;"),
+            // Under a reference, a nested `mut` resets the binding mode to by-value before 2024.
+            ("let [mut x] = &[0_u8]; f(x);", "let [x] = &[0_u8]; f(x);"),
+            (
+                "let (mut a, b) = g(); f(a, b);",
+                "let (a, b) = g(); f(a, b);",
+            ),
+            (
+                "if let Some(mut x) = o { f(x) }",
+                "if let Some(x) = o { f(x) }",
+            ),
+            ("fn h((mut a, b): (u8, u8)) {}", "fn h((a, b): (u8, u8)) {}"),
+            (
+                "match o { Some(mut x) => f(x), None => {} }",
+                "match o { Some(x) => f(x), None => {} }",
+            ),
+            (
+                "let mut x @ Some(mut y) = o else { return };",
+                "let mut x @ Some(y) = o else { return };",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn a_semicolon_after_a_block_statement_merges() {
+        assert_merge(&[
+            ("if c { f(); }; g();", "if c { f(); } g();"),
+            ("match x { _ => f() }; g();", "match x { _ => f() } g();"),
+            ("for i in v { f(i); }; g();", "for i in v { f(i); } g();"),
+            ("while c { f(); }; g();", "while c { f(); } g();"),
+            ("loop { break; }; g();", "loop { break; } g();"),
+            ("{ f(); }; g();", "{ f(); } g();"),
+            ("unsafe { f(); }; g();", "unsafe { f(); } g();"),
+            (
+                "let x = || { if c { f(); }; g() };",
+                "let x = || { if c { f(); } g() };",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn a_semicolon_after_a_valued_tail_block_stays() {
+        assert_split(&[
+            (
+                "let a = { if c { g() } else { h() } }; f(a);",
+                "let a = { if c { g() } else { h() }; }; f(a);",
+            ),
+            (
+                "fn k() -> u8 { match x { _ => 1 } }",
+                "fn k() -> u8 { match x { _ => 1 }; }",
+            ),
+            (
+                "let a = { if c { g() } else { h() } }; f(a);",
+                "let a = { if c { g() } else { h() }; ; }; f(a);",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn a_unit_tail_semicolon_merges() {
+        assert_merge(&[
+            ("f(); g()", "f(); g();"),
+            ("f(); println!(\"x\")", "f(); println!(\"x\");"),
+            ("fn k() { f(); g() }", "fn k() { f(); g(); }"),
+            ("fn k() -> () { f(); g() }", "fn k() { f(); g(); }"),
+            (
+                "impl S { fn k(&self) { g() } }",
+                "impl S { fn k(&self) { g(); } }",
+            ),
+            (
+                "trait T { fn k(&self) { g() } }",
+                "trait T { fn k(&self) { g(); } }",
+            ),
+            (
+                "for i in 0..3 { a[i] = b[i] } f();",
+                "for i in 0..3 { a[i] = b[i]; } f();",
+            ),
+            ("while c { g() } f();", "while c { g(); } f();"),
+            (
+                "let v = loop { break 5 }; f(v);",
+                "let v = loop { break 5; }; f(v);",
+            ),
+            (
+                "if c { panic!(\"x\") } f();",
+                "if c { panic!(\"x\"); } f();",
+            ),
+            (
+                "if a { g() } else if b { h() } f();",
+                "if a { g(); } else if b { h(); } f();",
+            ),
+            ("fn k() { f(); return; }", "fn k() { f() }"),
+            (
+                "fn k() { if c { return g(); } else { h() }; }",
+                "fn k() { if c { g() } else { h() } }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn a_tail_semicolon_where_the_value_is_used_stays() {
+        assert_split(&[
+            ("fn k() -> u8 { g() }", "fn k() -> u8 { g(); }"),
+            ("let h = || { g() };", "let h = || { g(); };"),
+            ("let a = async { g() };", "let a = async { g(); };"),
+            ("let a = { g() }; f(a);", "let a = { g(); }; f(a);"),
+            (
+                "let a = if c { g() } else { h() };",
+                "let a = if c { g(); } else { h(); };",
+            ),
+            (
+                "let a = match x { _ => { g() } };",
+                "let a = match x { _ => { g(); } };",
+            ),
+            ("let a = unsafe { g() };", "let a = unsafe { g(); };"),
+        ]);
+    }
+
+    #[test]
+    fn code_meant_to_fail_keeps_mut_and_semicolons() {
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        for (a, b) in [
+            (
+                "let mut v = Vec::new(); v.push(1);",
+                "let v = Vec::new(); v.push(1);",
+            ),
+            ("impl S { fn h(mut self) {} }", "impl S { fn h(self) {} }"),
+            ("match x { _ => 5 }; g();", "match x { _ => 5 } g();"),
+            ("f(); 5", "f(); 5;"),
+            ("for i in v { i }", "for i in v { i; }"),
+        ] {
+            assert_ne!(failing(a), failing(b), "{a} vs {b}");
+            assert_eq!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+        assert_eq!(
+            failing("fn f(x: u8) -> u8 { return (x); }"),
+            failing("fn g(y: u8) -> u8 { y }")
+        );
     }
 }

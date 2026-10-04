@@ -77,13 +77,20 @@ fn canon_float_str(s: &str) -> String {
     out
 }
 
-/// Fold arm braces, doc attributes, and `use` shapes in place.
-pub(crate) fn normalize_file(file: &mut syn::File) {
-    Drift::default().visit_file_mut(file);
+/// Fold arm braces, doc attributes, and `use` shapes in place. When `compiles`, also fold the
+/// spellings only a compiling program makes equivalent.
+pub(crate) fn normalize_file(file: &mut syn::File, compiles: bool) {
+    Drift {
+        compiles,
+        ..Drift::default()
+    }
+    .visit_file_mut(file);
 }
 
 #[derive(Default)]
 struct Drift {
+    /// The code compiles, so an unneeded `mut` and the semicolon of a `()` block fold.
+    compiles: bool,
     /// Inside an impl header's trait path or self type, where a path may not
     /// elide its lifetime (E0726).
     in_impl_header: bool,
@@ -114,6 +121,7 @@ impl VisitMut for Drift {
         reason = "a non-use entry goes back to the list"
     )]
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        drop_empty_stmts(&mut block.stmts);
         hoist_uses(
             &mut block.stmts,
             |stmt| match stmt {
@@ -124,24 +132,26 @@ impl VisitMut for Drift {
         );
         hoist_block_items(&mut block.stmts);
         semicolon_non_tail_macros(&mut block.stmts);
+        if self.compiles {
+            drop_block_statement_semicolons(&mut block.stmts);
+        }
         syn::visit_mut::visit_block_mut(self, block);
-        drop_empty_stmts(&mut block.stmts);
     }
 
     fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {
         syn::visit_mut::visit_item_fn_mut(self, node);
-        fold_tail_return(&mut node.block.stmts);
+        self.fold_fn_body(&node.sig, &mut node.block);
     }
 
     fn visit_impl_item_fn_mut(&mut self, node: &mut syn::ImplItemFn) {
         syn::visit_mut::visit_impl_item_fn_mut(self, node);
-        fold_tail_return(&mut node.block.stmts);
+        self.fold_fn_body(&node.sig, &mut node.block);
     }
 
     fn visit_trait_item_fn_mut(&mut self, node: &mut syn::TraitItemFn) {
         syn::visit_mut::visit_trait_item_fn_mut(self, node);
         if let Some(block) = &mut node.default {
-            fold_tail_return(&mut block.stmts);
+            self.fold_fn_body(&node.sig, block);
         }
     }
 
@@ -156,6 +166,16 @@ impl VisitMut for Drift {
         // The printer writes the comma a non-block arm needs, a written one is drift.
         arm.comma = None;
         syn::visit_mut::visit_arm_mut(self, arm);
+        if self.compiles {
+            drop_binding_mut(&mut arm.pat);
+        }
+    }
+
+    fn visit_local_mut(&mut self, local: &mut syn::Local) {
+        syn::visit_mut::visit_local_mut(self, local);
+        if self.compiles {
+            drop_binding_mut(&mut local.pat);
+        }
     }
 
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
@@ -169,6 +189,17 @@ impl VisitMut for Drift {
                 fold_tail_return(&mut block.block.stmts);
             }
             unwrap_single_expr_block(&mut closure.body);
+        }
+        if self.compiles {
+            match expr {
+                syn::Expr::Closure(closure) => closure.inputs.iter_mut().for_each(drop_binding_mut),
+                syn::Expr::ForLoop(for_loop) => drop_binding_mut(&mut for_loop.pat),
+                syn::Expr::Let(expr_let) => drop_binding_mut(&mut expr_let.pat),
+                _ => {}
+            }
+            if let Some(block) = unit_block(expr) {
+                drop_tail_semicolon(&mut block.stmts);
+            }
         }
     }
 
@@ -184,6 +215,12 @@ impl VisitMut for Drift {
             syn::FnArg::Typed(typed) => strip_inert_attrs(&mut typed.attrs),
         }
         syn::visit_mut::visit_fn_arg_mut(self, node);
+        if self.compiles {
+            match node {
+                syn::FnArg::Receiver(receiver) => receiver.mutability = None,
+                syn::FnArg::Typed(typed) => drop_binding_mut(&mut typed.pat),
+            }
+        }
     }
 
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
@@ -347,6 +384,97 @@ impl VisitMut for Drift {
         normalize_macro_delim(&mut node.mac);
         node.semi_token.get_or_insert_with(Default::default);
         syn::visit_mut::visit_trait_item_macro_mut(self, node);
+    }
+}
+
+impl Drift {
+    /// Fold a function body's tail `return`, and its tail semicolon when the
+    /// signature makes the value `()`, before and after the return fold since
+    /// each can expose the other.
+    fn fold_fn_body(&self, sig: &syn::Signature, block: &mut syn::Block) {
+        let unit = self.compiles && matches!(sig.output, syn::ReturnType::Default);
+        if unit {
+            drop_tail_semicolon(&mut block.stmts);
+        }
+        fold_tail_return(&mut block.stmts);
+        if unit {
+            drop_tail_semicolon(&mut block.stmts);
+        }
+    }
+}
+
+/// The block of a loop, or the then block of an `if` chain without a final
+/// `else`, whose value rustc requires to be `()`.
+fn unit_block(expr: &mut syn::Expr) -> Option<&mut syn::Block> {
+    match expr {
+        syn::Expr::ForLoop(e) => Some(&mut e.body),
+        syn::Expr::While(e) => Some(&mut e.body),
+        syn::Expr::Loop(e) => Some(&mut e.body),
+        syn::Expr::If(e) if discards_value(e) => Some(&mut e.then_branch),
+        _ => None,
+    }
+}
+
+/// Whether the `if` chain from `expr_if` ends without an `else` block.
+fn discards_value(mut expr_if: &syn::ExprIf) -> bool {
+    loop {
+        match expr_if.else_branch.as_ref().map(|(_, e)| e.as_ref()) {
+            None => return true,
+            Some(syn::Expr::If(inner)) => expr_if = inner,
+            Some(_) => return false,
+        }
+    }
+}
+
+/// Drop the `mut` of a pattern that is one binding, by-value whatever the
+/// scrutinee. Nested under a reference, `mut` resets a borrowing binding mode
+/// before edition 2024, so a nested one stays.
+fn drop_binding_mut(pat: &mut syn::Pat) {
+    let pat = match pat {
+        syn::Pat::Type(typed) => typed.pat.as_mut(),
+        syn::Pat::Guard(guarded) => guarded.pat.as_mut(),
+        other => other,
+    };
+    if let syn::Pat::Ident(ident) = pat
+        && ident.by_ref.is_none()
+    {
+        ident.mutability = None;
+    }
+}
+
+/// Drop the semicolon of a tail statement whose value is `()` either way, the
+/// rewrite clippy's `semicolon_if_nothing_returned` makes in reverse.
+fn drop_tail_semicolon(stmts: &mut [syn::Stmt]) {
+    match stmts.last_mut() {
+        Some(syn::Stmt::Expr(_, semi)) => *semi = None,
+        Some(syn::Stmt::Macro(mac)) => mac.semi_token = None,
+        _ => {}
+    }
+}
+
+/// Drop the semicolon after every non-tail statement ending in a block, an
+/// empty statement rustc's `redundant_semicolons` reports.
+fn drop_block_statement_semicolons(stmts: &mut [syn::Stmt]) {
+    let Some((_, rest)) = stmts.split_last_mut() else {
+        return;
+    };
+    for stmt in rest {
+        if let syn::Stmt::Expr(expr, semi) = stmt
+            && matches!(
+                expr,
+                syn::Expr::If(_)
+                    | syn::Expr::Match(_)
+                    | syn::Expr::Block(_)
+                    | syn::Expr::Unsafe(_)
+                    | syn::Expr::While(_)
+                    | syn::Expr::Loop(_)
+                    | syn::Expr::ForLoop(_)
+                    | syn::Expr::TryBlock(_)
+                    | syn::Expr::Const(_)
+            )
+        {
+            *semi = None;
+        }
     }
 }
 

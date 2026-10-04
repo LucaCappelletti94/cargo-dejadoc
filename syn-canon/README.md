@@ -32,6 +32,7 @@ Style folds, each applied only where it keeps the meaning:
 - `else { if … }` becomes `else if …`.
 - A tail `return v` becomes `v`, also in the arms of a tail `match`, and a trailing unit `return` goes.
 - Redundant parentheses around expressions, patterns and types go, and so do `-> ()` and empty statements.
+- When the code compiles, `mut` goes from `mut self` and from a binding that is the whole pattern of a `let`, parameter, closure input, arm, `for` or `let` condition, the semicolon after a non-tail block statement goes, and so does the tail semicolon of a function body without a return type, a loop body and the then blocks of an `if` chain without a final `else`. A nested `mut` stays, since under a reference it resets the binding mode before edition 2024. `canonicalize_failing` keeps them all for code meant to fail, such as a `compile_fail` doctest.
 - Inline generic bounds move into `where`, `&'_ T` becomes `&T`, `Foo<'_>` becomes `Foo` outside an impl header, and `&'static` becomes `&` in a `const` or `static` type.
 - Identifier arguments of the std formatting macros move into the format string, `println!("{}", x)` becoming `println!("{x}")`.
 - Macro calls take parentheses, and every statement macro but the tail one takes a semicolon.

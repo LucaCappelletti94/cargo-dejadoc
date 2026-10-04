@@ -20,9 +20,20 @@ pub(crate) struct Canonical {
     pub(crate) tokens: usize,
 }
 
-/// Compute the canonical form of a doctest body.
+/// Compute the canonical form of a doctest body that compiles.
 #[must_use]
 pub(crate) fn canonicalize(code: &str) -> Canonical {
+    canonical(code, true)
+}
+
+/// Compute the canonical form of a doctest body meant to fail compilation,
+/// keeping the spellings only a compiling body makes equivalent.
+#[must_use]
+pub(crate) fn canonicalize_failing(code: &str) -> Canonical {
+    canonical(code, false)
+}
+
+fn canonical(code: &str, compiles: bool) -> Canonical {
     let unhidden: String = code.lines().map(map_line).collect::<Vec<_>>().join("\n");
     let stripped = without_crate_attrs(&unhidden);
     let body = stripped.as_ref();
@@ -35,7 +46,12 @@ pub(crate) fn canonicalize(code: &str) -> Canonical {
         };
     };
     IncludeDepth.visit_file_mut(&mut file);
-    from_stream(syn_canon::canonicalize(file))
+    let stream = if compiles {
+        syn_canon::canonicalize(file)
+    } else {
+        syn_canon::canonicalize_failing(file)
+    };
+    from_stream(stream)
 }
 
 /// Deepest bracket and generic nesting a body may reach before it hashes as
