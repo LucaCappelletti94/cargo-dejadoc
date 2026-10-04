@@ -120,10 +120,29 @@ impl syn::parse::Parse for Lead {
     }
 }
 
-/// The body without its leading crate attributes.
+/// The body without the leading crate attributes that leave the test alone: lint levels,
+/// `feature` and literal docs. The others change the crate and stay.
 fn without_crate_attrs(body: &str) -> Cow<'_, str> {
+    let lifted = |attr: &syn::Attribute| {
+        let path = attr.path();
+        ["allow", "warn", "deny", "forbid", "expect", "feature"]
+            .iter()
+            .any(|name| path.is_ident(name))
+            || (path.is_ident("doc")
+                && matches!(&attr.meta, syn::Meta::NameValue(nv)
+                    if matches!(nv.value, syn::Expr::Lit(_))))
+    };
     match syn::parse_str::<Lead>(body) {
-        Ok(lead) if !lead.attrs.is_empty() => Cow::Owned(lead.rest.to_string()),
+        Ok(lead) if lead.attrs.iter().any(lifted) => {
+            let mut kept: proc_macro2::TokenStream = lead
+                .attrs
+                .iter()
+                .filter(|attr| !lifted(attr))
+                .map(quote::ToTokens::to_token_stream)
+                .collect();
+            kept.extend(lead.rest);
+            Cow::Owned(kept.to_string())
+        }
         _ => Cow::Borrowed(body),
     }
 }
@@ -683,6 +702,33 @@ mod tests {
         let c = canonicalize("");
         assert!(!c.unparsed);
         assert!(c.tokens > 0);
+    }
+
+    #[test]
+    fn a_crate_attribute_that_changes_the_crate_stays() {
+        // rustc's `assert_module_sources` doctest is nothing but crate attributes.
+        for (with, without) in [
+            (
+                "#![rustc_partition_reused(module = \"spike\", cfg = \"rpass2\")]\nfn main() {}",
+                "fn main() {}",
+            ),
+            ("#![no_std]\nlet x = 1;", "let x = 1;"),
+            (
+                "#![doc = document_features::document_features!()]\nlet x = 1;",
+                "let x = 1;",
+            ),
+        ] {
+            assert_ne!(
+                canonicalize(with).text,
+                canonicalize(without).text,
+                "{with}"
+            );
+        }
+        // Lint levels, features and literal docs still lift away.
+        assert_eq!(
+            canonicalize("#![allow(unused)]\n#![doc = \"Text.\"]\nlet x = 1;").text,
+            canonicalize("let x = 1;").text
+        );
     }
 
     #[test]
