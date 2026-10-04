@@ -294,7 +294,7 @@ runs:
           out_of_range="$(jq -r '.out_of_range' "$meta")"
           findings="$(jq -r '.findings' "$meta")"
           findings_span=0
-          grep -q ' on another type$' <<< "$findings" && findings_span=1
+          grep -qE " (on another type|and can't be deleted|under another cfg|and is public API)\$" <<< "$findings" && findings_span=1
         else
         # The head SHA and changed file list, empty when there is no pull request.
         head_sha=''
@@ -362,6 +362,8 @@ runs:
               | (.sites[0].end // null) as $fend
               | (.kind // "doctest") as $kind
               | ([.sites[].self_type] as $t | ($t[0]) as $f | ($t[1:] | map(. != $f) | any)) as $spans
+              # A binary older than 0.4.1 sends no remedy, its rule only told types apart.
+              | (if $kind == "function" then (.remedy // (if $spans then "generic-or-macro" else "delete" end)) else "delete" end) as $remedy
               | (reduce (.sites[] | (.self_type // "free function")) as $t ([]; if index($t) == null then . + [$t] else . end) | join(", ")) as $selftypes
               | (.sites[0].item) as $firstitem
               | ($base.keep[$h] // "") as $basekeep
@@ -375,7 +377,7 @@ runs:
                          p: (.value | spath),
                          isNew: ($idx > $bcount),
                          basekeep: $basekeep, bend: ($base.keep_end[$h] // null),
-                         kind: $kind, spans: $spans, selftypes: $selftypes, firstitem: $firstitem,
+                         kind: $kind, remedy: $remedy, selftypes: $selftypes, firstitem: $firstitem,
                          baseitem: $baseitem }) ] as $rows
               | ($rows | map(select(.isNew)) | length) as $knew
               | $rows[] | . + { knew: $knew }
@@ -388,8 +390,9 @@ runs:
              (.n | tostring), .first, (if .isNew then "1" else "0" end),
              (if .basekeep == "" then "-" else .basekeep end), (.knew | tostring),
              (.s.end // "-" | tostring), (.fend // "-" | tostring), (.bend // "-" | tostring),
-             .kind, (if .spans then "1" else "0" end), .firstitem,
-             (if .baseitem == "" then "-" else .baseitem end), .selftypes]
+             .kind, .remedy, .firstitem,
+             (if .baseitem == "" then "-" else .baseitem end), .selftypes,
+             (if .s.public then "1" else "0" end)]
           | @tsv' "$report" > "$inline_file"
 
         # The inline posts, live mode only. The first post is the permission probe.
@@ -483,8 +486,12 @@ runs:
         # The end line of each block comes from the report, `-` when the crate has
         # none, a block spanning an include or an escaped literal, or an older binary.
         declare -A seen_first=() seen_first_end=()
-        while IFS=$'\t' read -r p line item g c n first new basekeep knew end fend bend kind spans firstitem baseitem selftypes; do
+        while IFS=$'\t' read -r p line item g c n first new basekeep knew end fend bend kind remedy firstitem baseitem selftypes public; do
           [ -n "$p" ] || continue
+          # A public copy that already shipped is called or deprecated, deleting it breaks callers.
+          if [ "$remedy" = "delete" ] && [ "$kind" = "function" ] && [ "$public" = "1" ] && [ "$onlynew" != "1" ]; then
+            remedy=public
+          fi
           site="$p:$line"
           [ "$basekeep" = "-" ] && basekeep=''
           [ "$end" = "-" ] && end=''
@@ -519,10 +526,17 @@ runs:
             keep="$basekeep"
             [ -z "$keep" ] && keep="$keepat"
             if [ "$kind" = "function" ]; then
-              if [ "$spans" = "1" ]; then
-                printf '::error file=%s,line=%s,title=dejadoc::%s repeats %s at %s on another type, a generic or a macro can share it, group %s\n' \
-                  "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$kept_item")" "$(escape_data "$keep")" "$g"
-                findings="$findings- \`$p:$line\`  $item, repeats \`$kept_item\` at \`$keep\` on another type"$'\n'
+              case "$remedy" in
+                generic-or-macro) where='on another type' share='a generic or a macro can share it' ;;
+                helper-or-macro) where="and can't be deleted" share='a helper or a macro can share it' ;;
+                merge-cfg) where='under another cfg' share='one function under both cfgs can replace them' ;;
+                public) where='and is public API' share='make it call the kept copy or deprecate it' ;;
+                *) where='' share='' ;;
+              esac
+              if [ -n "$where" ]; then
+                printf '::error file=%s,line=%s,title=dejadoc::%s repeats %s at %s %s, %s, group %s\n' \
+                  "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$kept_item")" "$(escape_data "$keep")" "$where" "$share" "$g"
+                findings="$findings- \`$p:$line\`  $item, repeats \`$kept_item\` at \`$keep\` $where"$'\n'
                 findings_span=1
               else
                 printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the function %s at %s, group %s\n' \
@@ -543,7 +557,7 @@ runs:
           # The suggestion deletes the block plus the empty line right after
           # it, which would become a stray once the copy is gone.
           delete_end="$close_line"
-          if [ "$kind" != "function" ] || [ "$spans" != "1" ]; then
+          if [ "$remedy" = "delete" ]; then
             nx="$(awk -v l="$close_line" 'NR == l + 1 { print "x" $0; exit }' "$p" 2>/dev/null)"
             if [ -n "$nx" ] && [ -z "$(printf '%s' "${nx#x}" | tr -d '[:space:]')" ]; then
               delete_end=$((close_line + 1))
@@ -580,7 +594,7 @@ runs:
           fi
           dejadoc_link='[dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc)'
           if [ "$kind" = "function" ]; then
-            if [ "$spans" = "1" ]; then
+            if [ "$remedy" != "delete" ]; then
               preview='the repeated function'
             else
               preview='the duplicated function'
@@ -588,8 +602,14 @@ runs:
           else
             preview='the duplicated doctest'
           fi
-          if [ "$kind" = "function" ] && [ "$spans" = "1" ]; then
+          if [ "$remedy" = "generic-or-macro" ]; then
             note="This method repeats \`$kept_item\` at $loc on another type ($selftypes). A generic or a macro can share one body."
+          elif [ "$remedy" = "helper-or-macro" ]; then
+            note="This function repeats \`$kept_item\` at $loc. A trait or an exported symbol needs it, so it can't simply be deleted, a helper or a macro can share one body."
+          elif [ "$remedy" = "public" ]; then
+            note="This function repeats \`$kept_item\` at $loc. It is public API, so deleting it breaks its callers, make it call the kept copy or deprecate it."
+          elif [ "$remedy" = "merge-cfg" ]; then
+            note="This function repeats \`$kept_item\` at $loc under another \`cfg\`. Deleting either copy drops a configuration, one function under both conditions can replace them."
           elif [ "$kind" = "function" ]; then
             if [ "$onlynew" = "1" ] && [ -n "$basekeep" ]; then
               note="This function was added by this pull request and duplicates a copy that already exists at $loc, $dejadoc_link suggests deleting the added copy, or updating it if it was meant to differ."
@@ -607,7 +627,7 @@ runs:
           fi
           comment="$note"
           [ -n "$url" ] && comment="$comment"$'\n\n'"$(preview_of "$url" "$pv_s" "$pv_e" "$preview")"
-          if [ "$kind" != "function" ] || [ "$spans" != "1" ]; then
+          if [ "$remedy" = "delete" ]; then
             comment="$comment"$'\n\n```suggestion\n```'
           fi
           comment="$comment"$'\n\n'"$(report_link "$g") $support_link"

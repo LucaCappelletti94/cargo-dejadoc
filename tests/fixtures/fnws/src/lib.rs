@@ -30,6 +30,19 @@ fn sum_over(values: &[u32], limit: u32) -> u32 {
     total
 }
 
+/// The same body again, public API this time.
+pub fn total_too(values: &[u32], limit: u32) -> u32 {
+    let mut total = 0;
+    for value in values {
+        if *value > limit {
+            total += value * 2;
+        } else {
+            total -= 1;
+        }
+    }
+    total
+}
+
 // dejadoc: allow
 pub fn kept_on_purpose(values: &[u32], limit: u32) -> u32 {
     let mut total = 0;
@@ -97,6 +110,66 @@ pub mod render {
         out.pop();
         out
     }
+    }
+}
+
+pub mod scale {
+    /// Scaled values on Unix.
+    #[cfg(unix)]
+    pub fn scaled(values: &[u32], factor: u32) -> Vec<u32> {
+        let mut out = Vec::new();
+        for value in values {
+            out.push(value * factor + 1);
+        }
+        out.sort_unstable();
+        out
+    }
+
+    /// The same body on every other platform.
+    #[cfg(not(unix))]
+    pub fn scaled_elsewhere(values: &[u32], factor: u32) -> Vec<u32> {
+        let mut out = Vec::new();
+        for value in values {
+            out.push(value * factor + 1);
+        }
+        out.sort_unstable();
+        out
+    }
+}
+
+pub mod describe {
+    pub struct Gamma;
+
+    pub trait Short {
+        fn short(&self, values: &[u32]) -> String;
+    }
+
+    pub trait Long {
+        fn long(&self, values: &[u32]) -> String;
+    }
+
+    impl Short for Gamma {
+        fn short(&self, values: &[u32]) -> String {
+            let mut out = String::from("[");
+            for value in values {
+                out.push_str(&value.to_string());
+                out.push(';');
+            }
+            out.push(']');
+            out
+        }
+    }
+
+    impl Long for Gamma {
+        fn long(&self, values: &[u32]) -> String {
+            let mut out = String::from("[");
+            for value in values {
+                out.push_str(&value.to_string());
+                out.push(';');
+            }
+            out.push(']');
+            out
+        }
     }
 }
 

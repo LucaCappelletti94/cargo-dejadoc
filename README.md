@@ -15,6 +15,8 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function check off, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
+Generated files are skipped, a file being generated when one of its first five lines contains `@generated` or is a `// Code generated … DO NOT EDIT.` line. In `.dejadoc.toml`, `generated-markers = ["…"]` adds phrases of your own generators and `scan-generated = true` scans them anyway.
+
 The first copy of a group is the one to keep. A copy whose code names its own item comes first, so a test copied from `parse` onto `lex` stays on `parse`. Otherwise file and line order decides.
 
 To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of its code block. rustdoc ignores the word and runs the doctest as before.
@@ -25,7 +27,7 @@ To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of i
 /// ```
 ````
 
-Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. Copies on different self types are reported as a generic or a macro waiting to happen, without a suggestion to delete. Functions under 30 tokens are skipped. A `// dejadoc: allow` line above a function keeps it.
+Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. A copy gets a suggestion to delete only when it is a free function or an inherent method under the same `cfg` as the copy kept, and is not already public API of a library, which is better made to call the kept copy or deprecated. Copies on different self types point to a generic or a macro, trait methods and exported symbols to a helper or a macro, and copies under different `cfg`s to one function under both. Functions under 30 tokens are skipped. A `// dejadoc: allow` line above a function keeps it.
 
 In CI, one workflow covers it. The [action](https://github.com/marketplace/actions/dejadoc) installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
 

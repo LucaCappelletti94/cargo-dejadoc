@@ -31,7 +31,8 @@ jobs:
     # a scanned doctest; their killable twins are pinned by tests with the same name.
     # flat_literal: the closing-offset sum is equivalent for literals
     # without a raw-string hash run, 1 - 0 equals 1 + 0 there.
-    # mod_decls: the missing-module warning guard only changes stderr.
+    # mod_decls: the missing-module warning guards only change stderr, a missing file being
+    # skipped either way.
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
@@ -67,3 +68,4 @@ jobs:
           -E 'replace == with != in block_star_strip'
           -E 'replace \+ with - in flat_literal'
           -E 'replace match guard rustdoc with (true|false) in mod_decls'
+          -E 'replace match guard path.exists\(\) with true in mod_decls'

@@ -1,6 +1,6 @@
 //! Report rendering.
 
-use crate::{Kind, Report};
+use crate::{Kind, Remedy, Report};
 
 use alloc::format;
 use alloc::string::String;
@@ -24,19 +24,29 @@ pub fn human(report: &Report, verbose: bool) -> String {
     }
     out.push('\n');
     for (i, group) in report.groups.iter().enumerate() {
-        let what = match group.kind {
-            Kind::Doctest => "sites",
-            Kind::Function => "functions",
+        let _ = match group.kind {
+            Kind::Doctest => writeln!(
+                &mut out,
+                "[{}] {} sites, {} tokens",
+                group.id,
+                group.sites.len(),
+                group.tokens
+            ),
+            Kind::Function => writeln!(
+                &mut out,
+                "[{}] {} functions, {} tokens, {}",
+                group.id,
+                group.sites.len(),
+                group.tokens,
+                advice(group.remedy.unwrap_or(Remedy::Delete))
+            ),
         };
-        let _ = writeln!(
-            &mut out,
-            "[{}] {} {what}, {} tokens",
-            group.id,
-            group.sites.len(),
-            group.tokens
-        );
-        for site in &group.sites {
-            let info = if site.info.is_empty() {
+        let deletes = group.kind == Kind::Function
+            && group.remedy.unwrap_or(Remedy::Delete) == Remedy::Delete;
+        for (copy, site) in group.sites.iter().enumerate() {
+            let info = if deletes && copy > 0 && site.public {
+                format!("   (public API, {PUBLIC_ADVICE})")
+            } else if site.info.is_empty() {
                 String::new()
             } else {
                 format!("   ({})", site.info.join(", "))
@@ -66,9 +76,22 @@ pub fn human(report: &Report, verbose: bool) -> String {
         );
     }
     if report.groups.iter().any(|g| g.kind == Kind::Function) {
-        out.push_str("Remove or update the functions listed above, or keep one on purpose with a `// dejadoc: allow` comment above it\n");
+        out.push_str("Act on each function group as its advice says, or keep one on purpose with a `// dejadoc: allow` comment above it\n");
     }
     out
+}
+
+/// The advice for a copy other crates may call, which deleting would break.
+const PUBLIC_ADVICE: &str = "make it call the kept copy or deprecate it";
+
+/// The advice the human report gives a function group.
+fn advice(remedy: Remedy) -> &'static str {
+    match remedy {
+        Remedy::Delete => "delete or update all but the first",
+        Remedy::MergeCfg => "one function under the merged cfg can replace them",
+        Remedy::GenericOrMacro => "a generic or a macro can share one body",
+        Remedy::HelperOrMacro => "a helper or a macro can share one body",
+    }
 }
 
 /// Render the report as JSON.
@@ -108,14 +131,28 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
                     &mut out,
                     "::{level} file={file},line={line},title=dejadoc::{item} duplicates the doctest of {kept_item} at {kept_file}:{kept_line}, group {id}"
                 ),
-                Kind::Function if group.spans_types() => writeln!(
-                    &mut out,
-                    "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} on another type, a generic or a macro can share it, group {id}"
-                ),
-                Kind::Function => writeln!(
-                    &mut out,
-                    "::{level} file={file},line={line},title=dejadoc::{item} duplicates the function {kept_item} at {kept_file}:{kept_line}, group {id}"
-                ),
+                Kind::Function => match group.remedy.unwrap_or(Remedy::Delete) {
+                    Remedy::Delete if copy.public => writeln!(
+                        &mut out,
+                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} and is public API, {PUBLIC_ADVICE}, group {id}"
+                    ),
+                    Remedy::Delete => writeln!(
+                        &mut out,
+                        "::{level} file={file},line={line},title=dejadoc::{item} duplicates the function {kept_item} at {kept_file}:{kept_line}, group {id}"
+                    ),
+                    Remedy::MergeCfg => writeln!(
+                        &mut out,
+                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} under another cfg, one function under both cfgs can replace them, group {id}"
+                    ),
+                    Remedy::GenericOrMacro => writeln!(
+                        &mut out,
+                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} on another type, a generic or a macro can share it, group {id}"
+                    ),
+                    Remedy::HelperOrMacro => writeln!(
+                        &mut out,
+                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} and can't be deleted, a helper or a macro can share it, group {id}"
+                    ),
+                },
             };
         }
     }
@@ -138,7 +175,7 @@ fn escape_property(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{DocTest, Group};
+    use crate::{DocTest, Group, Remedy};
     use alloc::string::ToString;
     use alloc::vec;
     use alloc::vec::Vec;
@@ -153,6 +190,7 @@ mod tests {
             code: code.to_string(),
             allow: false,
             self_type: None,
+            public: false,
         }
     }
 
@@ -164,6 +202,7 @@ mod tests {
             unique_functions: 0,
             groups: vec![Group {
                 kind: crate::Kind::Doctest,
+                remedy: None,
                 id: "ab12cd34".into(),
                 hash: "ab12cd34".into(),
                 unparsed: false,
@@ -244,6 +283,7 @@ mod tests {
             groups: vec![
                 Group {
                     kind: crate::Kind::Doctest,
+                    remedy: None,
                     id: "ab12cd34".into(),
                     hash: "ab12cd34".into(),
                     unparsed: false,
@@ -255,6 +295,7 @@ mod tests {
                 },
                 Group {
                     kind: crate::Kind::Doctest,
+                    remedy: None,
                     id: "ef56gh78".into(),
                     hash: "ef56gh78".into(),
                     unparsed: false,
@@ -269,15 +310,8 @@ mod tests {
         );
     }
 
-    /// A report holding one function group, the copies on `types`.
-    fn function_report(types: [Option<&str>; 2]) -> Report {
-        let mut sites = vec![
-            site("src/a.rs", 3, "m::A::run", "fn run() {}", &[]),
-            site("src/a.rs", 9, "m::B::run", "fn run() {}", &[]),
-        ];
-        for (site, ty) in sites.iter_mut().zip(types) {
-            site.self_type = ty.map(ToString::to_string);
-        }
+    /// A report holding one function group of two copies with `remedy`.
+    fn function_report(remedy: Remedy) -> Report {
         Report {
             total: 0,
             unique: 0,
@@ -289,29 +323,89 @@ mod tests {
                 hash: "cd34ef56".into(),
                 unparsed: false,
                 tokens: 40,
-                sites,
+                remedy: Some(remedy),
+                sites: vec![
+                    site("src/a.rs", 3, "m::A::run", "fn run() {}", &[]),
+                    site("src/a.rs", 9, "m::B::run", "fn run() {}", &[]),
+                ],
             }],
         }
     }
 
     #[test]
-    fn human_names_function_groups_and_their_allow_comment() {
-        assert_eq!(
-            human(&function_report([Some("A"), Some("A")]), false),
-            "0 doctests (0 unique), 7 functions (6 unique), 1 duplicated groups\n\n[cd34ef56] 2 functions, 40 tokens\n  src/a.rs:3  m::A::run\n  src/a.rs:9  m::B::run\n\nRemove or update the functions listed above, or keep one on purpose with a `// dejadoc: allow` comment above it\n"
-        );
+    fn human_gives_each_function_group_its_advice() {
+        let head = "0 doctests (0 unique), 7 functions (6 unique), 1 duplicated groups\n\n[cd34ef56] 2 functions, 40 tokens, ";
+        let tail = "\n  src/a.rs:3  m::A::run\n  src/a.rs:9  m::B::run\n\nAct on each function group as its advice says, or keep one on purpose with a `// dejadoc: allow` comment above it\n";
+        for (remedy, advice) in [
+            (Remedy::Delete, "delete or update all but the first"),
+            (
+                Remedy::MergeCfg,
+                "one function under the merged cfg can replace them",
+            ),
+            (
+                Remedy::GenericOrMacro,
+                "a generic or a macro can share one body",
+            ),
+            (
+                Remedy::HelperOrMacro,
+                "a helper or a macro can share one body",
+            ),
+        ] {
+            assert_eq!(
+                human(&function_report(remedy), false),
+                format!("{head}{advice}{tail}")
+            );
+        }
     }
 
     #[test]
-    fn function_annotations_suggest_deleting_only_same_type_copies() {
+    fn a_public_copy_is_called_or_deprecated_never_deleted() {
+        let mut report = function_report(Remedy::Delete);
+        report.groups[0].sites[1].public = true;
         assert_eq!(
-            annotations(&function_report([Some("A"), Some("A")]), false),
-            "::error file=src/a.rs,line=9,title=dejadoc::m::B::run duplicates the function m::A::run at src/a.rs:3, group cd34ef56\n"
+            annotations(&report, false),
+            "::error file=src/a.rs,line=9,title=dejadoc::m::B::run repeats m::A::run at src/a.rs:3 and is public API, make it call the kept copy or deprecate it, group cd34ef56\n"
         );
-        assert_eq!(
-            annotations(&function_report([Some("A"), Some("B")]), false),
-            "::error file=src/a.rs,line=9,title=dejadoc::m::B::run repeats m::A::run at src/a.rs:3 on another type, a generic or a macro can share it, group cd34ef56\n"
-        );
+        assert!(human(&report, false).contains(
+            "  src/a.rs:9  m::B::run   (public API, make it call the kept copy or deprecate it)\n"
+        ));
+        // The kept copy being public changes nothing, and nor does a copy that isn't deleted.
+        let mut report = function_report(Remedy::Delete);
+        report.groups[0].sites[0].public = true;
+        assert!(annotations(&report, false).contains("duplicates the function m::A::run"));
+        assert!(!human(&report, false).contains("public API"));
+        let mut report = function_report(Remedy::GenericOrMacro);
+        report.groups[0].sites[1].public = true;
+        assert!(!human(&report, false).contains("public API"));
+        assert!(annotations(&report, false).contains("on another type"));
+    }
+
+    #[test]
+    fn function_annotations_follow_the_remedy() {
+        let head = "::error file=src/a.rs,line=9,title=dejadoc::m::B::run ";
+        for (remedy, body) in [
+            (
+                Remedy::Delete,
+                "duplicates the function m::A::run at src/a.rs:3",
+            ),
+            (
+                Remedy::MergeCfg,
+                "repeats m::A::run at src/a.rs:3 under another cfg, one function under both cfgs can replace them",
+            ),
+            (
+                Remedy::GenericOrMacro,
+                "repeats m::A::run at src/a.rs:3 on another type, a generic or a macro can share it",
+            ),
+            (
+                Remedy::HelperOrMacro,
+                "repeats m::A::run at src/a.rs:3 and can't be deleted, a helper or a macro can share it",
+            ),
+        ] {
+            assert_eq!(
+                annotations(&function_report(remedy), false),
+                format!("{head}{body}, group cd34ef56\n")
+            );
+        }
     }
 
     #[test]

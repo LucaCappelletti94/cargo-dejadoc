@@ -76,6 +76,7 @@ pub fn functions(source: &str) -> Option<dejadoc::Report> {
     let target = dejadoc::TargetScan {
         name: "c".into(),
         files: vec![file("a"), file("b")],
+        library: true,
     };
     Some(
         dejadoc::Dejadoc::default()

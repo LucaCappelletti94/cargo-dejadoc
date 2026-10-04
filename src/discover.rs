@@ -17,6 +17,8 @@ pub(crate) struct Target {
     pub(crate) src: PathBuf,
     /// Whether its doctests are scanned.
     pub(crate) doc: bool,
+    /// Whether it is a Rust library, whose public functions other crates may call.
+    pub(crate) library: bool,
 }
 
 /// A resolved workspace root and the targets to scan.
@@ -53,6 +55,14 @@ pub(crate) fn workspace(
                 name: target.name.clone(),
                 src: target.src_path.clone().into(),
                 doc: scan_target(&target.kind, all_targets),
+                library: target.kind.iter().any(|kind| {
+                    matches!(
+                        kind,
+                        cargo_metadata::TargetKind::Lib
+                            | cargo_metadata::TargetKind::RLib
+                            | cargo_metadata::TargetKind::DyLib
+                    )
+                }),
             });
         }
     }
@@ -110,7 +120,13 @@ fn collect(
     visited: &mut BTreeSet<PathBuf>,
     off: &mut alloc::collections::VecDeque<Child>,
 ) -> crate::Result<()> {
-    let canonical = std::fs::canonicalize(&file.path)?;
+    let canonical = match std::fs::canonicalize(&file.path) {
+        Ok(canonical) => canonical,
+        Err(err) => {
+            eprintln!("dejadoc: cannot read {}: {err}", file.path.display());
+            return Ok(());
+        }
+    };
     if !visited.insert(canonical) {
         return Ok(());
     }
@@ -183,13 +199,15 @@ fn mod_decls(
         let name = moditem.ident.unraw().to_string();
         let mut segments = prefix.to_vec();
         if let Some((_, children)) = &moditem.content {
-            let inner = base.join(&name);
+            // A `#[path]` on an inline module names its directory, against the declaring file's.
+            let inner = declared_path(&moditem.attrs)
+                .map_or_else(|| base.join(&name), |path| lexical_join(dir, &path));
             segments.push(moditem.ident.to_string());
             mod_decls(children, &inner, &inner, &segments, rustdoc, out);
             continue;
         }
         match resolve_mod_path(dir, base, &name, &moditem.attrs) {
-            Some((path, mod_rs)) if path.exists() => {
+            (path, mod_rs) if path.exists() => {
                 segments.push(moditem.ident.to_string());
                 out.push(Child {
                     path,
@@ -198,7 +216,7 @@ fn mod_decls(
                     rustdoc,
                 });
             }
-            Some((path, _)) if rustdoc => {
+            (path, _) if rustdoc => {
                 eprintln!("dejadoc: missing module file {}", path.display());
             }
             _ => {}
@@ -215,41 +233,59 @@ struct Child {
     rustdoc: bool,
 }
 
-/// File for `mod name;` and whether it is a mod-rs file. A top-level `#[path]` first, then
-/// the first `cfg_attr` path whose predicate holds, both against `dir`, then `name.rs` or
-/// `name/mod.rs` under `base`.
+/// The `#[path]` of a module, a top-level one first, then the first `cfg_attr` path whose
+/// predicate holds.
+fn declared_path(attrs: &[syn::Attribute]) -> Option<String> {
+    use syn::Meta;
+
+    let path = |meta: &Meta| match meta {
+        Meta::NameValue(nv) if nv.path.is_ident("path") => {
+            crate::cfg::lit_str(&nv.value).map(syn::LitStr::value)
+        }
+        _ => None,
+    };
+    attrs.iter().find_map(|attr| path(&attr.meta)).or_else(|| {
+        attrs
+            .iter()
+            .find_map(|attr| crate::cfg::cfg_attr_metas(attr)?.iter().find_map(path))
+    })
+}
+
+/// File for `mod name;` and whether it is a mod-rs file. A declared `#[path]` against `dir`,
+/// otherwise `name.rs` or `name/mod.rs` under `base`.
 fn resolve_mod_path(
     dir: &std::path::Path,
     base: &std::path::Path,
     name: &str,
     attrs: &[syn::Attribute],
-) -> Option<(PathBuf, bool)> {
-    use syn::Meta;
-
-    if let Some(attr) = attrs.iter().find(|a| a.path().is_ident("path")) {
-        let Meta::NameValue(nv) = &attr.meta else {
-            return None;
-        };
-        return Some((dir.join(crate::cfg::lit_str(&nv.value)?.value()), true));
-    }
-    let cfg_attr_path = attrs.iter().find_map(|attr| {
-        crate::cfg::cfg_attr_metas(attr)?
-            .into_iter()
-            .find_map(|meta| match meta {
-                Meta::NameValue(nv) if nv.path.is_ident("path") => {
-                    crate::cfg::lit_str(&nv.value).map(syn::LitStr::value)
-                }
-                _ => None,
-            })
-    });
-    if let Some(path) = cfg_attr_path {
-        return Some((dir.join(path), true));
+) -> (PathBuf, bool) {
+    if let Some(path) = declared_path(attrs) {
+        return (lexical_join(dir, &path), true);
     }
     let plain = base.join(format!("{name}.rs"));
     if plain.exists() {
-        return Some((plain, false));
+        return (plain, false);
     }
-    Some((base.join(name).join("mod.rs"), true))
+    (base.join(name).join("mod.rs"), true)
+}
+
+/// `dir` joined with a declared `path`, its `.` components dropped and each `..` taking off the
+/// component before it, nothing past the root, so sites carry the path the repository shows.
+fn lexical_join(dir: &std::path::Path, path: &str) -> PathBuf {
+    use std::path::Component;
+
+    let mut out = PathBuf::new();
+    for component in dir.join(path).components() {
+        match (component, out.components().next_back()) {
+            (Component::CurDir, _)
+            | (Component::ParentDir, Some(Component::RootDir | Component::Prefix(_))) => {}
+            (Component::ParentDir, Some(Component::Normal(_))) => {
+                out.pop();
+            }
+            (other, _) => out.push(other),
+        }
+    }
+    out
 }
 
 #[cfg(test)]
@@ -261,6 +297,7 @@ mod tests {
             name: "mycrate".into(),
             src: src.to_path_buf(),
             doc: true,
+            library: true,
         }
     }
 
@@ -548,6 +585,45 @@ mod tests {
     }
 
     #[test]
+    fn lexical_join_keeps_a_parent_it_cannot_cancel() {
+        let join = |dir: &str, path: &str| lexical_join(std::path::Path::new(dir), path);
+        assert_eq!(join("a/b", "./../c.rs"), PathBuf::from("a/c.rs"));
+        assert_eq!(join("a", "../../c.rs"), PathBuf::from("../c.rs"));
+        assert_eq!(join("/", "../c.rs"), PathBuf::from("/c.rs"));
+    }
+
+    #[test]
+    fn a_path_on_an_inline_mod_is_its_directory() {
+        // num-bigint: an inline module whose files sit in a directory of another name.
+        let got = paths(&[
+            ("lib.rs", "mod bigrand;\n"),
+            (
+                "bigrand.rs",
+                "#[path = \"bigrand\"]\nmod impl_a { mod traits; }\n",
+            ),
+            ("bigrand/traits.rs", "pub fn g() {}\n"),
+        ]);
+        assert_eq!(got, ["lib.rs", "bigrand.rs", "bigrand/traits.rs"]);
+        // yew: `#[path = "."]` keeps the children beside the declaring `mod.rs`.
+        let got = paths(&[
+            ("lib.rs", "mod dom;\n"),
+            (
+                "dom/mod.rs",
+                "#[cfg_attr(all(), path = \".\")]\nmod feat { #[path = \"./fragment.rs\"] mod fragment; }\n",
+            ),
+            ("dom/fragment.rs", "pub fn g() {}\n"),
+        ]);
+        assert_eq!(got, ["lib.rs", "dom/mod.rs", "dom/fragment.rs"]);
+        // A `..` in a `#[path]` resolves lexically, so the site path is the repository's.
+        let got = paths(&[
+            ("lib.rs", "mod sys;\n"),
+            ("sys/mod.rs", "#[path = \"../shared.rs\"]\nmod shared;\n"),
+            ("shared.rs", "pub fn g() {}\n"),
+        ]);
+        assert_eq!(got, ["lib.rs", "sys/mod.rs", "shared.rs"]);
+    }
+
+    #[test]
     fn root_with_a_directory_named_after_it_keeps_children_beside_it() {
         let got = paths(&[
             ("lib.rs", "pub mod foo;\npub mod lib { pub mod child; }\n"),
@@ -662,6 +738,24 @@ mod tests {
             targets,
             [("demo", true), ("it", false), ("tool", true), ("ws", true)]
         );
+    }
+
+    #[test]
+    fn a_target_file_missing_from_the_package_is_skipped() {
+        // Published crates often leave out the benches and tests their manifest lists.
+        let dir = tempfile::tempdir().unwrap();
+        cargo_package(
+            dir.path(),
+            "ws",
+            "[[bench]]\nname = \"gone\"\npath = \"benches/gone.rs\"\n[workspace]\n",
+        );
+        let ws = workspace(dir.path(), None, false).unwrap();
+        let files: Vec<usize> = ws
+            .targets
+            .iter()
+            .map(|t| module_tree(t).unwrap().len())
+            .collect();
+        assert_eq!(files, [1, 0]);
     }
 
     #[test]

@@ -2,7 +2,7 @@
 
 #![cfg(feature = "std")]
 
-use dejadoc::{Dejadoc, Report};
+use dejadoc::{Dejadoc, Remedy, Report};
 use std::path::Path;
 #[cfg(feature = "cli")]
 use std::process::Command;
@@ -15,15 +15,15 @@ fn scan() -> Report {
 
 const FN_FIXTURE: &str = "tests/fixtures/fnws";
 
-/// A function group's items, self types and whether it spans types.
-type FnGroup<'a> = (Vec<&'a str>, Vec<Option<&'a str>>, bool);
+/// A function group's items, self types and remedy.
+type FnGroup<'a> = (Vec<&'a str>, Vec<Option<&'a str>>, Option<Remedy>);
 
 #[test]
 fn functions_group_per_module_across_targets_and_cfgs() {
     let report = Dejadoc::default().run(FN_FIXTURE).unwrap();
     assert_eq!(
         (report.total, report.functions, report.unique_functions),
-        (0, 12, 6)
+        (0, 17, 8)
     );
     let mut groups: Vec<FnGroup<'_>> = report
         .groups
@@ -32,7 +32,7 @@ fn functions_group_per_module_across_targets_and_cfgs() {
             assert_eq!(g.kind, dejadoc::Kind::Function);
             let items = g.sites.iter().map(|s| s.item.as_str()).collect();
             let types = g.sites.iter().map(|s| s.self_type.as_deref()).collect();
-            (items, types, g.spans_types())
+            (items, types, g.remedy)
         })
         .collect();
     groups.sort();
@@ -40,14 +40,27 @@ fn functions_group_per_module_across_targets_and_cfgs() {
         groups,
         [
             (
+                vec![
+                    "fnws::describe::Gamma::short",
+                    "fnws::describe::Gamma::long"
+                ],
+                vec![Some("Gamma"), Some("Gamma")],
+                Some(Remedy::HelperOrMacro)
+            ),
+            (
                 vec!["fnws::platform::width", "fnws::platform::height"],
                 vec![None, None],
-                false
+                Some(Remedy::Delete)
             ),
             (
                 vec!["fnws::render::Alpha::render", "fnws::render::Beta::render"],
                 vec![Some("Alpha"), Some("Beta")],
-                true
+                Some(Remedy::GenericOrMacro)
+            ),
+            (
+                vec!["fnws::scale::scaled", "fnws::scale::scaled_elsewhere"],
+                vec![None, None],
+                Some(Remedy::MergeCfg)
             ),
             (
                 vec![
@@ -55,18 +68,40 @@ fn functions_group_per_module_across_targets_and_cfgs() {
                     "fnws::tests::totals_large_values"
                 ],
                 vec![None, None],
-                false
+                Some(Remedy::Delete)
             ),
             (
-                vec!["fnws::total_over", "fnws::sum_over"],
-                vec![None, None],
-                false
+                vec!["fnws::total_over", "fnws::sum_over", "fnws::total_too"],
+                vec![None, None, None],
+                Some(Remedy::Delete)
             ),
             (
                 vec!["it::renders_values", "it::renders_values_again"],
                 vec![None, None],
-                false
+                Some(Remedy::Delete)
             ),
+        ]
+    );
+    // A `pub` function of the library counts as public API whatever its module, since a
+    // re-export can expose it. The integration test target has none.
+    let public: Vec<&str> = report
+        .groups
+        .iter()
+        .flat_map(|g| &g.sites)
+        .filter(|s| s.public)
+        .map(|s| s.item.as_str())
+        .collect();
+    assert_eq!(
+        public,
+        [
+            "fnws::platform::width",
+            "fnws::platform::height",
+            "fnws::scale::scaled",
+            "fnws::scale::scaled_elsewhere",
+            "fnws::total_over",
+            "fnws::total_too",
+            "fnws::render::Alpha::render",
+            "fnws::render::Beta::render"
         ]
     );
     // A site runs from its first doc comment or attribute to its closing brace.

@@ -41,6 +41,8 @@ pub struct Dejadoc {
     min_tokens: Option<usize>,
     no_functions: bool,
     fn_min_tokens: Option<usize>,
+    scan_generated: bool,
+    generated_markers: Vec<String>,
 }
 
 impl Dejadoc {
@@ -86,6 +88,20 @@ impl Dejadoc {
         self
     }
 
+    /// Scan files marked generated, which are skipped otherwise.
+    #[must_use]
+    pub fn scan_generated(mut self) -> Self {
+        self.scan_generated = true;
+        self
+    }
+
+    /// Also treat a file as generated when one of its first lines contains `marker`.
+    #[must_use]
+    pub fn generated_marker(mut self, marker: impl Into<String>) -> Self {
+        self.generated_markers.push(marker.into());
+        self
+    }
+
     /// Fill unset parameters from the `.dejadoc.toml` at `path`, before the workspace root one under `run`.
     ///
     /// # Errors
@@ -104,6 +120,12 @@ impl Dejadoc {
             min_tokens: self.min_tokens.or(file.min_tokens),
             no_functions: self.no_functions || file.functions == Some(false),
             fn_min_tokens: self.fn_min_tokens.or(file.fn_min_tokens),
+            scan_generated: self.scan_generated || file.scan_generated == Some(true),
+            generated_markers: self
+                .generated_markers
+                .into_iter()
+                .chain(file.generated_markers.iter().flatten().cloned())
+                .collect(),
             ..self
         }
     }
@@ -150,6 +172,7 @@ impl Dejadoc {
             targets.push(TargetScan {
                 name: target.name.clone(),
                 files: discover::module_tree(target)?,
+                library: target.library,
             });
         }
         let scan = Self {
@@ -184,21 +207,39 @@ impl Dejadoc {
             .filter(|t| self.package.as_deref().is_none_or(|p| p == t.name))
             .collect();
         let threshold = self.threshold.unwrap_or(DEFAULT_THRESHOLD);
+        let scanned = |file: &SourceFile| {
+            self.scan_generated || !is_generated(&file.text, &self.generated_markers)
+        };
         let mut report = group_doctests(
-            &extract_all(targets.iter().copied(), root, read),
+            &extract_all(targets.iter().copied(), root, read, &scanned),
             threshold,
             self.min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
         );
         if !self.no_functions {
-            let sites = targets.iter().flat_map(|target| {
+            // Targets sharing a root file are one crate, walked once.
+            let mut roots = BTreeSet::new();
+            let crates = targets
+                .iter()
+                .filter(|target| roots.insert(target.files.first().map(|f| f.path.as_str())));
+            let sites = crates.flat_map(|target| {
                 let crate_root = target.files.first().map_or("", |f| {
                     f.path
                         .strip_prefix(root)
                         .map_or(f.path.as_str(), |p| p.trim_start_matches('/'))
                 });
-                target.files.iter().flat_map(move |file| {
-                    functions::functions(&module_prefix(target, file), file, root, crate_root)
-                })
+                target
+                    .files
+                    .iter()
+                    .filter(|file| scanned(file))
+                    .flat_map(move |file| {
+                        functions::functions(
+                            &module_prefix(target, file),
+                            file,
+                            root,
+                            crate_root,
+                            target.library,
+                        )
+                    })
             });
             let (total, unique, groups) = group_functions(
                 sites,
@@ -220,6 +261,8 @@ pub struct TargetScan {
     pub name: String,
     /// The target's files, its root file first, whose path tells two targets of one name apart.
     pub files: Vec<SourceFile>,
+    /// Whether the target is a Rust library, whose public functions other crates may call.
+    pub library: bool,
 }
 
 /// One file of a target.
@@ -263,15 +306,27 @@ fn module_prefix(target: &TargetScan, file: &SourceFile) -> String {
     }
 }
 
-/// The doctests of every file of `targets` rustdoc collects from.
+/// Whether `text` declares itself generated in its first five lines, where rustfmt looks: by
+/// `@generated`, by Go's `// Code generated … DO NOT EDIT.` line, or by one of `markers`.
+fn is_generated(text: &str, markers: &[String]) -> bool {
+    text.lines().take(5).any(|line| {
+        let line = line.trim();
+        line.contains("@generated")
+            || (line.starts_with("// Code generated ") && line.ends_with(" DO NOT EDIT."))
+            || markers.iter().any(|marker| line.contains(marker.as_str()))
+    })
+}
+
+/// The doctests of every file of `targets` rustdoc collects from and `scanned` keeps.
 fn extract_all<'t>(
     targets: impl IntoIterator<Item = &'t TargetScan>,
     root: &str,
     read: &IncludeRead<'_>,
+    scanned: &dyn Fn(&SourceFile) -> bool,
 ) -> Vec<DocTest> {
     let mut blocks = Vec::new();
     for target in targets {
-        for file in target.files.iter().filter(|f| f.rustdoc) {
+        for file in target.files.iter().filter(|f| f.rustdoc && scanned(f)) {
             blocks.extend(extract::extract(
                 &module_prefix(target, file),
                 &file.path,
@@ -325,6 +380,9 @@ pub struct DocTest {
     /// The self type of a method, the trait of a default method.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub self_type: Option<String>,
+    /// A `pub` function or method of a library, which other crates may call.
+    #[serde(skip_serializing_if = "core::ops::Not::not")]
+    pub public: bool,
 }
 
 /// What a group's sites are.
@@ -335,6 +393,22 @@ pub enum Kind {
     Doctest,
     /// Functions of one module.
     Function,
+}
+
+/// What to do with the copies of a function group, the first matching row of the
+/// rule table winning.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Remedy {
+    /// Methods on different self types, which a generic or a macro can share.
+    GenericOrMacro,
+    /// Copies a trait or an exported symbol needs, which can't be deleted, so a helper or a
+    /// macro shares them.
+    HelperOrMacro,
+    /// Free functions or inherent methods apart only by `cfg`, one function under both replaces them.
+    MergeCfg,
+    /// Copies that can go, all but the first deleted or updated.
+    Delete,
 }
 
 /// Duplicated sites sharing one canonical form.
@@ -354,16 +428,9 @@ pub struct Group {
     /// All sites, the one to keep first. Sites whose code names their own
     /// item come first, file and line order breaks ties.
     pub sites: Vec<DocTest>,
-}
-
-impl Group {
-    /// Whether the sites are methods of more than one self type.
-    #[must_use]
-    pub fn spans_types(&self) -> bool {
-        self.sites
-            .split_first()
-            .is_some_and(|(first, rest)| rest.iter().any(|s| s.self_type != first.self_type))
-    }
+    /// What to do with the copies, `None` for doctests, whose copies always go.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub remedy: Option<Remedy>,
 }
 
 /// Outcome of a scan.
@@ -448,9 +515,14 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
     let entries = by_site.into_values().filter(|b| !b.allow).map(|block| {
         let canonical = normalize::canonicalize(&block.code);
         let hash = blake3::hash(canonical.text.as_bytes()).to_hex().to_string();
-        (hash, canonical.unparsed, canonical.tokens, block.clone())
+        (
+            hash,
+            canonical.unparsed,
+            canonical.tokens,
+            (block.clone(), ()),
+        )
     });
-    let (unique, groups) = bucket(Kind::Doctest, entries, threshold, min_tokens);
+    let (unique, groups) = bucket(Kind::Doctest, entries, threshold, min_tokens, |_| None);
     Report {
         total,
         unique,
@@ -481,21 +553,28 @@ fn group_functions(
             let tokens = normalize::count_tokens(canonical.clone());
             let keyed = format!("{}\n{canonical}", f.scope);
             let hash = blake3::hash(keyed.as_bytes()).to_hex().to_string();
-            (hash, false, tokens, f.site)
+            (hash, false, tokens, (f.site, f.context))
         });
-    let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens);
+    let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens, |sites| {
+        Some(functions::remedy(sites))
+    });
     (total, unique, groups)
 }
 
-/// The distinct hash count of `entries` and their groups of at least `threshold` sites and `min_tokens` tokens.
-fn bucket(
+/// One hash's text fallback flag, token count and sites with their context.
+type Bucket<C> = (bool, usize, Vec<(DocTest, C)>);
+
+/// The distinct hash count of `entries` and their groups of at least `threshold` sites and
+/// `min_tokens` tokens, each site carrying the context `remedy` reads.
+fn bucket<C>(
     kind: Kind,
-    entries: impl Iterator<Item = (String, bool, usize, DocTest)>,
+    entries: impl Iterator<Item = (String, bool, usize, (DocTest, C))>,
     threshold: usize,
     min_tokens: usize,
+    remedy: impl Fn(&[(DocTest, C)]) -> Option<Remedy>,
 ) -> (usize, Vec<Group>) {
     let mut unique: BTreeSet<String> = BTreeSet::new();
-    let mut by_hash: BTreeMap<String, (bool, usize, Vec<DocTest>)> = BTreeMap::new();
+    let mut by_hash: BTreeMap<String, Bucket<C>> = BTreeMap::new();
     for (hash, unparsed, tokens, site) in entries {
         unique.insert(hash.clone());
         if tokens >= min_tokens {
@@ -510,15 +589,19 @@ fn bucket(
         .into_iter()
         .filter(|(_, (_, _, sites))| sites.len() >= threshold)
         .map(|(hash, (unparsed, tokens, mut sites))| {
-            sites.sort_by(|a, b| (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line)));
-            sites.sort_by_cached_key(|site| !names_its_item(site));
+            sites.sort_by(|(a, _), (b, _)| {
+                (a.file.as_str(), a.line).cmp(&(b.file.as_str(), b.line))
+            });
+            sites.sort_by_cached_key(|(site, _)| !names_its_item(site));
+            let remedy = remedy(&sites);
             Group {
                 kind,
                 id: hash[..8].to_string(),
                 hash,
                 unparsed,
                 tokens,
-                sites,
+                sites: sites.into_iter().map(|(site, _)| site).collect(),
+                remedy,
             }
         })
         .collect();
@@ -551,6 +634,7 @@ mod tests {
             code: code.to_string(),
             allow,
             self_type: None,
+            public: false,
         }
     }
 
@@ -612,6 +696,43 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std")]
+    fn config_marks_more_files_generated_or_scans_them_anyway() {
+        let dir = tempfile::tempdir().unwrap();
+        let groups = |header: &str, toml: &str, builder: Dejadoc| {
+            let file = dir.path().join("config.toml");
+            std::fs::write(&file, toml).unwrap();
+            let src = format!("{header}fn one() -> u8 {{ 1 + 2 }}\nfn two() -> u8 {{ 1 + 2 }}\n");
+            fn_groups(builder.fn_min_tokens(0).config(&file).unwrap(), &src).len()
+        };
+        let marked = "// @generated\n";
+        let bindgen = "/* automatically generated by rust-bindgen */\n";
+        assert_eq!(groups(marked, "", Dejadoc::default()), 0);
+        assert_eq!(
+            groups(marked, "scan-generated = true\n", Dejadoc::default()),
+            1
+        );
+        assert_eq!(
+            groups(marked, "scan-generated = false\n", Dejadoc::default()),
+            0
+        );
+        assert_eq!(
+            groups(
+                bindgen,
+                "generated-markers = [\"rust-bindgen\"]\n",
+                Dejadoc::default()
+            ),
+            0
+        );
+        // A builder marker survives a config file that names other markers.
+        let builder = Dejadoc::default().generated_marker("rust-bindgen");
+        assert_eq!(
+            groups(bindgen, "generated-markers = [\"protoc\"]\n", builder),
+            0
+        );
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
     fn config_bad_toml_fails_at_build() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("bad.toml");
@@ -640,6 +761,7 @@ mod tests {
                 text: src.to_string(),
                 rustdoc: true,
             }],
+            library: true,
         }
     }
 
@@ -659,6 +781,46 @@ mod tests {
             .filter(|g| g.kind == Kind::Function)
             .map(|g| g.sites.iter().map(|s| s.item.clone()).collect())
             .collect()
+    }
+
+    #[test]
+    fn a_pub_function_or_method_of_a_library_is_public() {
+        let public = |src: &str, library: bool| -> Vec<bool> {
+            let mut target = target_from("c", "src/lib.rs", &[], src);
+            target.library = library;
+            let report = Dejadoc::default().run_targets("", &[target], &|_f, _i| None);
+            report.groups[0].sites.iter().map(|s| s.public).collect()
+        };
+        let free = format!("fn one{BODY}\npub fn two{BODY}\npub(crate) fn three{BODY}\n");
+        assert_eq!(public(&free, true), [false, true, false]);
+        assert_eq!(public(&free, false), [false, false, false]);
+        let methods = format!("struct A;\nimpl A {{ fn one{BODY}\npub fn two{BODY} }}\n");
+        assert_eq!(public(&methods, true), [false, true]);
+    }
+
+    #[test]
+    fn a_cfg_attr_counts_only_when_it_wraps_a_live_attribute() {
+        for wrapped in [
+            "inline",
+            "allow(dead_code), inline(always)",
+            "doc = \"x\"",
+            "cfg_attr(windows, cold)",
+        ] {
+            let src = format!("#[cfg_attr(unix, {wrapped})]\nfn one{BODY}\nfn two{BODY}\n");
+            assert_eq!(
+                fn_groups(Dejadoc::default(), &src),
+                [["c::one", "c::two"]],
+                "{wrapped}"
+            );
+        }
+        for wrapped in ["case(1)", "inline, test", "cfg_attr(windows, should_panic)"] {
+            let src = format!("#[cfg_attr(unix, {wrapped})]\nfn one{BODY}\nfn two{BODY}\n");
+            assert_eq!(
+                fn_groups(Dejadoc::default(), &src),
+                Vec::<Vec<String>>::new(),
+                "{wrapped}"
+            );
+        }
     }
 
     #[test]
@@ -705,8 +867,89 @@ mod tests {
                 .map(|s| s.self_type.as_deref())
                 .collect();
             assert_eq!(types, [Some(one), Some(two)]);
-            assert!(report.groups[0].spans_types(), "{one} {two}");
+            assert_eq!(
+                report.groups[0].remedy,
+                Some(Remedy::GenericOrMacro),
+                "{one} {two}"
+            );
         }
+    }
+
+    #[test]
+    fn a_file_marked_generated_in_its_first_five_lines_is_skipped() {
+        let body = format!(
+            "/// ```\n/// let x = 1;\n/// let y = x + 1;\n/// ```\nfn one{BODY}\n/// ```\n/// let x = 1;\n/// let y = x + 1;\n/// ```\nfn two{BODY}\n"
+        );
+        let scan = |header: &str, dejadoc: Dejadoc| {
+            let target = target_from("c", "src/lib.rs", &[], &format!("{header}{body}"));
+            let report = dejadoc.run_targets("", &[target], &|_f, _i| None);
+            (report.total, report.functions, report.groups.len())
+        };
+        for header in [
+            "// This file is @generated by syn-internal-codegen.\n",
+            "\n\n\n\n// @generated\n",
+            "// Code generated by software.amazon.smithy.rust.codegen.smithy-rs. DO NOT EDIT.\n",
+        ] {
+            assert_eq!(scan(header, Dejadoc::default()), (0, 0, 0), "{header}");
+            assert_eq!(
+                scan(header, Dejadoc::default().scan_generated()),
+                (2, 2, 2),
+                "{header}"
+            );
+        }
+        for header in [
+            "\n\n\n\n\n// @generated\n",
+            "// Code generated by hand, edit freely.\n",
+            "/* automatically generated by rust-bindgen 0.72.1 */\n",
+        ] {
+            assert_eq!(scan(header, Dejadoc::default()), (2, 2, 2), "{header}");
+        }
+        let bindgen = "/* automatically generated by rust-bindgen 0.72.1 */\n";
+        assert_eq!(
+            scan(
+                bindgen,
+                Dejadoc::default().generated_marker("by rust-bindgen")
+            ),
+            (0, 0, 0)
+        );
+    }
+
+    #[test]
+    fn a_methods_name_does_not_bind_the_free_function_its_body_calls() {
+        // tauri-plugin-dialog: each method forwards to the free function of its own name.
+        let src = format!(
+            "struct A;\nimpl A {{ fn pick_files{BODY}\nfn pick_folders{BODY} }}\nimpl A {{\nfn one(self, values: &[u32], limit: u32) -> u32 {{ let mut total = 0; for value in values {{ if *value > limit {{ total += pick_files(values, limit); }} else {{ total -= 1; }} }} total }}\nfn two(self, values: &[u32], limit: u32) -> u32 {{ let mut total = 0; for value in values {{ if *value > limit {{ total += pick_folders(values, limit); }} else {{ total -= 1; }} }} total }}\n}}\n"
+        );
+        assert_eq!(
+            fn_groups(Dejadoc::default(), &src),
+            [["c::A::pick_files", "c::A::pick_folders"]]
+        );
+        let methods = "struct A;\nimpl A {\nfn one(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } total }\nfn two(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } total }\n}\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default(), methods),
+            Vec::<Vec<String>>::new()
+        );
+        // A free function's name is in scope, so recursion still renames with it.
+        let free = "fn one(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } total }\nfn two(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } total }\n";
+        assert_eq!(fn_groups(Dejadoc::default(), free), [["c::one", "c::two"]]);
+    }
+
+    #[test]
+    fn two_targets_sharing_a_root_file_are_one_crate() {
+        // allo-isolate lists `tests/containers.rs` as both an example and a test.
+        let src = format!("fn one{BODY}\nfn two{BODY}\n");
+        let targets = [
+            target_from("containers", "tests/containers.rs", &[], &src),
+            target_from("containers", "tests/containers.rs", &[], &src),
+        ];
+        let report = Dejadoc::default().run_targets("", &targets, &|_f, _i| None);
+        let items: Vec<Vec<&str>> = report
+            .groups
+            .iter()
+            .map(|g| g.sites.iter().map(|s| s.item.as_str()).collect())
+            .collect();
+        assert_eq!(items, [["containers::one", "containers::two"]]);
+        assert_eq!((report.functions, report.unique_functions), (2, 1));
     }
 
     #[test]
@@ -749,14 +992,138 @@ mod tests {
         let group = &report.groups[0];
         let types: Vec<Option<&str>> = group.sites.iter().map(|s| s.self_type.as_deref()).collect();
         assert_eq!(types, [None, Some("A"), Some("A")]);
-        assert!(group.spans_types());
+        assert_eq!(group.remedy, Some(Remedy::GenericOrMacro));
         let same = format!("struct A;\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n");
         let report = Dejadoc::default().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &same)],
             &|_f, _i| None,
         );
-        assert!(!report.groups[0].spans_types());
+        assert_eq!(report.groups[0].remedy, Some(Remedy::Delete));
+    }
+
+    /// The remedy of the one function group of `src`.
+    fn remedy_of(src: &str) -> Option<Remedy> {
+        let report = Dejadoc::default().run_targets(
+            "",
+            &[target_from("c", "src/lib.rs", &[], src)],
+            &|_f, _i| None,
+        );
+        assert_eq!(report.groups.len(), 1, "{src}");
+        report.groups[0].remedy
+    }
+
+    #[test]
+    fn every_function_group_gets_the_remedy_of_its_first_matching_rule() {
+        let rows = [
+            // Trait methods of one type, a trait impl or a default method.
+            (
+                format!(
+                    "struct A;\ntrait P {{}}\ntrait Q {{}}\nimpl P for A {{ fn a{BODY} }}\nimpl Q for A {{ fn b{BODY} }}\n"
+                ),
+                Remedy::HelperOrMacro,
+            ),
+            (
+                format!("trait T {{ fn a{BODY}\nfn b{BODY} }}\n"),
+                Remedy::HelperOrMacro,
+            ),
+            (
+                format!(
+                    "struct A;\ntrait P {{}}\nimpl A {{ fn a{BODY} }}\nimpl P for A {{ fn b{BODY} }}\n"
+                ),
+                Remedy::HelperOrMacro,
+            ),
+            // An exported symbol can't be deleted either.
+            (
+                format!("#[no_mangle]\npub extern \"C\" fn a{BODY}\npub extern \"C\" fn b{BODY}\n"),
+                Remedy::HelperOrMacro,
+            ),
+            (
+                format!(
+                    "#[unsafe(no_mangle)]\npub extern \"C\" fn a{BODY}\npub extern \"C\" fn b{BODY}\n"
+                ),
+                Remedy::HelperOrMacro,
+            ),
+            (
+                format!(
+                    "pub extern \"C\" fn a{BODY}\n#[unsafe(export_name = \"b\")]\npub extern \"C\" fn b{BODY}\n"
+                ),
+                Remedy::HelperOrMacro,
+            ),
+            (
+                format!(
+                    "#[export_name = \"a\"]\npub extern \"C\" fn a{BODY}\npub extern \"C\" fn b{BODY}\n"
+                ),
+                Remedy::HelperOrMacro,
+            ),
+            // Free functions and inherent methods apart only by their `cfg`.
+            (
+                format!("#[cfg(unix)]\nfn a{BODY}\nfn b{BODY}\n"),
+                Remedy::MergeCfg,
+            ),
+            (
+                format!(
+                    "struct A;\nimpl A {{ #[cfg(unix)] fn a{BODY}\n#[cfg(windows)] fn b{BODY} }}\n"
+                ),
+                Remedy::MergeCfg,
+            ),
+            // A `cfg` on an enclosing inline module or impl block counts too.
+            (
+                format!(
+                    "#[cfg(unix)]\nmod m {{ fn a{BODY} }}\n#[cfg(not(unix))]\nmod m {{ fn a{BODY} }}\n"
+                ),
+                Remedy::MergeCfg,
+            ),
+            (
+                format!(
+                    "struct A;\n#[cfg(unix)]\nimpl A {{ fn a{BODY} }}\n#[cfg(not(unix))]\nimpl A {{ fn a{BODY} }}\n"
+                ),
+                Remedy::MergeCfg,
+            ),
+            (
+                format!(
+                    "#[cfg(unix)]\nmod m {{ #[cfg(test)] fn a{BODY}\n#[cfg(test)] fn b{BODY} }}\n"
+                ),
+                Remedy::Delete,
+            ),
+            // One `cfg` set in any order deletes, and `cfg_attr` is no configuration.
+            (
+                format!("#[cfg_attr(unix, inline)]\nfn a{BODY}\nfn b{BODY}\n"),
+                Remedy::Delete,
+            ),
+            (
+                format!(
+                    "#[cfg(unix)]\n#[cfg(feature = \"x\")]\nfn a{BODY}\n#[cfg(feature = \"x\")]\n#[cfg(unix)]\nfn b{BODY}\n"
+                ),
+                Remedy::Delete,
+            ),
+            (format!("fn a{BODY}\nfn b{BODY}\n"), Remedy::Delete),
+            // An earlier row wins over a later one.
+            (
+                format!(
+                    "struct A;\nstruct B;\ntrait P {{}}\nimpl P for A {{ #[cfg(unix)] fn a{BODY} }}\nimpl P for B {{ fn a{BODY} }}\n"
+                ),
+                Remedy::GenericOrMacro,
+            ),
+            (
+                format!(
+                    "struct A;\ntrait P {{}}\ntrait Q {{}}\nimpl P for A {{ #[cfg(unix)] fn a{BODY} }}\nimpl Q for A {{ fn b{BODY} }}\n"
+                ),
+                Remedy::HelperOrMacro,
+            ),
+        ];
+        for (src, remedy) in rows {
+            assert_eq!(remedy_of(&src), Some(remedy), "{src}");
+        }
+    }
+
+    #[test]
+    fn doctest_groups_carry_no_remedy() {
+        let blocks = [
+            dt("a.rs", 1, "m::f", "let x = 1;", false),
+            dt("b.rs", 2, "m::g", "let x = 1;", false),
+        ];
+        assert_eq!(group(&blocks, 2, 0).groups[0].remedy, None);
     }
 
     #[test]
