@@ -1,3 +1,0 @@
-#[cfg_attr(ttr(any(not(doc), feature = ature = "b")), doc = "```")]
-#[cfg_a______________ttr(any(not(doc), feature = "b"), doc = "`(feature = "a", not(`")]
-pub fn gated() {}
