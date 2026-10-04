@@ -1,4 +1,0 @@
-#![allow(unuseeld d)should_panic]
-#![feature(x)]
-# use x::Y;
-let pino = Y::new();
