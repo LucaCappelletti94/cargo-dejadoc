@@ -17,23 +17,57 @@ use quote::ToTokens;
 pub fn canonicalize(mut file: syn::File) -> TokenStream {
     drift::normalize_file(&mut file);
     alpha::normalize_file(&mut file);
-    fold_tokens(file.to_token_stream(), false)
+    fold_tokens(file.to_token_stream(), false, false)
         .into_iter()
         .collect()
 }
 
-/// Drop each group's trailing comma and respell literals outside `opaque` macro and attribute tokens.
-fn fold_tokens(stream: TokenStream, opaque: bool) -> Vec<TokenTree> {
+/// The std macros that accept an optional trailing comma and treat it as nothing.
+const COMMA_BLIND_MACROS: [&str; 21] = [
+    "assert",
+    "assert_eq",
+    "assert_ne",
+    "dbg",
+    "debug_assert",
+    "debug_assert_eq",
+    "debug_assert_ne",
+    "eprint",
+    "eprintln",
+    "format",
+    "format_args",
+    "matches",
+    "panic",
+    "print",
+    "println",
+    "todo",
+    "unimplemented",
+    "unreachable",
+    "vec",
+    "write",
+    "writeln",
+];
+
+/// The built-in attributes whose arguments a trailing comma doesn't change.
+const COMMA_BLIND_ATTRIBUTES: [&str; 10] = [
+    "allow", "cfg", "cfg_attr", "deny", "derive", "expect", "feature", "forbid", "repr", "warn",
+];
+
+/// Drop each group's trailing comma unless `keep_commas`, set inside the tokens of a macro or an
+/// attribute that may match on it, and respell literals outside `opaque` macro and attribute tokens.
+fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
     let mut out: Vec<TokenTree> = Vec::new();
     for tree in stream {
         let tree = match tree {
             TokenTree::Group(group) => {
                 let shut = opaque
                     || matches!(out.last(), Some(TokenTree::Punct(p)) if matches!(p.as_char(), '!' | '#'));
+                let keep = keep_commas || reads_commas(&out, &group);
                 drift::map_group(&group, |inner| {
-                    let mut inner = fold_tokens(inner, shut);
+                    let mut inner = fold_tokens(inner, shut, keep);
                     // A one-tuple keeps its comma, the paren fold already told it apart.
-                    if matches!(inner.last(), Some(TokenTree::Punct(p)) if p.as_char() == ',') {
+                    if !keep
+                        && matches!(inner.last(), Some(TokenTree::Punct(p)) if p.as_char() == ',')
+                    {
                         inner.pop();
                     }
                     inner.into_iter().collect()
@@ -45,6 +79,31 @@ fn fold_tokens(stream: TokenStream, opaque: bool) -> Vec<TokenTree> {
         out.push(tree);
     }
     out
+}
+
+/// Whether `group`, following the tokens in `before`, holds the input of a macro call or an
+/// attribute that may match on a trailing comma.
+fn reads_commas(before: &[TokenTree], group: &proc_macro2::Group) -> bool {
+    let back = |n: usize| before.len().checked_sub(n).and_then(|i| before.get(i));
+    let punct = |tree: Option<&TokenTree>, c: char| matches!(tree, Some(TokenTree::Punct(p)) if p.as_char() == c);
+    if punct(back(1), '!')
+        && let Some(TokenTree::Ident(name)) = back(2)
+    {
+        return !COMMA_BLIND_MACROS.iter().any(|blind| name == blind);
+    }
+    let attribute = group.delimiter() == proc_macro2::Delimiter::Bracket
+        && (punct(back(1), '#') || (punct(back(1), '!') && punct(back(2), '#')));
+    if !attribute {
+        return false;
+    }
+    let mut inner = group.stream().into_iter();
+    let builtin = match (inner.next(), inner.next()) {
+        (Some(TokenTree::Ident(name)), next) => {
+            !punct(next.as_ref(), ':') && COMMA_BLIND_ATTRIBUTES.iter().any(|blind| name == blind)
+        }
+        _ => false,
+    };
+    !builtin
 }
 
 #[cfg(test)]
@@ -388,6 +447,53 @@ mod tests {
         let a = canonicalize("vec![1, 2]");
         let b = canonicalize("vec![1, 2,]");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_trailing_comma_a_macro_may_match_on_stays() {
+        // rustfmt keeps these commas for the same reason, the macro sees them.
+        for (with, without) in [
+            ("my_macro!(a, b,);", "my_macro!(a, b);"),
+            ("my_macro!((a, b,));", "my_macro!((a, b));"),
+            (
+                "tree! { 'a' => { 'b', 'c', } };",
+                "tree! { 'a' => { 'b', 'c' } };",
+            ),
+            (
+                "#[my_attr(a, b,)]\nfn f() {}",
+                "#[my_attr(a, b)]\nfn f() {}",
+            ),
+        ] {
+            assert_ne!(
+                canonicalize(with).text,
+                canonicalize(without).text,
+                "{with}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_trailing_comma_a_std_macro_or_attribute_ignores_merges() {
+        for (with, without) in [
+            ("assert_eq!(a, b,);", "assert_eq!(a, b);"),
+            ("std::println!(\"{}\", x,);", "std::println!(\"{}\", x);"),
+            (
+                "assert!(matches!(x, Some(1),));",
+                "assert!(matches!(x, Some(1)));",
+            ),
+            (
+                "#[cfg(any(unix, windows,))]\nfn f() {}",
+                "#[cfg(any(unix, windows))]\nfn f() {}",
+            ),
+            ("let a = [1, 2,];", "let a = [1, 2];"),
+            ("let a = ![true, false,];", "let a = ![true, false];"),
+        ] {
+            assert_eq!(
+                canonicalize(with).text,
+                canonicalize(without).text,
+                "{with}"
+            );
+        }
     }
 
     #[test]
