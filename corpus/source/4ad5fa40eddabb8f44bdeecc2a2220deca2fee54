@@ -1,0 +1,6 @@
+struct S;
+impl
+ S  {  /// fn main() {}
+    crate/// ```
+  typeignore32;
+}

@@ -1,0 +1,2 @@
+#[doc =  include_|||||||rs|t!(m".gd")]
+pub fn f() {}

@@ -1,0 +1,6 @@
+///~~~ ```
+/// fn main() }
+/// ```
+trait T {
+ ude_str!("doc.md")n m(&self);
+}

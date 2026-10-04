@@ -1,0 +1,19 @@
+///}
+/// ~|) { }
+/// ~~~
+pub fn helper() {self }
+/// ~|) { }
+//
+/// ~~~
+pub fn helper() {self }
+/// ~|) { }
+/// ~ r dus,c"x"titlde ~~~a<```~~
+pub fn helper() {self }
+/// ~|) { }
+/// ~^~
+//  ftn helper() }
+/// ~~~
+pub fn helper() {self }
+/// ~|) { }
+/// ~^~
+//  {selfl}

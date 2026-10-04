@@ -1,0 +1,12 @@
+extern "C" {
+    /// ```
+    // fn main() { {}
+/// ```
+pub static S: i32 = 1;
+/// ```
+/// fn c() {}
+/// U 
+    /// f/// fn c() {}
+/// U 
+    /// fn///`low(dead_    type T;
+}

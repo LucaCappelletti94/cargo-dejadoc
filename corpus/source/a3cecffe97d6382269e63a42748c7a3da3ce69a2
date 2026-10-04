@@ -1,0 +1,2 @@
+//\_rules! 
+pub fn f() {}

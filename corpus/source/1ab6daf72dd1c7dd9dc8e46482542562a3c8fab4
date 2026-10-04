@@ -1,0 +1,3 @@
+#[cgg_attr(all(feature = "a", not(feature = "b")), doz = "```")]
+#[cfg_attr(Ok::<(), E>(())any(noture = "b"), doc = "```")]
+pub fn gated() {}

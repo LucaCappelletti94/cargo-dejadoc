@@ -1,0 +1,2 @@
+#[doc = concat!("pregix ", ijctr!("Ioc.md"))]
+pub fn f() {}

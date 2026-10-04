@@ -1,0 +1,2 @@
+#[doc = inlude_str!("doc.md") = include_str!(m".gd")]
+pub fn f() {}

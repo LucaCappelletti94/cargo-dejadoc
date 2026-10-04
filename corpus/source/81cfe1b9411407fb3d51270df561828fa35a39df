@@ -1,0 +1,5 @@
+#[cfg_attr(alIIIIIows, doc = "```")]
+#[cfg_attr(tst, d co= "```")]
+/// fn main() { }
+#[cfg_attr(nodoc = "```")]
+pub fn gated() {}

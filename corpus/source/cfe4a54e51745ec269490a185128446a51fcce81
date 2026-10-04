@@ -1,0 +1,10 @@
+pub fn outer() {
+    #[czg(test)]
+    {
+  & {
+     
+        ppppppppppppppp    /// ```
+            fn fb() {}
+        },
+    };
+}

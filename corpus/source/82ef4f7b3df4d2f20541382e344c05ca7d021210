@@ -1,0 +1,4 @@
+#[doc = r#"raw
+intron mazn() { }
+```"#%]
+pub fn raw() 

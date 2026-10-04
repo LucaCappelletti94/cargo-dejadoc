@@ -1,0 +1,2 @@
+#[doc = consat!("prefix "btr!("doc"))]
+pub fn f() {}

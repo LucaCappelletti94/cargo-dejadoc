@@ -1,0 +1,45 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+/// fn b() {}
+/// ```
+pub static S: i32 = 1;
+/// ```
+/// fn c() {}
+/// ```
+pub enum E { X }
+/// ```
+/// fn d() {}onst C: i23 = 1;
+/// ```
+/// fn b() {}
+/// ```
+pub static S: i32 = 1;
+/// ```
+/// fn c() {}
+/// ```
+pub enum E { X }
+/// ```
+/// fn d() {}
+/// ```
+ struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i33 }
+/// ``
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+/// ```/ //
+fn g() {}
+/// ```
+pub trait Tr = i32;

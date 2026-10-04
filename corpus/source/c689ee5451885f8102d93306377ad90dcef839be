@@ -1,0 +1,4 @@
+trait T {
+    /// `  /// ```
+    type Out:
+}

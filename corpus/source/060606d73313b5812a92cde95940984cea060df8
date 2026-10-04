@@ -1,0 +1,10 @@
+///[e!(f, "{}", 
+///"!   let x = 1;
+/// $ 
+///    t 
+///     let x ="x  form, 
+/// !   let x = 1;
+/// $ 
+///    t 
+///     let x }")x"[CDATA[o
+pub fn f() {}

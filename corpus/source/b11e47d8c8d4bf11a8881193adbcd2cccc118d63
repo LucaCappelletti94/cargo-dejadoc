@@ -1,0 +1,16 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```2e```
+    pub fn b() {}
+}
+/// ```
+/// let, feat
+pub struct S {
+    /// `/// ```no_run[cfg(test)]
+    pub e: u8,
+}

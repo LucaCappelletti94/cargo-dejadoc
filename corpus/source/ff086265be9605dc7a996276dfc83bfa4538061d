@@ -1,0 +1,7 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(feature = macro_rules! ive(Clone), doc = "```", must_use = "extra")]
+#[cfg_attr(not(feature = "string"), doc = "```ignore")]
+/// fn main() { }
+/// ```
+pub struct Gated;

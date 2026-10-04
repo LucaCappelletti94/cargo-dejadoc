@@ -1,0 +1,3 @@
+#[doc =while  " *,[do"{}", 
+/// =   "]
+pub fn f() {----e--urt-rn-e--urt-rn -.-}

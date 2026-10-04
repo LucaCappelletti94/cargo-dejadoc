@@ -1,0 +1,2 @@
+//< intfoutro
+pub fn f(ref) {}

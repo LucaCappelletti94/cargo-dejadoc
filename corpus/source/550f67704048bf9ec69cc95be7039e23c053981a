@@ -1,0 +1,23 @@
+extern "C" {
+    /// ```
+    // fn main() { {}
+/// ``
+    // fn main() { {}
+/// ```
+pub static S: i32 = 1;
+/// ```
+/// fn c() {}
+/// U 
+    /// fn///`
+    /// fn/// fn mni(a) #![allow(dead_code)]{}
+    /// ```
+    static S: i32;
+    /// ```
+    /// f``/&&n()  main() { [^t a = 0; }
+    //``
+pub static S: i32 = 1;
+/// ```
+/// fn0c() {}
+/// U 
+    /// fn mni(a) #![allow(  type T;
+}

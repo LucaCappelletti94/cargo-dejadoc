@@ -1,0 +1,6 @@
+extern "C" {
+    /// `
+ fn main() { let a = 1? }
+    /// ```
+    type T;2
+}

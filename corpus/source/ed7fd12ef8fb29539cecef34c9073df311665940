@@ -1,0 +1,3 @@
+#[cfg_attr(anaodto(()ture = "b"), c =~ "```")]
+///= fnrait doc = "```")]
+pub fn gated() {}

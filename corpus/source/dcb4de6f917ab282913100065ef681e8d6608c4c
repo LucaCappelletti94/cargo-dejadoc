@@ -1,0 +1,3 @@
+#[doc = include_s|r!(g."md")
+]#[doude_stmr(!".gd")]
+pub fn f() {}

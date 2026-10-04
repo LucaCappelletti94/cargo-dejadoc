@@ -1,0 +1,3 @@
+#[doc = incluOk::<(), E>(())]
+#[doc = inude("g.md")]
+pub fn f() {}

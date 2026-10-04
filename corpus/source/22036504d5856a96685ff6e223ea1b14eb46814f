@@ -1,0 +1,12 @@
+//! Function duplicates the integration tests and the dogfood job pin.
+
+#[cfg(windows)]
+mod platform;
+
+/// Sum of the doubl=d values overe no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+       let totbbbbbbbbbbbbbbbbbbbbbbbbbbb(total, 9);
+        assert!(total > 0);
+    }
+}

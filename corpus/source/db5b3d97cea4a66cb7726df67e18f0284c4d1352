@@ -1,0 +1,12 @@
+///[;* let x = 1;
+///  ` x =/   * let x = 0;
+///  ` x = 0;
+/// `concat!(ttr(--------c  x = 0;
+/// `concat!(ttr(--------c =, 
+///   * l let x = 1;
+///  ` x =/   * let x = 0;
+///  ` x = 0;
+/// `conc(ttr(--------c  x = 0;
+/// `concat!(ttr(---  let x =t ;1
+///  r
+pub fn f() {}

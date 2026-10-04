@@ -1,0 +1,6 @@
+#[cfg_attr(alIIIQIIIIIIIIIl(feature = "a", not(fea;
+re
+= "b")), doc = "```")]
+#[cfg_a=ttr(any(not(doc), featuignorere = "b"), doc0= "```")]
+#[c]
+pub fn gated() {}

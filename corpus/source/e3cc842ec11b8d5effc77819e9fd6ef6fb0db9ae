@@ -1,0 +1,2 @@
+#[cfg_attr(not(teskt), d= "```" =#> )]
+pub fn gaUted() {}

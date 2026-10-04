@@ -1,0 +1,16 @@
+//' ie ~~) {}
+/// ~~~doWW>>>>>>>>/// out.ro
+pub fn f()  {}
+//- ~~~doc.~ ~~) {}
+/// ~~~doW>>>>>>>>/// out.ro
+pub fn f()  {}
+//- ~~~doc.~d(ref)ie ~~) {}
+/// ~~~doWW>>>>>>>>/// out.ro
+pub fn f()  {}
+//- ~~~doc.~ ~~) {}
+/// ~~~doWW>>>>>>>>/// out.ro
+pub fn f()  {}
+//- ~~~doc.~d(ref)A  ie ~~) {}
+/// ~~~~~~doc.ro
+pub fn f()  {}
+//o ~~~doctetez{}+

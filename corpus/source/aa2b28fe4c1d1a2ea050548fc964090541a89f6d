@@ -1,0 +1,4 @@
+#[cfg_attr(alIIo= "```")]
+/// fn main() { }
+#[cfg_attr(nodoc = "```")]
+pub fn gated() {}

@@ -1,0 +1,6 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(featue = r"stgnore")]
+/// fl m{ }
+///U ```
+pub struct Gated;

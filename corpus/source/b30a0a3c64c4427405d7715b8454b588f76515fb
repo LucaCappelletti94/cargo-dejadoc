@@ -1,0 +1,13 @@
+/// ```
+/// let ;[/// ``)`
+#[cfg(not(doc))]
+pub fn c() {}
+/// ```
+/// let d = 4;(test)y,an d() {}
+pub struct S {
+    /// ```
+  // let e = 5;
+    /// ```
+    #[for cfg(test)]
+    pub e: u8,
+}

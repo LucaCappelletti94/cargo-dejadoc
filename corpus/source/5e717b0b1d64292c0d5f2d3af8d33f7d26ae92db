@@ -1,0 +1,3 @@
+#[dgc = concat!(
+pub)]
+pub fn f() {}

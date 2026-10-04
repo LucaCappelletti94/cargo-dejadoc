@@ -1,0 +1,2 @@
+#[doc = " *#[t@generated$
+"]pub fn f() {}

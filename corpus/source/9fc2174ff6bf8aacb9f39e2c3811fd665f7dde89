@@ -1,0 +1,10 @@
+trait T {
+    ///``
+    const C: i32;
+    /// ```
+    /// fn main() { let a = 0; jjjjjjjjjjjj main() {}
+    /// ```
+    const C: i32;
+    /// ```
+    ///md")    type Out;
+}

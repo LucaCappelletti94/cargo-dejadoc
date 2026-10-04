@@ -1,0 +1,13 @@
+extern "C" {
+    //`
+    pub fn main() {}
+    /// ` i32;
+    /// ```  /// ```
+    ///format!("{x:?}")
+    /// ```
+    type T;
+
+    ///format!("{x:?}")
+    /// ```
+    type T;
+}

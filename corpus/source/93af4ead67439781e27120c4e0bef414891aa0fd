@@ -1,0 +1,21 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ``` ```
+ /// ``(`
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+  #[cfg_attr(alIshould_panicI(leature = "a", nfn helPer() {self }
+/oT(feature = "b")),(,e[at#sllow(unused)]), dmc = "```")]
+dynpub fn gated()       1 => {
+            /// ```
+  { }      /// ``` 
+      for  fn fb() {}
+        
+},
+    };
+}

@@ -1,0 +1,6 @@
+struct S;
+impl<'a> IntoIterator for &'a mut S {
+    ///impl  ```/   //
+  fn main() {}
+    /// ```
+    fn}

@@ -1,0 +1,5 @@
+trait T {
+   ::{/r ud1; }
+    /// ```
+    type Out;;
+}
