@@ -56,12 +56,33 @@ const COMMA_BLIND_ATTRIBUTES: [&str; 10] = [
 /// attribute that may match on it, and respell literals outside `opaque` macro and attribute tokens.
 fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
     let mut out: Vec<TokenTree> = Vec::new();
+    // A proc macro derive was seen, then the `struct`, `enum` or `union` whose body it reads.
+    let (mut derived, mut derived_item) = (false, false);
     for tree in stream {
         let tree = match tree {
+            TokenTree::Ident(ident) => {
+                derived_item |= derived && ["struct", "enum", "union"].iter().any(|kw| ident == kw);
+                TokenTree::Ident(ident)
+            }
+            TokenTree::Punct(punct) => {
+                if punct.as_char() == ';' {
+                    (derived, derived_item) = (false, false);
+                }
+                TokenTree::Punct(punct)
+            }
             TokenTree::Group(group) => {
                 let shut = opaque
                     || matches!(out.last(), Some(TokenTree::Punct(p)) if matches!(p.as_char(), '!' | '#'));
-                let keep = keep_commas || reads_commas(&out, &group);
+                derived |= macro_derive_attribute(&group);
+                let body = derived_item
+                    && matches!(
+                        group.delimiter(),
+                        proc_macro2::Delimiter::Brace | proc_macro2::Delimiter::Parenthesis
+                    );
+                if body {
+                    (derived, derived_item) = (false, false);
+                }
+                let keep = keep_commas || body || reads_commas(&out, &group);
                 drift::map_group(&group, |inner| {
                     let mut inner = fold_tokens(inner, shut, keep);
                     // A one-tuple keeps its comma, the paren fold already told it apart.
@@ -74,11 +95,26 @@ fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<Toke
                 })
             }
             TokenTree::Literal(lit) if !opaque => drift::canonical_literal(lit),
-            other => other,
+            TokenTree::Literal(lit) => TokenTree::Literal(lit),
         };
         out.push(tree);
     }
     out
+}
+
+/// Whether `group` is a `[derive(…)]` naming a proc macro. Only an attribute puts one right
+/// before an item keyword, so the `#` ahead of it needs no check.
+fn macro_derive_attribute(group: &proc_macro2::Group) -> bool {
+    let mut inner = group.stream().into_iter();
+    match (inner.next(), inner.next()) {
+        (Some(TokenTree::Ident(name)), Some(TokenTree::Group(list))) if name == "derive" => {
+            list.stream().into_iter().any(|tree| {
+                matches!(tree, TokenTree::Ident(name)
+                    if !drift::STD_DERIVES.iter().any(|std| name == std))
+            })
+        }
+        _ => false,
+    }
 }
 
 /// Whether `group`, following the tokens in `before`, holds the input of a macro call or an
@@ -487,6 +523,14 @@ mod tests {
             ),
             ("let a = [1, 2,];", "let a = [1, 2];"),
             ("let a = ![true, false,];", "let a = ![true, false];"),
+            (
+                "#[repr(C)]\nstruct S {\n    x: u8,\n}",
+                "#[repr(C)]\nstruct S {\n    x: u8\n}",
+            ),
+            (
+                "#[derive(serde::Serialize)]\nstruct U;\nfn f(a: u8,) {}",
+                "#[derive(serde::Serialize)]\nstruct U;\nfn f(a: u8) {}",
+            ),
         ] {
             assert_eq!(
                 canonicalize(with).text,
@@ -494,6 +538,48 @@ mod tests {
                 "{with}"
             );
         }
+    }
+
+    #[test]
+    fn the_input_of_a_proc_macro_derive_keeps_its_docs_lints_and_commas() {
+        // clap reads field docs as help text, num_enum tests a derive that ignores extra attributes.
+        for (one, two) in [
+            (
+                "#[derive(clap::Parser)]\nstruct A {\n    /// Help.\n    x: u8,\n}",
+                "#[derive(clap::Parser)]\nstruct A {\n    x: u8,\n}",
+            ),
+            (
+                "#[derive(TryFromPrimitive)]\nenum E {\n    Zero,\n    #[allow(unused)]\n    One,\n}",
+                "#[derive(TryFromPrimitive)]\nenum E {\n    Zero,\n    One,\n}",
+            ),
+            (
+                "#[derive(serde::Serialize)]\nstruct P {\n    x: u8,\n}",
+                "#[derive(serde::Serialize)]\nstruct P {\n    x: u8\n}",
+            ),
+            (
+                "/// About.\n#[derive(Clone, clap::Parser)]\nstruct A(u8);",
+                "#[derive(Clone, clap::Parser)]\nstruct A(u8);",
+            ),
+            (
+                "#[derive(serde::Serialize)]\npub(crate) struct P {\n    x: u8,\n}",
+                "#[derive(serde::Serialize)]\npub(crate) struct P {\n    x: u8\n}",
+            ),
+            (
+                "#[derive(serde::Serialize)]\nstruct P<T> {\n    x: T,\n}",
+                "#[derive(serde::Serialize)]\nstruct P<T> {\n    x: T\n}",
+            ),
+        ] {
+            assert_ne!(canonicalize(one).text, canonicalize(two).text, "{one}");
+        }
+    }
+
+    #[test]
+    fn the_input_of_std_derives_keeps_every_fold() {
+        let a = canonicalize(
+            "#[derive(Clone, Debug)]\nstruct P {\n    /// Doc.\n    #[allow(dead_code)]\n    x: u8,\n}",
+        );
+        let b = canonicalize("#[derive(Debug, Clone)]\nstruct P {\n    x: u8\n}");
+        assert_eq!(a.text, b.text);
     }
 
     #[test]
