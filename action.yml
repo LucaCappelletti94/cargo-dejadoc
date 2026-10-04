@@ -20,7 +20,7 @@ inputs:
     required: false
     default: 'true'
   fn-min-tokens:
-    description: Skip functions with fewer tokens than this
+    description: Skip functions whose body counts fewer tokens than this, a path or an operator counting as one
     required: false
     default: ''
   all-targets:

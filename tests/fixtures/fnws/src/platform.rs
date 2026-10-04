@@ -9,7 +9,8 @@ pub fn width(values: &[u32], limit: u32) -> u32 {
             total -= 1;
         }
     }
-    total
+    let doubled = total + limit;
+    doubled
 }
 
 pub fn height(values: &[u32], limit: u32) -> u32 {
@@ -21,5 +22,6 @@ pub fn height(values: &[u32], limit: u32) -> u32 {
             total -= 1;
         }
     }
-    total
+    let doubled = total + limit;
+    doubled
 }

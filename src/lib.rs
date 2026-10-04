@@ -81,7 +81,8 @@ impl Dejadoc {
         self
     }
 
-    /// Ignore functions with fewer canonical tokens than this.
+    /// Ignore functions whose body counts fewer tokens than this, a path, an operator or a
+    /// lifetime counting as one and a comma as none.
     #[must_use]
     pub fn fn_min_tokens(mut self, n: usize) -> Self {
         self.fn_min_tokens = Some(n);
@@ -295,7 +296,7 @@ const DEFAULT_THRESHOLD: usize = 2;
 /// Token floor when no `min-tokens` is set.
 const DEFAULT_MIN_TOKENS: usize = 0;
 
-/// Token floor for functions when no `fn-min-tokens` is set.
+/// Body-token floor for functions when no `fn-min-tokens` is set.
 const DEFAULT_FN_MIN_TOKENS: usize = 30;
 
 /// The module path of `file` in `target`.
@@ -423,7 +424,8 @@ pub struct Group {
     /// True when the canonical form came from the text fallback, for a body
     /// that does not parse or exceeds the nesting or token cap.
     pub unparsed: bool,
-    /// Token count of the canonical form.
+    /// Token count of the canonical form, of the body alone for a function, a path, an
+    /// operator or a lifetime counting as one and a comma as none.
     pub tokens: usize,
     /// All sites, the one to keep first. Sites whose code names their own
     /// item come first, file and line order breaks ties.
@@ -573,7 +575,7 @@ fn group_functions(
                 items: alloc::vec![syn::Item::Fn(f.func)],
             };
             let canonical = syn_canon::canonicalize(file);
-            let tokens = normalize::count_tokens(canonical.clone());
+            let tokens = normalize::body_tokens(canonical.clone());
             let keyed = format!("{}\n{canonical}", f.scope);
             let hash = blake3::hash(keyed.as_bytes()).to_hex().to_string();
             (hash, false, tokens, (f.site, f.context))
@@ -820,8 +822,8 @@ mod tests {
         }
     }
 
-    /// A function body of 30 or more canonical tokens.
-    const BODY: &str = "(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += value * 2; } else { total -= 1; } } total }";
+    /// A function whose body counts 33 tokens, above the default floor.
+    const BODY: &str = "(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += value * 2; } else { total -= 1; } } let doubled = total + limit; doubled }";
 
     /// The function groups of a one-file scan of `src`, as item lists.
     fn fn_groups(scan: Dejadoc, src: &str) -> Vec<Vec<String>> {
@@ -984,13 +986,13 @@ mod tests {
             fn_groups(Dejadoc::default(), &src),
             [["c::A::pick_files", "c::A::pick_folders"]]
         );
-        let methods = "struct A;\nimpl A {\nfn one(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } total }\nfn two(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } total }\n}\n";
+        let methods = "struct A;\nimpl A {\nfn one(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\nfn two(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\n}\n";
         assert_eq!(
             fn_groups(Dejadoc::default(), methods),
             Vec::<Vec<String>>::new()
         );
         // A free function's name is in scope, so recursion still renames with it.
-        let free = "fn one(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } total }\nfn two(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } total }\n";
+        let free = "fn one(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\nfn two(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\n";
         assert_eq!(fn_groups(Dejadoc::default(), free), [["c::one", "c::two"]]);
     }
 
@@ -1231,6 +1233,18 @@ mod tests {
                 "{src}"
             );
         }
+    }
+
+    #[test]
+    fn the_function_floor_counts_the_body_not_the_signature() {
+        // diesel's `&'a str::from_sql` pair: 30 tokens as whole functions, 6 in the body.
+        let src = "struct S;\ntrait A {}\ntrait B {}\nimpl A for S {\nfn from_sql(value: &mut PgValue<'_>) -> deserialize::Result<Self> { Ok(core::str::from_utf8(value.as_bytes())?) }\n}\nimpl B for S {\nfn from_sql(value: &mut PgValue<'_>) -> deserialize::Result<Self> { Ok(core::str::from_utf8(value.as_bytes())?) }\n}\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default(), src),
+            Vec::<Vec<String>>::new()
+        );
+        assert_eq!(fn_groups(Dejadoc::default().fn_min_tokens(6), src).len(), 1);
+        assert_eq!(fn_groups(Dejadoc::default().fn_min_tokens(7), src).len(), 0);
     }
 
     #[test]

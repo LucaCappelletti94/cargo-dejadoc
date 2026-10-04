@@ -35,7 +35,7 @@ struct Args {
     /// Skip the duplicate function check.
     #[arg(long)]
     no_functions: bool,
-    /// Skip functions with fewer tokens than this (default 30).
+    /// Skip functions whose body counts fewer tokens than this, a path or an operator counting as one (default 30).
     #[arg(long, value_name = "N")]
     fn_min_tokens: Option<usize>,
     /// Explicit `.dejadoc.toml` location.
