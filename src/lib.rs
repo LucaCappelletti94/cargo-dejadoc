@@ -39,7 +39,7 @@ pub struct Dejadoc {
     all_targets: bool,
     threshold: Option<usize>,
     min_tokens: Option<usize>,
-    no_functions: bool,
+    functions: bool,
     fn_min_tokens: Option<usize>,
     scan_generated: bool,
     generated_markers: Vec<String>,
@@ -74,10 +74,10 @@ impl Dejadoc {
         self
     }
 
-    /// Skip the duplicate function check.
+    /// Run the duplicate function check, off by default.
     #[must_use]
-    pub fn no_functions(mut self) -> Self {
-        self.no_functions = true;
+    pub fn functions(mut self) -> Self {
+        self.functions = true;
         self
     }
 
@@ -119,7 +119,7 @@ impl Dejadoc {
         Self {
             threshold: self.threshold.or(file.threshold),
             min_tokens: self.min_tokens.or(file.min_tokens),
-            no_functions: self.no_functions || file.functions == Some(false),
+            functions: self.functions || file.functions == Some(true),
             fn_min_tokens: self.fn_min_tokens.or(file.fn_min_tokens),
             scan_generated: self.scan_generated || file.scan_generated == Some(true),
             generated_markers: self
@@ -216,7 +216,7 @@ impl Dejadoc {
             threshold,
             self.min_tokens.unwrap_or(DEFAULT_MIN_TOKENS),
         );
-        if !self.no_functions {
+        if self.functions {
             // Targets sharing a root file are one crate, walked once.
             let mut roots = BTreeSet::new();
             let crates = targets
@@ -764,16 +764,31 @@ mod tests {
 
     #[test]
     #[cfg(feature = "std")]
-    fn config_turns_the_function_check_off_or_lowers_its_floor() {
+    fn config_turns_the_function_check_on_or_lowers_its_floor() {
         let dir = tempfile::tempdir().unwrap();
         let src = "fn one() -> u8 { 1 + 2 }\nfn two() -> u8 { 1 + 2 }\n";
         let scan_with = |toml: &str| {
             let file = dir.path().join("config.toml");
             std::fs::write(&file, toml).unwrap();
-            fn_groups(Dejadoc::default().config(&file).unwrap(), src).len()
+            let target = target_from("c", "src/lib.rs", &[], src);
+            let scan = Dejadoc::default().config(&file).unwrap();
+            scan.run_targets("", &[target], &|_f, _i| None).groups.len()
         };
-        assert_eq!(scan_with("fn-min-tokens = 0\n"), 1);
+        assert_eq!(scan_with("fn-min-tokens = 0\n"), 0);
         assert_eq!(scan_with("fn-min-tokens = 0\nfunctions = false\n"), 0);
+        assert_eq!(scan_with("fn-min-tokens = 0\nfunctions = true\n"), 1);
+    }
+
+    #[test]
+    fn the_function_check_runs_only_when_enabled() {
+        let src = format!("fn one{BODY}\nfn two{BODY}\n");
+        let scan = |scan: Dejadoc| {
+            let target = target_from("c", "src/lib.rs", &[], &src);
+            let report = scan.run_targets("", &[target], &|_f, _i| None);
+            (report.functions, report.groups.len())
+        };
+        assert_eq!(scan(Dejadoc::default()), (0, 0));
+        assert_eq!(scan(Dejadoc::default().functions()), (2, 1));
     }
 
     #[test]
@@ -850,9 +865,9 @@ mod tests {
     /// A function whose body counts 33 tokens, above the default floor.
     const BODY: &str = "(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += value * 2; } else { total -= 1; } } let doubled = total + limit; doubled }";
 
-    /// The function groups of a one-file scan of `src`, as item lists.
+    /// The function groups of a one-file scan of `src` with the function check on, as item lists.
     fn fn_groups(scan: Dejadoc, src: &str) -> Vec<Vec<String>> {
-        let report = scan.run_targets(
+        let report = scan.functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], src)],
             &|_f, _i| None,
@@ -870,7 +885,9 @@ mod tests {
         let public = |src: &str, library: bool| -> Vec<bool> {
             let mut target = target_from("c", "src/lib.rs", &[], src);
             target.library = library;
-            let report = Dejadoc::default().run_targets("", &[target], &|_f, _i| None);
+            let report = Dejadoc::default()
+                .functions()
+                .run_targets("", &[target], &|_f, _i| None);
             report.groups[0].sites.iter().map(|s| s.public).collect()
         };
         let free = format!("fn one{BODY}\npub fn two{BODY}\npub(crate) fn three{BODY}\n");
@@ -927,6 +944,7 @@ mod tests {
         let hash = |root: &str| {
             let target = target_from("c", &format!("{root}/src/lib.rs"), &[], &src);
             Dejadoc::default()
+                .functions()
                 .run_targets(root, &[target], &|_f, _i| None)
                 .groups[0]
                 .hash
@@ -943,7 +961,7 @@ mod tests {
             ("dyn Shape", "dyn Area"),
         ] {
             let src = format!("impl {one} {{ fn run{BODY} }}\nimpl {two} {{ fn run{BODY} }}\n");
-            let report = Dejadoc::default().run_targets(
+            let report = Dejadoc::default().functions().run_targets(
                 "",
                 &[target_from("c", "src/lib.rs", &[], &src)],
                 &|_f, _i| None,
@@ -969,7 +987,9 @@ mod tests {
         );
         let scan = |header: &str, dejadoc: Dejadoc| {
             let target = target_from("c", "src/lib.rs", &[], &format!("{header}{body}"));
-            let report = dejadoc.run_targets("", &[target], &|_f, _i| None);
+            let report = dejadoc
+                .functions()
+                .run_targets("", &[target], &|_f, _i| None);
             (report.total, report.functions, report.groups.len())
         };
         for header in [
@@ -1029,7 +1049,9 @@ mod tests {
             target_from("containers", "tests/containers.rs", &[], &src),
             target_from("containers", "tests/containers.rs", &[], &src),
         ];
-        let report = Dejadoc::default().run_targets("", &targets, &|_f, _i| None);
+        let report = Dejadoc::default()
+            .functions()
+            .run_targets("", &targets, &|_f, _i| None);
         let items: Vec<Vec<&str>> = report
             .groups
             .iter()
@@ -1047,7 +1069,9 @@ mod tests {
             target_from("show_posts", "mysql/src/bin/show_posts.rs", &[], &src),
             target_from("show_posts", "pg/src/bin/show_posts.rs", &[], &src),
         ];
-        let report = Dejadoc::default().run_targets("", &targets, &|_f, _i| None);
+        let report = Dejadoc::default()
+            .functions()
+            .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(report.groups, Vec::new());
         assert_eq!(report.unique_functions, 2);
     }
@@ -1071,7 +1095,7 @@ mod tests {
         let src = format!(
             "struct A;\nfn run{BODY}\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n"
         );
-        let report = Dejadoc::default().run_targets(
+        let report = Dejadoc::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &src)],
             &|_f, _i| None,
@@ -1081,7 +1105,7 @@ mod tests {
         assert_eq!(types, [None, Some("A"), Some("A")]);
         assert_eq!(group.remedy, Some(Remedy::GenericOrMacro));
         let same = format!("struct A;\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n");
-        let report = Dejadoc::default().run_targets(
+        let report = Dejadoc::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &same)],
             &|_f, _i| None,
@@ -1091,7 +1115,7 @@ mod tests {
 
     /// The remedy of the one function group of `src`.
     fn remedy_of(src: &str) -> Option<Remedy> {
-        let report = Dejadoc::default().run_targets(
+        let report = Dejadoc::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], src)],
             &|_f, _i| None,
@@ -1218,7 +1242,7 @@ mod tests {
         let src = format!(
             "struct A;\nstruct B;\nimpl A {{ fn run{BODY} }}\nimpl B {{ fn run{BODY} }}\ntrait T {{ fn go{BODY} }}\n"
         );
-        let report = Dejadoc::default().run_targets(
+        let report = Dejadoc::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &src)],
             &|_f, _i| None,
@@ -1288,10 +1312,6 @@ mod tests {
             fn_groups(Dejadoc::default().fn_min_tokens(1000), &src),
             Vec::<Vec<String>>::new()
         );
-        assert_eq!(
-            fn_groups(Dejadoc::default().no_functions(), &src),
-            Vec::<Vec<String>>::new()
-        );
     }
 
     #[test]
@@ -1317,7 +1337,7 @@ mod tests {
     #[test]
     fn a_function_site_spans_its_attributes_and_counts_apart() {
         let src = format!("/// One.\n#[inline]\nfn one{BODY}\n\nfn two{BODY}\n");
-        let report = Dejadoc::default().run_targets(
+        let report = Dejadoc::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &src)],
             &|_f, _i| None,
@@ -1339,7 +1359,9 @@ mod tests {
             &format!("/// ```\n/// let x = 1;\n/// ```\nfn one{BODY}\nfn two{BODY}\n"),
         );
         target.files[0].rustdoc = false;
-        let report = Dejadoc::default().run_targets("", &[target], &|_f, _i| None);
+        let report = Dejadoc::default()
+            .functions()
+            .run_targets("", &[target], &|_f, _i| None);
         assert_eq!(report.total, 0);
         assert_eq!(report.groups.len(), 1);
     }

@@ -170,6 +170,7 @@ jobs:
           cwd: tests/fixtures/fnws
           install: false
           dry-run: true
+          functions: true
           annotations: false
       - name: Check the function findings
         run: |
