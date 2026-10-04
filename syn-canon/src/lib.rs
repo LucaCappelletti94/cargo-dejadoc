@@ -2824,4 +2824,58 @@ mod tests {
             failing("fn g(y: u8) -> u8 { y }")
         );
     }
+
+    #[test]
+    fn an_associated_item_after_a_bare_qself_is_never_a_local() {
+        assert_split(&[
+            (
+                "let new = 1; let s = <S>::new(); f(s, new);",
+                "let default = 1; let s = <S>::default(); f(s, default);",
+            ),
+            (
+                "let len = 2; f(<&str>::len(\"abc\") + len);",
+                "let n = 2; f(<&str>::n(\"abc\") + n);",
+            ),
+            (
+                "let x = 1; let s = <S>::x { a: x };",
+                "let y = 1; let s = <S>::y { a: y };",
+            ),
+            (
+                "let a = 1; let <S>::a(v) = g(a);",
+                "let b = 1; let <S>::b(v) = g(b);",
+            ),
+            (
+                "let a = 1; let <S>::a { v } = g(a);",
+                "let b = 1; let <S>::b { v } = g(b);",
+            ),
+            (
+                "let a = 1; let v: <<S>::a>::Out = g(a);",
+                "let b = 1; let v: <<S>::b>::Out = g(b);",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn a_bare_qself_path_keeps_its_separator() {
+        for code in [
+            "let n = <&str>::len(\"abc\");",
+            "let v = <Vec<u8>>::new();",
+            "let v: <<S>::A>::B = g();",
+            "let <S>::A(v) = g();",
+        ] {
+            let text = canonicalize(code).text;
+            assert!(
+                syn::parse_str::<syn::File>(&text).is_ok(),
+                "{code} → {text}"
+            );
+        }
+    }
+
+    #[test]
+    fn binders_around_a_bare_qself_path_still_rename() {
+        assert_merge(&[(
+            "let alpha = 1; let s = <S>::new(alpha); f(<S as T>::g(alpha));",
+            "let beta = 1; let s = <S>::new(beta); f(<S as T>::g(beta));",
+        )]);
+    }
 }

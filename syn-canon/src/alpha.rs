@@ -78,6 +78,8 @@ struct Renamer {
     mod_frames: BTreeMap<String, Frame>,
     self_ty: Option<syn::Type>,
     in_type: bool,
+    /// A bare `<T>` was just visited, so the next path names associated items of `T`.
+    after_bare_qself: bool,
 }
 
 impl Renamer {
@@ -88,6 +90,7 @@ impl Renamer {
             mod_frames: BTreeMap::new(),
             self_ty: None,
             in_type: false,
+            after_bare_qself: false,
         }
     }
 
@@ -185,6 +188,37 @@ impl Renamer {
     fn unroot(&self, leading_colon: &mut Option<syn::Token![::]>, first: Option<&Ident>) {
         if first.is_some_and(|first| self.lookup(&[Ns::Type], &first.to_string()).is_none()) {
             *leading_colon = None;
+        }
+    }
+
+    /// Unroot `path` and rename the local binder its first segment names,
+    /// with the later segments a local module holds.
+    fn resolve_path(&self, path: &mut syn::Path) {
+        self.unroot(
+            &mut path.leading_colon,
+            path.segments.first().map(|s| &s.ident),
+        );
+        let ns: &[Ns] = if self.in_type {
+            &[Ns::Type]
+        } else {
+            &[Ns::Value, Ns::Type]
+        };
+        if path.leading_colon.is_none()
+            && let Some(first) = path.segments.first_mut()
+            && let Some(mut canon) = self.lookup(ns, &first.ident.to_string())
+        {
+            rename(&mut first.ident, &canon);
+            for segment in path.segments.iter_mut().skip(1) {
+                let Some(next) = self
+                    .mod_frames
+                    .get(&canon)
+                    .and_then(|frame| frame.lookup_any(ns, &segment.ident.to_string()))
+                else {
+                    break;
+                };
+                canon = next.clone();
+                rename(&mut segment.ident, &canon);
+            }
         }
     }
 
@@ -892,37 +926,21 @@ impl VisitMut for Renamer {
         syn::visit_mut::visit_expr_struct_mut(self, expr);
     }
 
+    fn visit_qself_mut(&mut self, qself: &mut syn::QSelf) {
+        // syn visits every qualified path's `<T>` right before its path.
+        syn::visit_mut::visit_qself_mut(self, qself);
+        self.after_bare_qself = qself.position == 0;
+    }
+
     fn visit_path_mut(&mut self, path: &mut syn::Path) {
         // Only the first segment may name a local binder, and a leading
         // colon always names an extern crate. Each later segment resolves
         // through the saved frame of the local module before it. A type
         // position reads the type namespace only, rustc-valid programs
-        // bind every name they show there in it.
-        self.unroot(
-            &mut path.leading_colon,
-            path.segments.first().map(|s| &s.ident),
-        );
-        let ns: &[Ns] = if self.in_type {
-            &[Ns::Type]
-        } else {
-            &[Ns::Value, Ns::Type]
-        };
-        if path.leading_colon.is_none()
-            && let Some(first) = path.segments.first_mut()
-            && let Some(mut canon) = self.lookup(ns, &first.ident.to_string())
-        {
-            rename(&mut first.ident, &canon);
-            for segment in path.segments.iter_mut().skip(1) {
-                let Some(next) = self
-                    .mod_frames
-                    .get(&canon)
-                    .and_then(|frame| frame.lookup_any(ns, &segment.ident.to_string()))
-                else {
-                    break;
-                };
-                canon = next.clone();
-                rename(&mut segment.ident, &canon);
-            }
+        // bind every name they show there in it. After a bare `<T>` the
+        // `::` is the separator and every segment an associated item.
+        if !core::mem::take(&mut self.after_bare_qself) {
+            self.resolve_path(path);
         }
         for segment in &mut path.segments {
             match &mut segment.arguments {
