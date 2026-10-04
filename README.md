@@ -8,11 +8,11 @@
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
-`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, and every function, reporting any duplicates. Use it in your GitHub CI!
+`cargo dejadoc` scans and canonicalizes every doctest your workspace's rustdoc would run, and on request every function, reporting any duplicates. Use it in your GitHub CI!
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
 
-The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function check off, point at a config file, and switch the output to JSON.
+The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function check on, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
 Generated files are skipped, a file being generated when one of its first five lines contains `@generated` or is a `// Code generated … DO NOT EDIT.` line. In `.dejadoc.toml`, `generated-markers = ["…"]` adds phrases of your own generators and `scan-generated = true` scans them anyway.
@@ -26,6 +26,8 @@ To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of i
 /// let parsed = mycrate::parse("1");
 /// ```
 ````
+
+The function check is off by default. `--functions`, `functions = true` in `.dejadoc.toml` or the action's `functions: true` turns it on.
 
 Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. A copy gets a suggestion to delete only when it is a free function or an inherent method under the same `cfg` as the copy kept, and is not already public API of a library, which is better made to call the kept copy or deprecated. Copies on different self types point to a generic or a macro, trait methods and exported symbols to a helper or a macro, and copies under different `cfg`s to one function under both. Functions whose body counts fewer than 30 tokens are skipped, the signature left out, a path like `core::str::from_utf8` or an operator like `=>` counting as one token and a comma as none. A `// dejadoc: allow` line above a function keeps it.
 
@@ -51,7 +53,7 @@ jobs:
           threshold: 2
           # Ignore doctests below this token count, default 0.
           min-tokens: 0
-          # Check for duplicated functions, default true.
+          # Check for duplicated functions too, default false.
           functions: true
           # Ignore functions whose body counts fewer tokens than this, default 30.
           fn-min-tokens: 30
@@ -125,11 +127,13 @@ The payload holds the pull request number, the head commit, and one rendered com
 
 </details>
 
-The library builds the same report in memory, so a project's own task runner can gate on it with `dejadoc = { version = "0.3", default-features = false, features = ["std"] }`, which leaves the CLI and its `clap` dependency out. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set.
+The library builds the same report in memory, so a project's own task runner can gate on it with `dejadoc = { version = "0.3", default-features = false, features = ["std"] }`, which leaves the CLI and its `clap` dependency out. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set. `functions()` adds the function check.
 
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 2);
+let report = dejadoc::Dejadoc::default().functions().run("tests/fixtures/fnws").unwrap();
+assert_eq!(report.groups.len(), 7);
 ```
 
 Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), installed with the [skills CLI](https://github.com/vercel-labs/skills).

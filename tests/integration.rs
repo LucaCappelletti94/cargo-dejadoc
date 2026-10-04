@@ -20,7 +20,7 @@ type FnGroup<'a> = (Vec<&'a str>, Vec<Option<&'a str>>, Option<Remedy>);
 
 #[test]
 fn functions_group_per_module_across_targets_and_cfgs() {
-    let report = Dejadoc::default().run(FN_FIXTURE).unwrap();
+    let report = Dejadoc::default().functions().run(FN_FIXTURE).unwrap();
     assert_eq!(
         (report.total, report.functions, report.unique_functions),
         (0, 17, 8)
@@ -121,7 +121,7 @@ fn functions_group_per_module_across_targets_and_cfgs() {
             (site.end.unwrap() - site.line + 1) as usize
         );
     }
-    let off = Dejadoc::default().no_functions().run(FN_FIXTURE).unwrap();
+    let off = Dejadoc::default().run(FN_FIXTURE).unwrap();
     assert_eq!((off.functions, off.groups.len()), (0, 0));
 }
 

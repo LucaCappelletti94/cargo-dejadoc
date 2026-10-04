@@ -80,6 +80,7 @@ pub fn functions(source: &str) -> Option<dejadoc::Report> {
     };
     Some(
         dejadoc::Dejadoc::default()
+            .functions()
             .fn_min_tokens(0)
             .run_targets("/r", &[target], &|_, _| None),
     )

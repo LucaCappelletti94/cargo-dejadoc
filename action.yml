@@ -16,9 +16,9 @@ inputs:
     required: false
     default: '0'
   functions:
-    description: Check for duplicated functions, false skips the check
+    description: Also check for duplicated functions
     required: false
-    default: 'true'
+    default: 'false'
   fn-min-tokens:
     description: Skip functions whose body counts fewer tokens than this, a path or an operator counting as one
     required: false
@@ -144,7 +144,7 @@ runs:
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
-        [ "$FUNCTIONS" != "true" ] && set -- --no-functions "$@"
+        [ "$FUNCTIONS" = "true" ] && set -- --functions "$@"
         [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
         if [ -n "$PR_NUMBER" ] || [ "$DRY_RUN" = "true" ]; then
           report="$RUNNER_TEMP/dejadoc-report.json"
@@ -236,7 +236,7 @@ runs:
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
-        [ "$FUNCTIONS" != "true" ] && set -- --no-functions "$@"
+        [ "$FUNCTIONS" = "true" ] && set -- --functions "$@"
         [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
         # Threshold 1 inventories every base site, a group the pull request
         # completes from a single existing copy must still be reported.

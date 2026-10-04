@@ -32,9 +32,9 @@ struct Args {
     /// Skip doctests with fewer tokens than this (default 0).
     #[arg(long, value_name = "N")]
     min_tokens: Option<usize>,
-    /// Skip the duplicate function check.
+    /// Also check for duplicated functions, off by default.
     #[arg(long)]
-    no_functions: bool,
+    functions: bool,
     /// Skip functions whose body counts fewer tokens than this, a path or an operator counting as one (default 30).
     #[arg(long, value_name = "N")]
     fn_min_tokens: Option<usize>,
@@ -80,8 +80,8 @@ fn run(args: &Args) -> dejadoc::Result<ExitCode> {
     if let Some(min_tokens) = args.min_tokens {
         scan = scan.min_tokens(min_tokens);
     }
-    if args.no_functions {
-        scan = scan.no_functions();
+    if args.functions {
+        scan = scan.functions();
     }
     if let Some(n) = args.fn_min_tokens {
         scan = scan.fn_min_tokens(n);
