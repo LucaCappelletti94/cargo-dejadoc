@@ -513,7 +513,11 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
     }
     let total = by_site.len();
     let entries = by_site.into_values().filter(|b| !b.allow).map(|block| {
-        let canonical = normalize::canonicalize(&block.code);
+        let canonical = if block.info.iter().any(|tag| tag == "compile_fail") {
+            normalize::canonicalize_failing(&block.code)
+        } else {
+            normalize::canonicalize(&block.code)
+        };
         let mut hashed = canonical.text.clone();
         for tag in checked_attributes(&block.info) {
             hashed.push('\n');
@@ -691,6 +695,27 @@ mod tests {
             pair(&["should_panic", "no_run"], &["no_run", "should_panic"]),
             1
         );
+    }
+
+    #[test]
+    fn a_compile_fail_doctest_keeps_the_mut_it_may_be_about() {
+        let pair = |info: &[&str]| {
+            let mut one = dt("a.rs", 1, "m::f", "let v = Vec::new();\nv.push(1);", false);
+            let mut two = dt(
+                "b.rs",
+                2,
+                "m::g",
+                "let mut v = Vec::new();\nv.push(1);",
+                false,
+            );
+            one.info = info.iter().map(ToString::to_string).collect();
+            two.info.clone_from(&one.info);
+            group(&[one, two], 2, 0).groups.len()
+        };
+        assert_eq!(pair(&[]), 1);
+        assert_eq!(pair(&["no_run"]), 1);
+        assert_eq!(pair(&["compile_fail"]), 0);
+        assert_eq!(pair(&["compile_fail", "E0596"]), 0);
     }
 
     #[test]

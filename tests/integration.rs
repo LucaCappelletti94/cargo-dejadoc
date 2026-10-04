@@ -84,24 +84,25 @@ fn functions_group_per_module_across_targets_and_cfgs() {
     );
     // A `pub` function of the library counts as public API whatever its module, since a
     // re-export can expose it. The integration test target has none.
-    let public: Vec<&str> = report
+    let mut public: Vec<&str> = report
         .groups
         .iter()
         .flat_map(|g| &g.sites)
         .filter(|s| s.public)
         .map(|s| s.item.as_str())
         .collect();
+    public.sort_unstable();
     assert_eq!(
         public,
         [
-            "fnws::platform::width",
             "fnws::platform::height",
+            "fnws::platform::width",
+            "fnws::render::Alpha::render",
+            "fnws::render::Beta::render",
             "fnws::scale::scaled",
             "fnws::scale::scaled_elsewhere",
             "fnws::total_over",
-            "fnws::total_too",
-            "fnws::render::Alpha::render",
-            "fnws::render::Beta::render"
+            "fnws::total_too"
         ]
     );
     // A site runs from its first doc comment or attribute to its closing brace.
