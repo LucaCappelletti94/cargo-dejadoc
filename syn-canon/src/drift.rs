@@ -87,6 +87,9 @@ struct Drift {
     /// Inside an impl header's trait path or self type, where a path may not
     /// elide its lifetime (E0726).
     in_impl_header: bool,
+    /// Inside the fields or variants of an item a proc macro derive reads, docs and lint
+    /// attributes included.
+    in_derive_input: bool,
 }
 
 impl VisitMut for Drift {
@@ -253,16 +256,24 @@ impl VisitMut for Drift {
     }
 
     fn visit_item_mut(&mut self, item: &mut syn::Item) {
-        if let Some(attrs) = item_attrs(item) {
-            strip_inert_attrs(attrs);
-        }
-        if let syn::Item::Struct(syn::ItemStruct { attrs, .. })
-        | syn::Item::Enum(syn::ItemEnum { attrs, .. })
-        | syn::Item::Union(syn::ItemUnion { attrs, .. }) = item
-        {
+        let derived = match item {
+            syn::Item::Struct(syn::ItemStruct { attrs, .. })
+            | syn::Item::Enum(syn::ItemEnum { attrs, .. })
+            | syn::Item::Union(syn::ItemUnion { attrs, .. }) => Some(attrs),
+            _ => None,
+        };
+        let macro_derived = derived
+            .as_ref()
+            .is_some_and(|attrs| has_macro_derive(attrs));
+        if let Some(attrs) = derived {
             fold_std_derives(attrs);
         }
+        if !macro_derived && let Some(attrs) = item_attrs(item) {
+            strip_inert_attrs(attrs);
+        }
+        let outer = core::mem::replace(&mut self.in_derive_input, macro_derived);
         syn::visit_mut::visit_item_mut(self, item);
+        self.in_derive_input = outer;
     }
 
     fn visit_impl_item_mut(&mut self, item: &mut syn::ImplItem) {
@@ -288,12 +299,16 @@ impl VisitMut for Drift {
     }
 
     fn visit_field_mut(&mut self, field: &mut syn::Field) {
-        strip_inert_attrs(&mut field.attrs);
+        if !self.in_derive_input {
+            strip_inert_attrs(&mut field.attrs);
+        }
         syn::visit_mut::visit_field_mut(self, field);
     }
 
     fn visit_variant_mut(&mut self, variant: &mut syn::Variant) {
-        strip_inert_attrs(&mut variant.attrs);
+        if !self.in_derive_input {
+            strip_inert_attrs(&mut variant.attrs);
+        }
         syn::visit_mut::visit_variant_mut(self, variant);
     }
 
@@ -565,7 +580,7 @@ fn drop_anonymous_lifetimes(arguments: &mut syn::PathArguments) {
 
 /// The derives whose expansions are independent of each other, so their
 /// order and grouping carry no meaning.
-const STD_DERIVES: [&str; 9] = [
+pub(crate) const STD_DERIVES: [&str; 9] = [
     "Clone",
     "Copy",
     "Debug",
@@ -576,6 +591,27 @@ const STD_DERIVES: [&str; 9] = [
     "PartialEq",
     "PartialOrd",
 ];
+
+/// Whether `attrs` derive anything outside the std derives, a proc macro that reads the item.
+fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
+    use syn::parse::Parser;
+
+    let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
+    attrs
+        .iter()
+        .filter(|attr| attr.path().is_ident("derive"))
+        .any(|attr| {
+            let syn::Meta::List(list) = &attr.meta else {
+                return true;
+            };
+            parser.parse2(list.tokens.clone()).map_or(true, |paths| {
+                paths.iter().any(|path| {
+                    path.get_ident()
+                        .is_none_or(|name| !STD_DERIVES.iter().any(|std| name == std))
+                })
+            })
+        })
+}
 
 /// Merge an item's `derive` attributes into one sorted list at the place of
 /// the first, when every derive among them is a std one. A proc macro derive
@@ -637,14 +673,21 @@ impl VisitMut for StaticRefs {
 }
 
 /// True for attributes that carry no program meaning for doctests: doc
-/// comments, lint-level directives, and the `rustfmt::` tool attributes.
+/// comments, lint-level directives, and the `rustfmt::` tool attributes. A
+/// `doc` whose value is a macro call runs at compile time and can fail, so it
+/// stays.
 fn is_inert_attr(attr: &syn::Attribute) -> bool {
     let p = attr.path();
-    p.is_ident("doc")
+    (p.is_ident("doc") && !computed_doc(&attr.meta))
         || p.is_ident("allow")
         || p.is_ident("expect")
         || p.is_ident("warn")
         || p.segments.first().is_some_and(|s| s.ident == "rustfmt")
+}
+
+/// Whether `meta` is a `doc = …` whose value is a macro call.
+fn computed_doc(meta: &syn::Meta) -> bool {
+    matches!(meta, syn::Meta::NameValue(nv) if matches!(nv.value, syn::Expr::Macro(_)))
 }
 
 /// Drop inert attributes from the list.
