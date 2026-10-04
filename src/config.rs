@@ -13,7 +13,7 @@ pub(crate) struct Config {
     pub(crate) min_tokens: Option<usize>,
     /// Whether the duplicate function check runs.
     pub(crate) functions: Option<bool>,
-    /// Skip functions with fewer tokens than this.
+    /// Skip functions whose body counts fewer tokens than this.
     #[serde(rename = "fn-min-tokens")]
     pub(crate) fn_min_tokens: Option<usize>,
     /// Scan files marked generated as well.

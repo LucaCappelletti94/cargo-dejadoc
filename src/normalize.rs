@@ -309,6 +309,78 @@ fn from_stream(stream: proc_macro2::TokenStream) -> Canonical {
 }
 
 /// Number of leaf tokens in a token stream.
+/// The multi-character operators, longest first, each counted as one token.
+const OPERATORS: [&str; 23] = [
+    "<<=", ">>=", "...", "..=", "=>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
+    "%=", "^=", "&=", "|=", "<<", ">>", "..", "->",
+];
+
+/// The size of a function's body in its canonical tokens, the signature left out. A path, a
+/// multi-character operator or a lifetime counts as one token, a comma or a bracket as none.
+/// A function canonicalized as a one-item file ends in its body.
+pub(crate) fn body_tokens(function: proc_macro2::TokenStream) -> usize {
+    match function.into_iter().last() {
+        Some(proc_macro2::TokenTree::Group(body)) => units(body.stream()),
+        _ => 0,
+    }
+}
+
+/// The tokens of `stream` as `body_tokens` counts them.
+fn units(stream: proc_macro2::TokenStream) -> usize {
+    use proc_macro2::{Spacing, TokenTree};
+
+    let mut trees = stream.into_iter().peekable();
+    let mut count = 0;
+    // The last token was an identifier, so a `::` after it continues one path.
+    let (mut ident, mut joined) = (false, false);
+    while let Some(tree) = trees.next() {
+        match tree {
+            TokenTree::Group(group) => {
+                count += units(group.stream());
+                (ident, joined) = (false, false);
+            }
+            TokenTree::Ident(_) => {
+                count += usize::from(!joined);
+                (ident, joined) = (true, false);
+            }
+            TokenTree::Literal(_) => {
+                count += 1;
+                (ident, joined) = (false, false);
+            }
+            TokenTree::Punct(first) => {
+                if first.as_char() == '\'' && matches!(trees.peek(), Some(TokenTree::Ident(_))) {
+                    trees.next();
+                    count += 1;
+                    (ident, joined) = (false, false);
+                    continue;
+                }
+                let mut run = alloc::string::String::from(first.as_char());
+                let mut spacing = first.spacing();
+                while spacing == Spacing::Joint
+                    && let Some(TokenTree::Punct(next)) = trees.peek()
+                {
+                    run.push(next.as_char());
+                    spacing = next.spacing();
+                    trees.next();
+                }
+                let mut rest = run.as_str();
+                while let Some(c) = rest.chars().next() {
+                    if let Some(tail) = rest.strip_prefix("::") {
+                        joined = ident;
+                        rest = tail;
+                        continue;
+                    }
+                    let op = OPERATORS.iter().find(|op| rest.starts_with(*op));
+                    count += usize::from(c != ',');
+                    (ident, joined) = (false, false);
+                    rest = &rest[op.map_or(c.len_utf8(), |op| op.len())..];
+                }
+            }
+        }
+    }
+    count
+}
+
 pub(crate) fn count_tokens(stream: proc_macro2::TokenStream) -> usize {
     stream.into_iter().map(count_tree).sum()
 }
@@ -323,6 +395,37 @@ fn count_tree(tree: proc_macro2::TokenTree) -> usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The body count of `function` canonicalized as a one-item file.
+    fn body_of(function: &str) -> usize {
+        body_tokens(syn_canon::canonicalize(syn::parse_str(function).unwrap()))
+    }
+
+    #[test]
+    fn a_body_counts_a_path_operator_or_lifetime_as_one_and_commas_as_none() {
+        let cases = [
+            // diesel's forwarding `from_sql`, 30 tokens as a whole function.
+            (
+                "fn f(value: &mut PgValue<'_>) -> deserialize::Result<Self> { Ok(core::str::from_utf8(value.as_bytes())?) }",
+                6,
+            ),
+            (
+                "fn f() { match x { A => a == b && c, _ => { y += 1; } } }",
+                15,
+            ),
+            ("fn f() { let r: &'static str = \"x\"; r }", 10),
+            ("fn f() { ::std::mem::drop(x) }", 2),
+            // Inside macro tokens `?` and `;` sit adjacent yet stay two tokens.
+            ("fn f() { my!(a?; b) }", 6),
+            ("fn f(a: u8, b: u8, c: u8, d: u8) -> u8 { a }", 1),
+            // A `:` before another symbol is no path, two `&` apart are no `&&`.
+            ("fn f() { my!(x:&y) }", 6),
+            ("fn f() { let r: &&str = x; r }", 10),
+        ];
+        for (function, count) in cases {
+            assert_eq!(body_of(function), count, "{function}");
+        }
+    }
 
     #[test]
     fn item_body_parses() {

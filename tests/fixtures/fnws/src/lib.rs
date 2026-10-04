@@ -13,7 +13,8 @@ pub fn total_over(values: &[u32], limit: u32) -> u32 {
             total -= 1;
         }
     }
-    total
+    let doubled = total + limit;
+    doubled
 }
 
 /// The same body under another name.
@@ -27,7 +28,8 @@ fn sum_over(values: &[u32], limit: u32) -> u32 {
             total -= 1;
         }
     }
-    total
+    let doubled = total + limit;
+    doubled
 }
 
 /// The same body again, public API this time.
@@ -40,7 +42,8 @@ pub fn total_too(values: &[u32], limit: u32) -> u32 {
             total -= 1;
         }
     }
-    total
+    let doubled = total + limit;
+    doubled
 }
 
 // dejadoc: allow
@@ -53,7 +56,8 @@ pub fn kept_on_purpose(values: &[u32], limit: u32) -> u32 {
             total -= 1;
         }
     }
-    total
+    let doubled = total + limit;
+    doubled
 }
 
 /// Two nested copies are no sites.
@@ -67,7 +71,8 @@ pub fn outer() -> u32 {
                 total -= 1;
             }
         }
-        total
+        let doubled = total + limit;
+        doubled
     }
     fn second(values: &[u32], limit: u32) -> u32 {
         let mut total = 0;
@@ -78,7 +83,8 @@ pub fn outer() -> u32 {
                 total -= 1;
             }
         }
-        total
+        let doubled = total + limit;
+        doubled
     }
     first(&[1], 0) + second(&[2], 0) + sum_over(&[3], 0)
 }
@@ -96,6 +102,7 @@ pub mod render {
             out.push(',');
         }
         out.pop();
+        out.push('!');
         out
     }
     }
@@ -108,6 +115,7 @@ pub mod render {
             out.push(',');
         }
         out.pop();
+        out.push('!');
         out
     }
     }
@@ -122,6 +130,8 @@ pub mod scale {
             out.push(value * factor + 1);
         }
         out.sort_unstable();
+        out.dedup();
+        out.reverse();
         out
     }
 
@@ -133,6 +143,8 @@ pub mod scale {
             out.push(value * factor + 1);
         }
         out.sort_unstable();
+        out.dedup();
+        out.reverse();
         out
     }
 }
@@ -181,6 +193,7 @@ mod tests {
         let total = super::total_over(&values, 1);
         assert_eq!(total, 9);
         assert!(total > 0);
+        assert!(total < 100);
     }
 
     #[test]
@@ -189,5 +202,6 @@ mod tests {
         let total = super::total_over(&values, 1);
         assert_eq!(total, 9);
         assert!(total > 0);
+        assert!(total < 100);
     }
 }

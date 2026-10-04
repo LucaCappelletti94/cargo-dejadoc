@@ -27,7 +27,7 @@ To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of i
 /// ```
 ````
 
-Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. A copy gets a suggestion to delete only when it is a free function or an inherent method under the same `cfg` as the copy kept, and is not already public API of a library, which is better made to call the kept copy or deprecated. Copies on different self types point to a generic or a macro, trait methods and exported symbols to a helper or a macro, and copies under different `cfg`s to one function under both. Functions under 30 tokens are skipped. A `// dejadoc: allow` line above a function keeps it.
+Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. A copy gets a suggestion to delete only when it is a free function or an inherent method under the same `cfg` as the copy kept, and is not already public API of a library, which is better made to call the kept copy or deprecated. Copies on different self types point to a generic or a macro, trait methods and exported symbols to a helper or a macro, and copies under different `cfg`s to one function under both. Functions whose body counts fewer than 30 tokens are skipped, the signature left out, a path like `core::str::from_utf8` or an operator like `=>` counting as one token and a comma as none. A `// dejadoc: allow` line above a function keeps it.
 
 In CI, one workflow covers it. The [action](https://github.com/marketplace/actions/dejadoc) installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
 
@@ -53,7 +53,7 @@ jobs:
           min-tokens: 0
           # Check for duplicated functions, default true.
           functions: true
-          # Ignore functions below this token count, default 30.
+          # Ignore functions whose body counts fewer tokens than this, default 30.
           fn-min-tokens: 30
           # Scan bin and example doctests as well as lib ones, default false.
           all-targets: true
