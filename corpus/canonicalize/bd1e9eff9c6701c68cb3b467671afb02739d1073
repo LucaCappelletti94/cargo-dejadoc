@@ -1,0 +1,2 @@
+let x = 1;
+assert!(include_str!("doc.md") ==include_str!("doc.md") 1, "{x}");

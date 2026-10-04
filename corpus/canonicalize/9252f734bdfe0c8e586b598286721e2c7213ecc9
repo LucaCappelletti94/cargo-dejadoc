@@ -1,0 +1,6 @@
+fn f() -> u8 {
+    //In! -> u8 {
+    //! Inner do#, PPPPPPPPPPPPP! In
+} u4 {
+    //! In-> u8 Inner PPPPPPPPP! In
+}

@@ -1,0 +1,2 @@
+mod v { pub fn Q() {} }pub fn q() {} 
+fn maicrn() {#[cfg_attr(unix, doc = nused)]r::q(); }

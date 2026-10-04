@@ -1,0 +1,1 @@
+fn main() { struct P; letp = P; }
