@@ -293,6 +293,12 @@ fn live(meta: &syn::Meta) -> bool {
     if path.is_ident("unsafe") {
         return wrapped(meta, 0).is_none_or(|metas| metas.iter().any(live));
     }
+    // A `doc` computed by a macro runs at compile time and can fail.
+    if path.is_ident("doc")
+        && matches!(meta, syn::Meta::NameValue(nv) if matches!(nv.value, syn::Expr::Macro(_)))
+    {
+        return true;
+    }
     let inert = [
         "cfg",
         "inline",

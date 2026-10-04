@@ -673,14 +673,21 @@ impl VisitMut for StaticRefs {
 }
 
 /// True for attributes that carry no program meaning for doctests: doc
-/// comments, lint-level directives, and the `rustfmt::` tool attributes.
+/// comments, lint-level directives, and the `rustfmt::` tool attributes. A
+/// `doc` whose value is a macro call runs at compile time and can fail, so it
+/// stays.
 fn is_inert_attr(attr: &syn::Attribute) -> bool {
     let p = attr.path();
-    p.is_ident("doc")
+    (p.is_ident("doc") && !computed_doc(&attr.meta))
         || p.is_ident("allow")
         || p.is_ident("expect")
         || p.is_ident("warn")
         || p.segments.first().is_some_and(|s| s.ident == "rustfmt")
+}
+
+/// Whether `meta` is a `doc = …` whose value is a macro call.
+fn computed_doc(meta: &syn::Meta) -> bool {
+    matches!(meta, syn::Meta::NameValue(nv) if matches!(nv.value, syn::Expr::Macro(_)))
 }
 
 /// Drop inert attributes from the list.

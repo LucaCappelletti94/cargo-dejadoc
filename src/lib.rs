@@ -813,7 +813,12 @@ mod tests {
                 "{wrapped}"
             );
         }
-        for wrapped in ["case(1)", "inline, test", "cfg_attr(windows, should_panic)"] {
+        for wrapped in [
+            "case(1)",
+            "inline, test",
+            "cfg_attr(windows, should_panic)",
+            "doc = include_str!(\"a.md\")",
+        ] {
             let src = format!("#[cfg_attr(unix, {wrapped})]\nfn one{BODY}\nfn two{BODY}\n");
             assert_eq!(
                 fn_groups(Dejadoc::default(), &src),

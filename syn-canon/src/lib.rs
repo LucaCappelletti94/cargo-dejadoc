@@ -583,6 +583,23 @@ mod tests {
     }
 
     #[test]
+    fn a_doc_attribute_holding_a_macro_call_stays() {
+        // docify and document-features compute docs at compile time, and the call can fail.
+        assert_ne!(
+            canonicalize("#[doc = docify::embed!(\"a.rs\", x)]\npub struct S;").text,
+            canonicalize("pub struct S;").text
+        );
+        assert_ne!(
+            canonicalize("#[doc = include_str!(\"a.md\")]\npub struct S;").text,
+            canonicalize("#[doc = include_str!(\"b.md\")]\npub struct S;").text
+        );
+        assert_eq!(
+            canonicalize("#[doc = \"Text.\"]\npub struct S;").text,
+            canonicalize("pub struct S;").text
+        );
+    }
+
+    #[test]
     fn trailing_comma_nested_struct_in_call_merges() {
         let a = canonicalize("foo(P { x: 1, y: 2 })");
         let b = canonicalize("foo(P { x: 1, y: 2, },)");

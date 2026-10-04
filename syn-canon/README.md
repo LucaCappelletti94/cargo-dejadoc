@@ -36,7 +36,7 @@ Style folds, each applied only where it keeps the meaning:
 - Identifier arguments of the std formatting macros move into the format string, `println!("{}", x)` becoming `println!("{x}")`.
 - Macro calls take parentheses, and every statement macro but the tail one takes a semicolon.
 - `derive` lists of std derives merge into one sorted list.
-- `doc`, lint level and `rustfmt::` attributes go, except in the input of a proc macro derive, which reads them.
+- `doc`, lint level and `rustfmt::` attributes go, except in the input of a proc macro derive, which reads them. A `doc` whose value is a macro call runs at compile time and stays.
 - Literals take one spelling, `0x10` and `16` alike, and trailing commas go, except in the input of a macro or attribute that may match on them. The std macros that ignore one, `vec!` and `println!` among them, still lose it.
 
 ## Stability
