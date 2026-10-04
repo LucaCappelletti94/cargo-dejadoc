@@ -162,7 +162,8 @@ pub mod describe {
 
     impl Short for Gamma {
         fn short(&self, values: &[u32]) -> String {
-            let mut out = String::from("[");
+            let mut out = String::with_capacity(2 + 4 * values.len());
+            out.push('[');
             for value in values {
                 out.push_str(&value.to_string());
                 out.push(';');
@@ -174,7 +175,8 @@ pub mod describe {
 
     impl Long for Gamma {
         fn long(&self, values: &[u32]) -> String {
-            let mut out = String::from("[");
+            let mut out = String::with_capacity(2 + 4 * values.len());
+            out.push('[');
             for value in values {
                 out.push_str(&value.to_string());
                 out.push(';');
