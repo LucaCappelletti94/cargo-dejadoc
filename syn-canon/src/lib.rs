@@ -2646,15 +2646,20 @@ mod tests {
                 "let mut v = vec![1]; f(v.len());",
                 "let v = vec![1]; f(v.len());",
             ),
-            (
-                "let (mut a, b) = g(); f(a, b);",
-                "let (a, b) = g(); f(a, b);",
-            ),
+            ("let mut v: u8 = 1; f(v);", "let v: u8 = 1; f(v);"),
             ("let h = |mut x: u8| x + 1;", "let h = |x: u8| x + 1;"),
+            ("let h = |mut x| x + 1;", "let h = |x| x + 1;"),
             ("fn h(mut x: u8) -> u8 { x }", "fn h(x: u8) -> u8 { x }"),
+            ("for mut x in v { f(x) }", "for x in v { f(x) }"),
+            ("match v { mut x => f(x) }", "match v { x => f(x) }"),
             (
-                "if let Some(mut x) = o { f(x) }",
-                "if let Some(x) = o { f(x) }",
+                "match v { mut x if x > 1 => f(x), _ => {} }",
+                "match v { x if x > 1 => f(x), _ => {} }",
+            ),
+            ("if let mut x = v { f(x) }", "if let x = v { f(x) }"),
+            (
+                "let mut x @ 1..=3 = v else { return };",
+                "let x @ 1..=3 = v else { return };",
             ),
             (
                 "impl S { fn h(mut self) -> u8 { self.0 } }",
@@ -2682,6 +2687,25 @@ mod tests {
             ("let r = &mut v; f(r);", "let r = &v; f(r);"),
             ("static mut S: u8 = 1;", "static S: u8 = 1;"),
             ("let p: *mut u8 = q;", "let p: *const u8 = q;"),
+            // Under a reference, a nested `mut` resets the binding mode to by-value before 2024.
+            ("let [mut x] = &[0_u8]; f(x);", "let [x] = &[0_u8]; f(x);"),
+            (
+                "let (mut a, b) = g(); f(a, b);",
+                "let (a, b) = g(); f(a, b);",
+            ),
+            (
+                "if let Some(mut x) = o { f(x) }",
+                "if let Some(x) = o { f(x) }",
+            ),
+            ("fn h((mut a, b): (u8, u8)) {}", "fn h((a, b): (u8, u8)) {}"),
+            (
+                "match o { Some(mut x) => f(x), None => {} }",
+                "match o { Some(x) => f(x), None => {} }",
+            ),
+            (
+                "let mut x @ Some(mut y) = o else { return };",
+                "let mut x @ Some(y) = o else { return };",
+            ),
         ]);
     }
 
@@ -2712,6 +2736,10 @@ mod tests {
             (
                 "fn k() -> u8 { match x { _ => 1 } }",
                 "fn k() -> u8 { match x { _ => 1 }; }",
+            ),
+            (
+                "let a = { if c { g() } else { h() } }; f(a);",
+                "let a = { if c { g() } else { h() }; ; }; f(a);",
             ),
         ]);
     }

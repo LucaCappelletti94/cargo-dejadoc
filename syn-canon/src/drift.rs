@@ -121,6 +121,7 @@ impl VisitMut for Drift {
         reason = "a non-use entry goes back to the list"
     )]
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        drop_empty_stmts(&mut block.stmts);
         hoist_uses(
             &mut block.stmts,
             |stmt| match stmt {
@@ -135,7 +136,6 @@ impl VisitMut for Drift {
             drop_block_statement_semicolons(&mut block.stmts);
         }
         syn::visit_mut::visit_block_mut(self, block);
-        drop_empty_stmts(&mut block.stmts);
     }
 
     fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {
@@ -166,6 +166,16 @@ impl VisitMut for Drift {
         // The printer writes the comma a non-block arm needs, a written one is drift.
         arm.comma = None;
         syn::visit_mut::visit_arm_mut(self, arm);
+        if self.compiles {
+            drop_binding_mut(&mut arm.pat);
+        }
+    }
+
+    fn visit_local_mut(&mut self, local: &mut syn::Local) {
+        syn::visit_mut::visit_local_mut(self, local);
+        if self.compiles {
+            drop_binding_mut(&mut local.pat);
+        }
     }
 
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
@@ -180,10 +190,16 @@ impl VisitMut for Drift {
             }
             unwrap_single_expr_block(&mut closure.body);
         }
-        if self.compiles
-            && let Some(block) = unit_block(expr)
-        {
-            drop_tail_semicolon(&mut block.stmts);
+        if self.compiles {
+            match expr {
+                syn::Expr::Closure(closure) => closure.inputs.iter_mut().for_each(drop_binding_mut),
+                syn::Expr::ForLoop(for_loop) => drop_binding_mut(&mut for_loop.pat),
+                syn::Expr::Let(expr_let) => drop_binding_mut(&mut expr_let.pat),
+                _ => {}
+            }
+            if let Some(block) = unit_block(expr) {
+                drop_tail_semicolon(&mut block.stmts);
+            }
         }
     }
 
@@ -191,25 +207,20 @@ impl VisitMut for Drift {
         strip_pat_inert_attrs(pat);
         syn::visit_mut::visit_pat_mut(self, pat);
         fold_paren_pat(pat);
-        if self.compiles
-            && let syn::Pat::Ident(ident) = pat
-            && ident.by_ref.is_none()
-        {
-            ident.mutability = None;
-        }
     }
 
     fn visit_fn_arg_mut(&mut self, node: &mut syn::FnArg) {
         match node {
-            syn::FnArg::Receiver(receiver) => {
-                strip_inert_attrs(&mut receiver.attrs);
-                if self.compiles {
-                    receiver.mutability = None;
-                }
-            }
+            syn::FnArg::Receiver(receiver) => strip_inert_attrs(&mut receiver.attrs),
             syn::FnArg::Typed(typed) => strip_inert_attrs(&mut typed.attrs),
         }
         syn::visit_mut::visit_fn_arg_mut(self, node);
+        if self.compiles {
+            match node {
+                syn::FnArg::Receiver(receiver) => receiver.mutability = None,
+                syn::FnArg::Typed(typed) => drop_binding_mut(&mut typed.pat),
+            }
+        }
     }
 
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
@@ -412,6 +423,22 @@ fn discards_value(mut expr_if: &syn::ExprIf) -> bool {
             Some(syn::Expr::If(inner)) => expr_if = inner,
             Some(_) => return false,
         }
+    }
+}
+
+/// Drop the `mut` of a pattern that is one binding, by-value whatever the
+/// scrutinee. Nested under a reference, `mut` resets a borrowing binding mode
+/// before edition 2024, so a nested one stays.
+fn drop_binding_mut(pat: &mut syn::Pat) {
+    let pat = match pat {
+        syn::Pat::Type(typed) => typed.pat.as_mut(),
+        syn::Pat::Guard(guarded) => guarded.pat.as_mut(),
+        other => other,
+    };
+    if let syn::Pat::Ident(ident) = pat
+        && ident.by_ref.is_none()
+    {
+        ident.mutability = None;
     }
 }
 
