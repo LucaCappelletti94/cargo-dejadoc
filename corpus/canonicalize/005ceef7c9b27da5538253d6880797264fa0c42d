@@ -1,2 +1,0 @@
-mod v { pub fn q() {} }
-fn main() {  pub fn p(); r::q(); }G

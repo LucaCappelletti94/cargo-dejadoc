@@ -1,1 +1,0 @@
-fn main() { struct P; let p = P; }

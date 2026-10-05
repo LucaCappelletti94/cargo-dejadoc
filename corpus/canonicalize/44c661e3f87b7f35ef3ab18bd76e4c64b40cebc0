@@ -1,2 +1,0 @@
-fn main() { n::deep::g(); }
-mod n { pub mod deep { pub fn gfor fn main() {} } }
