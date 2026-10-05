@@ -37,8 +37,12 @@ Style folds, each applied only where it keeps the meaning:
 - When the code compiles, `mut` goes from `mut self` and from a binding that is the whole pattern of a `let`, parameter, closure input, arm, `for` or `let` condition, the semicolon after a non-tail block statement goes, and so does the tail semicolon of a function body without a return type, a loop body and the then blocks of an `if` chain without a final `else`. A nested `mut` stays, since under a reference it resets the binding mode before edition 2024. `canonicalize_failing` keeps them all for code meant to fail, such as a `compile_fail` doctest.
 - Inline generic bounds move into `where`, `&'_ T` becomes `&T`, `Foo<'_>` becomes `Foo` outside an impl header, and `&'static` becomes `&` in a `const` or `static` type.
 - Type paths omit `::` before generic arguments, bound lists omit a trailing `+`, and simple trait bounds omit parentheses. Function-trait output bounds retain grouping parentheses.
-- Function-pointer types omit a unit return, and `self: &Self` becomes `&self`, with named lifetimes preserved. These syntax folds also apply to `canonicalize_failing`.
-- These type and bound spelling folds preserve procedural macro inputs, including derived fields, attribute inputs and nested items. Expression and method turbofish syntax stays.
+- Function-pointer and function-trait types omit a unit return, `self: &Self` becomes `&self` with named lifetimes preserved, and `self: Self` becomes `self`. These syntax folds also apply to `canonicalize_failing`.
+- Empty angle-bracketed path and method arguments go. Nonempty expression and method turbofish arguments stay, and `use<>` capture bounds stay.
+- Generic declaration and argument lists and closure parameter lists omit trailing commas without changing element order or tuple arity.
+- `pub(in crate)`, `pub(in self)` and `pub(in super)` omit `in`.
+- When the code compiles, an omitted `extern` ABI becomes `"C"`, `return ()` becomes `return`, leading pattern pipes go, and a non-uppercase `x @ _` becomes `x` with its binding mode preserved. `canonicalize_failing` keeps these spellings.
+- These syntax folds preserve procedural macro inputs, including fields, arguments, nested syntax and attribute payloads.
 - Identifier arguments of the std formatting macros move into the format string, `println!("{}", x)` becoming `println!("{x}")`.
 - Macro calls take parentheses, and every statement macro but the tail one takes a semicolon.
 - `derive` lists of std derives merge into one sorted list.
