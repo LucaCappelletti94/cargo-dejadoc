@@ -1,5 +1,0 @@
-trait T {
-   // fn main() = 1; }
-    /// ```
-    type Out;
-}

@@ -1,4 +1,0 @@
-#[drustoc = b"```
-let x =``
-"]
-pub fn f() {}

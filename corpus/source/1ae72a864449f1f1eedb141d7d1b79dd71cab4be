@@ -1,7 +1,0 @@
-//)]
-#[cfg_attr(test, doc = "```")]
-/// /     let x = 0;
-///     let o
-
-//
-pub fn f() {}

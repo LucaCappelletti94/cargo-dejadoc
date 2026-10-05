@@ -1,3 +1,0 @@
-/// ```rust,min rustc 1.45
-/// fn main(/// ```
-pub fn f() {}

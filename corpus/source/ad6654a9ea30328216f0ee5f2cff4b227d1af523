@@ -1,4 +1,0 @@
-struct S;
-impl<'a> IntoIterator for &'a mut S {
- #    ///o_iter(self) {}
-}

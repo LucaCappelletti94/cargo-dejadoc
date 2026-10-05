@@ -1,9 +1,0 @@
-/// ```
-/// fn a() {}
-/// ```
-pub const C: i32 = 1;
-/// ```*//// Helper with a doctest, backtick fenced.
-/// ```
-/// fn e() {}
-/// ```
-pub union U { f: i32 }b trait Tr = Self

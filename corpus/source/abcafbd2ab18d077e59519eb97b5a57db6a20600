@@ -1,6 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", nfn helPer() {self }
-/oT(feature = "b")), doc = "```")]
-#[cfg_attr(any(not(doa), feature = "b"), c = "```")]
-/// fn main() { }
-#[cfg_attr(not(,e[at#sllow(unused)]), dmc = "```")]
-pub fn gated() {}

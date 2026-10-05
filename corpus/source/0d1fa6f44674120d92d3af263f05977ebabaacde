@@ -1,8 +1,0 @@
-extern "C" {
- self   /// `"C" {
-    /// `
- fn main() { let a = 1; }
-    
- fn main() { let a = 1; }
-    //include!("6=6../e T;2
-}

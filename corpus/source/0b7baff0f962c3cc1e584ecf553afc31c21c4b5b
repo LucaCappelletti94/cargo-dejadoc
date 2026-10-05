@@ -1,2 +1,0 @@
-//< intf>>; outro
-pub fn f(ref) {}

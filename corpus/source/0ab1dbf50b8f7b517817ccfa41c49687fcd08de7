@@ -1,7 +1,0 @@
-#[derive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(feature = "string"incl("doc.md")= "```", must_use = "extra")]
-#[vvvvvvvvvvvvvvvvvvvvvvvvvvvvvvvcfg_attr(not(feature~= "string"), doR = "```ignore")]
-/// fn main() { }
-/// ```
-pub struct Gated;

@@ -1,2 +1,0 @@
-#[doc =return  " * ```\n ***"]
-pub fn f() {}

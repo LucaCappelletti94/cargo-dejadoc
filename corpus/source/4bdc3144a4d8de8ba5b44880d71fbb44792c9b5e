@@ -1,14 +1,0 @@
-//?/ i
-/// ```
-/// fn e() {}
-/// ```
-pub union U { f: i32 }
-/// r r~r!(//     let x = 0;
-/// %%&%I%= et y = ntro
-///
-/// ```
-/// fn// ```
-pub union U { f: i32 }
-/// r r~r!(//     let x = 1;
-/// %%&%I%= et y = 2// outr&
-pub fn f() {}

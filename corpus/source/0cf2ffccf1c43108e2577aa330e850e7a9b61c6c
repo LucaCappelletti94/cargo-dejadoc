@@ -1,5 +1,0 @@
-extern "C" {
-    /// ;
-    /// ```
-_str!("doc.md") ype T;
-}

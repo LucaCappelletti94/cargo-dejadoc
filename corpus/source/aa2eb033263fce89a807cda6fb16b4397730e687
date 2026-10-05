@@ -1,4 +1,0 @@
-struct S;
-impl<'a> IntoIteraZor for &'a mut  {
-Sn() {}_iter(self) {}
-}

@@ -1,45 +1,0 @@
-//! File-level _level = true;
-//! ```
-
-pub mod util;
-
-/// Alpha function.
-/// ```
-/// fn shared() { }
-/// ```
-pub fn alpha_fn() {}
-
-/// FormattinG variant of the same doctest, blank lines inside the fence.//~ in intro
-///write!(fut
-///wr", 
-/**///     lite!(f "{}", 
-/**/ut
-///wr", 
-/**///  ( format!("{x:?}") 
-/**///     let x//wr", 
-/**///     li", 
-/**/ut
-///wr", 
-/// ```
-///
-///     fn shaen.
-/// ```rust,dejado
-/**///     lite!     le
-/**///  
-/// Unparseable body share lite!(f "{ite!(f "    letd wit intro
-///write!(fut
-///wr", 
-/**///     lite!(f "{}", 
-/**/ut
-///wr", 
-/**///  (  lite!(f "{9}", 
-/**///     let x//wr", 
-/**///     li", 
-/**/ut
-///wr", 
-/**///     lite!     le
-/**///     lite!h beta.
-/// ```
-/// @ nope nope
-/// ```
-pub fn alpha_unparsed() {}

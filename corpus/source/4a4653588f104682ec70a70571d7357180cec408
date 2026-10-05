@@ -1,2 +1,0 @@
-#[doc = concat!("prefix "btr!("doc.md"))]
-pub fn f() {}

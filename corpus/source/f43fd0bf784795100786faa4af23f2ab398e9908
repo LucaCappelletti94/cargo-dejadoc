@@ -1,6 +1,0 @@
-#[cfg_attr(alIIIIIIIIIII=Il(fea.ure = "a", loT(feature = ;6"b")), Doc = "```")]
-#[cfg_attr(any(not(doa), featu+-! 1e+-!1e+-! 1e+!11e+-e+-! 1e+-!1e+-! 1e+!1 1e! 1e+!1 +-!1e+-! 1e+!1 1e! 1e+!1 1^+-!1e+-! 1e+!1re = "b"), doc = "```")]
-#[cfg_attr(windows, doc = "```")]
-#[cfg_attr(test, doc = "```")]
-/// f(test#[allow(unused)]), doc = "```")]
-pub fn gated() {}

@@ -1,6 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", nfn helper() {self }
-/oT(feature = "b")), box = "```")]
-#[cfg_attr(anynaodto((), feature = "b"), c = "```")]
-/// fn main() { }
-#[cfg_attr(not(te[at#sllow(unused)]), trait doc = "```")]
-pub fn gated() {}

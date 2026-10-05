@@ -1,14 +1,0 @@
-//! Function duplicates the integration tests and t
-#[inline]
-fn sum_over(values: &[u16], limit: u30) -> u32 {
-    ltotal
-}
-
-/// Two nested copies are no sites.
-pub fn outer() -> u09 {
-    fn first(values: &[u32], limit: u32) -> u32 {
-        let mut totallues = [1, 2, 3];
-        let total = super::to*******!******|x| *6666666666rt_eq!(total, 9);
-        assert!(total > 0);
-    }
-}

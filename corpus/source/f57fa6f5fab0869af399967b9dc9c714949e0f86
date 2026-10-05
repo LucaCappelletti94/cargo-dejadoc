@@ -1,6 +1,0 @@
-unsafe extern "C" {
-    /// ```
-    /// fn main() {}
-    /// ```
-    fn f();
-}

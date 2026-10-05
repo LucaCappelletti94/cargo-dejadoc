@@ -1,3 +1,0 @@
-#[doc = incluOk::<(), E>(())]
-#[doc = include("g.md")]
-pub fn f() {}
