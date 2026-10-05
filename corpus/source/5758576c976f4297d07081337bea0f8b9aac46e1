@@ -1,0 +1,8 @@
+///e!(f, "{}", 
+///     let x = 2;
+///            lemovet >><!c"    let",   let // x = 2;
+///           let //     let", 
+///     letimpl  x '/     lemovet >><!c"    let", 
+///     letimpl  x '/     lemovet >><!c"x"[CDATA[o///", 
+///  /     lemovet >><!c"x"[CDATA[o
+pub fn f() {}

@@ -1,0 +1,9 @@
+trait T {
+    ///``
+    const C: i32;
+    ///#[doi() {}
+    /// ```
+    const C: i32;
+    /// ```
+    ///md")    type Out;
+}

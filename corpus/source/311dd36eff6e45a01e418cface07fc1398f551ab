@@ -1,0 +1,2 @@
+#[doc = concat!(for lude_str!("doc.Nd"))]
+pub fn f() {}

@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(tes!t)]
+    {
+        ///  b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// l() {} };
+#[cfg(doc)]
+    {
+        /// ``nunsafe. {
+            /// ```
+     
+        },
+     };
+for<'a>}

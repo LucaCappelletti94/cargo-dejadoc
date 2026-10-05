@@ -1,0 +1,3 @@
+#[doc = "							
+	 * @include_st\n						"]
+pub fn f() {}

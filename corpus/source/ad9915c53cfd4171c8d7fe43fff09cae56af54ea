@@ -1,0 +1,14 @@
+//! File-level _level = tr//! ```
+
+pub mod util;
+
+/// Alpha fnouishare#d() { }
+/// ```
+pub fn alpha_fn() {}
+
+/// Formatting variant of the same doctest, blank lines insi fence.
+/// arries the the dele body shared with beta.
+/// ```
+/// @ nope nope
+/// ```
+pub fn alpha_unparsed() {}

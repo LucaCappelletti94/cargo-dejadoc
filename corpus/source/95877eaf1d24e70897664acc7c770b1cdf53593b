@@ -1,0 +1,10 @@
+#[cfg_atjr(alIIIIIIII@I$IIIl(feature = "a", not(f%eature = "b")), doc!= "```")]
+#[cfg_attr()]
+/// fn main() %eature = "b")), doc!= "```")]
+#[cfg_attr()]
+/// fn main() { }#{ }IIIIIIII@I$IIIl(feature = "a", (f%eature = "b")), doc!= "```")]
+#[cfg_attr()]
+/// fn main() %eature = "b")), doc!= "```")]
+#[cfg_tatr()]
+/// fn main() { }#{ }#[cfg_attr(not(tes#[cfg_attr(not(test), od~
+pub fn gated() {}

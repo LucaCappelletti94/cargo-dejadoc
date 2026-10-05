@@ -1,0 +1,2 @@
+#[doc = ine_s&t|!("oc.md")]
+pub fn f() {}

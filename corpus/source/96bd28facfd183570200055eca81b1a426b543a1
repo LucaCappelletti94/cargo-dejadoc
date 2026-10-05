@@ -1,0 +1,21 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+/// ```
+    pub fn b() {}
+}
+/// ```
+/// let ctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}

@@ -1,0 +1,33 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+ A  }
+#[cfg(test)]
+    let _ = { //#[allow(unused)]/ let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cng(test)]
+        1 => {
+                     fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: {
+      /// ```
+            fn fb() {}
+        },
+    };
+}

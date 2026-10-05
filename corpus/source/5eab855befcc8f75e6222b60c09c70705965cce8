@@ -1,0 +1,36 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+// let a = 1;
+/// ```
+#[c*g(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let ctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// `/``no_run[cfg(test)]
+    pub e: u8,
+}mod t {
+    /// ```
+    /// let b = 1;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let ctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// `/// ```no_run[cfg(test)]
+    pub e: u8,
+}

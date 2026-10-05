@@ -1,0 +1,3 @@
+#[doc = "#[cfg_attr
+@generatedrai"]
+pub fn f() {}

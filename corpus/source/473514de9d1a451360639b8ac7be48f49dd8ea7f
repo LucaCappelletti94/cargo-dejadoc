@@ -1,0 +1,13 @@
+//// let a = 1;
+/// `))]
+pub fn c() {}
+/// ]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+e: u8,
+}

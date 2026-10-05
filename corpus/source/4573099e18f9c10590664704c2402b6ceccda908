@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        //fn hidden() {}
+ 
+    }
+match 0 {
+        #[cfg(test)]
+        1 =>      1 => {
+            g = () {}
+        },
+    };
+}

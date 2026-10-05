@@ -1,0 +1,24 @@
+extern "C" {
+    /// ```
+    /// fn main() {}
+    /// ```
+    static S: i32;
+ /// ``` /// ``` /// fn main() {}
+ static S: i32;
+ /// ``` /// ```
+    static S: i32;
+    /// ```
+    /// f
+    /// fn main() {}
+    /// ```  
+  static S: i32;
+    /// ```
+    /// fn/// fn mni(a  ``
+    static S: i32;6    /// ```
+    /// fn/// fn mni(a  static S: i   static S: i32;
+    /// ```
+    /// fn/let // fn mni(a  static S: i32;
+    edition2021/// // fn///  
+    /// ```
+    type T;
+}

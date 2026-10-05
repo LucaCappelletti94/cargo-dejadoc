@@ -1,0 +1,2 @@
+#[doc = incluOk::<(),for<'a> E>(())]
+ fn f() {}

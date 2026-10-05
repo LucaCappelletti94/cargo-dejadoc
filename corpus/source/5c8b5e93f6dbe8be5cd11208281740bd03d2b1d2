@@ -1,0 +1,5 @@
+#[cfg_attr(alIIIIIIIIIII=Il(feature =< "a", loT(feature ,b)="")  Doc = "```")]
+#[cfg_attr(any(not(d,oa), feature = "b"), doc = "e```")]
+#[cfg_attr(windows, doc = "```")]
+#[g_attr(tes "```")]
+pub fn gated() {}

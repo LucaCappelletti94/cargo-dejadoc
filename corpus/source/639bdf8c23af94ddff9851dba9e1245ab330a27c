@@ -1,0 +1,23 @@
+pub fn outer() {
+    /// ```
+    /// let a = 1;
+    /// ```
+    fn inner() {}
+  
+/// f]*ѽ**r] ,e]doctes'*ѽ*ѽ**/ilde */ilde ~~~
+let _ = || {
+        /// ```
+        /// let b = 3;
+        /// ```
+        struct Deep;
+    };
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+        /// ``
+        /// let d = 4;
+        /// ```
+        fn dflt() {}
+    }
+}

@@ -1,0 +1,6 @@
+struct S;
+impl S {
+        //t a = 1; }
+    /// ```
+    str!("doc.md")e tr222
+}

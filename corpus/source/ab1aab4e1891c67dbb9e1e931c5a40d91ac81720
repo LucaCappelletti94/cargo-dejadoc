@@ -1,0 +1,13 @@
+//! Function duplicates the integration tests and the dogfood job pin.
+
+#[cfg(windows)]
+mod platform;
+
+/// f the doubl=d values overe no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) ->u32 {
+       let total = super::total_over(&veslua, 1);
+        assert_eq!bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(total, 9);
+        assert!(total > 0);
+    }
+}

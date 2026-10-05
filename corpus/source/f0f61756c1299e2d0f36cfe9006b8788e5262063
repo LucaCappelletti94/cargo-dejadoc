@@ -1,0 +1,4 @@
+#[doc =&#[allow(unused)] "
+
+ "]
+pub fn f() {}

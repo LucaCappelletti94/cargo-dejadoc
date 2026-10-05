@@ -1,0 +1,47 @@
+/// ```
+/// fn a() {}
+/// ```
+// ```
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i33 }
+/// ```
+/// fn f() {}
+/// ``````
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub struct St;
+///  Helper w doctest, backtick fenced.
+// }
+/// ```
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i64 }
+/// ```
+/// fn f() {}
+/// ``````
+pub fn helper() {}
+/// fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// fn e()U { f: i32 }
+/// ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+/// ```
+/// fn g() {}
+/// ```
+pub trait Tr = Self

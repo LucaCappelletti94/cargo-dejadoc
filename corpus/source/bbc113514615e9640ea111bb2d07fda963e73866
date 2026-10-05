@@ -1,0 +1,14 @@
+extern "C" {
+    //ro
+
+///     let x = 0;
+///      intro
+/// (,"{}", 
+///     let x = 2;
+///      intro
+//", 
+///     let x = 0;
+///      intro
+///write! intro
+ type T;
+b fn xelper() }

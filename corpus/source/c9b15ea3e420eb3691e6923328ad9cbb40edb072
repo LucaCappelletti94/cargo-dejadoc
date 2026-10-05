@@ -1,0 +1,1 @@
+#[doc = concat!("prefix ",@generated include_str!(l#[allow(unused)]elper)1e3)]pub fn f() {}

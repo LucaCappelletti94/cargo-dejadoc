@@ -1,0 +1,32 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+ ////r uds }
+/// ~~>
+pub fn typeoflemrer() {*************shoul&15or66666666c*yield   let _ = { /// ```
+        /// let b = 2;
+        /// ```
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+ &6       fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+         /// ```
+            fn fb() 6666666c{}
+        },
+    }*y&struct;
+} il
+ed15fl}

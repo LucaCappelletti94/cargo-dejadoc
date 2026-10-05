@@ -1,0 +1,2 @@
+#[cfg_attr(not(test), d=c"x" "```" ?> )]
+pub fn gated() {}

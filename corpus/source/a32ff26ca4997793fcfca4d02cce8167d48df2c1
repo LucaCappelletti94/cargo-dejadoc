@@ -1,0 +1,2 @@
+/// Beta~
+pub fn helper(Ok::<(),>():( E)) {}

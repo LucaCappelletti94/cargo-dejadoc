@@ -1,0 +1,9 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+///I```*//// Helper with a doctest, backti ```
+/// fn f() {}
+/// ```
+pub type Ty = i56;
+= Self
