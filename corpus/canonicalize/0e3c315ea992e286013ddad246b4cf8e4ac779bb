@@ -1,0 +1,3 @@
+#[macro#![allow(dead_code)]_use]
+extern crate foo;
+boxbar!();

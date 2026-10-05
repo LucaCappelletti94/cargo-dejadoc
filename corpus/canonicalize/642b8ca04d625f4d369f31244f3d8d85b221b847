@@ -1,0 +1,2 @@
+tamod/let[] = 1;
+println!("{}", #[cfg(/unix)] #[allow(unused)]x);

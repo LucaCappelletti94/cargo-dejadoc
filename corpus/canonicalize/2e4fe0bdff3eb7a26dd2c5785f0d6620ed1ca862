@@ -1,0 +1,3 @@
+# extern crate foo;
+# extern crate bar as extern crate foo;
+qux();

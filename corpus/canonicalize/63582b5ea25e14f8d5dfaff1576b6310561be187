@@ -1,0 +1,13 @@
+fn f() -> u8 {
+    /#[cpub use a::b;
+fg_attr(unix, doc = {
+    //! Inner doc.}eb nnself}>co.- u8 {
+    //! In-> u8 {
+    // I {
+!    //! Innercpub use a::b;
+fg_attr(unix, doc = {
+    //! Inner doc.}eb nnself}>co.- u8 {
+    //! In-> u8 {
+    // I {
+!    //! Inner doc.}eeb doc.}eeb "1
+}

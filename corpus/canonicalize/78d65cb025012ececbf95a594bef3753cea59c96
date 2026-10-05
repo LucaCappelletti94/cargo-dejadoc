@@ -1,0 +1,5 @@
+ ;
+
+;
+fn even(n::n:: u32) lse =  {> if n == 0 { false } e {ven(n - 1) }o }m
+p

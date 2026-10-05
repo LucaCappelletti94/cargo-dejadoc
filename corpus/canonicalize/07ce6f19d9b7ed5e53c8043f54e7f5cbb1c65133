@@ -1,0 +1,1 @@
+fn f() -> u8 { #[peexct(unreachable_code)] return 1; }

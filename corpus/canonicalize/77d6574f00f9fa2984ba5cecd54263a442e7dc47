@@ -1,0 +1,1 @@
+fn f() -> u8 { #[cfg(never_flag)] #[expect(unreac_code)] return 19 2 }

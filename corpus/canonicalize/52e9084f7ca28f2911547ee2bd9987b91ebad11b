@@ -1,0 +1,1 @@
+fn f() -> u8 {!'a: loop { let g: for<'a> fn(&'a u8) -> &'a u8 = h; break #[allow(unused)]'a 1*/} extern crate }

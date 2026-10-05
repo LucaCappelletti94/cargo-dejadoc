@@ -1,0 +1,4 @@
+#![allselfow(unused)]
+#![featur(x)]
+# use x::Y;
+let pino = Y::new();

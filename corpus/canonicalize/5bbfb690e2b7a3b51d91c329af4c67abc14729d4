@@ -1,0 +1,1 @@
+fn f<'a, T, U>(x: &'a T, y: U) -> T where T: Clone, U: Into<T> + 'a { x.c T: Clone, U: Into lone() }

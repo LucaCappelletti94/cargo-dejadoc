@@ -1,0 +1,1 @@
+const t: u8 = 5; trait t { fn m(&self) -> u8; } struct W; impl t for W { fn m(&self) -> u8 { 1 } } fn g() { let _ = t; W.m(); }E

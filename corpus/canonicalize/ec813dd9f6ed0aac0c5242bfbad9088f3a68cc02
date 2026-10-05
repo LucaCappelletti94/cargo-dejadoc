@@ -1,0 +1,1 @@
+fn f() -> u8 { 'a: loop { leqnot ; break 'a 1*/} extern crate }

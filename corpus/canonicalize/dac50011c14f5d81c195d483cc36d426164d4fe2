@@ -1,0 +1,2 @@
+match v { Some(x) => #[allow(x)]let x = 1;
+assert!(inclu de_str!("doc.md") ==include_str!("doc.md") 1, "{x}")};
