@@ -25,6 +25,8 @@ assert_ne!(
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.
 
+Value, type and macro bindings treat `r#name` and `name` as the same identifier, including shadowing and module members. Lifetimes and labels retain their spelling. Macro references involving a raw binding or reference retain their spelling because macros can inspect tokens.
+
 Style folds, each applied only where it keeps the meaning:
 
 - `use` items flatten to one sorted item per leaf path at the front of their list.
@@ -34,6 +36,9 @@ Style folds, each applied only where it keeps the meaning:
 - Redundant parentheses around expressions, patterns and types go, and so do `-> ()` and empty statements.
 - When the code compiles, `mut` goes from `mut self` and from a binding that is the whole pattern of a `let`, parameter, closure input, arm, `for` or `let` condition, the semicolon after a non-tail block statement goes, and so does the tail semicolon of a function body without a return type, a loop body and the then blocks of an `if` chain without a final `else`. A nested `mut` stays, since under a reference it resets the binding mode before edition 2024. `canonicalize_failing` keeps them all for code meant to fail, such as a `compile_fail` doctest.
 - Inline generic bounds move into `where`, `&'_ T` becomes `&T`, `Foo<'_>` becomes `Foo` outside an impl header, and `&'static` becomes `&` in a `const` or `static` type.
+- Type paths omit `::` before generic arguments, bound lists omit a trailing `+`, and simple trait bounds omit parentheses. Function-trait output bounds retain grouping parentheses.
+- Function-pointer types omit a unit return, and `self: &Self` becomes `&self`, with named lifetimes preserved. These syntax folds also apply to `canonicalize_failing`.
+- These type and bound spelling folds preserve procedural macro inputs, including derived fields, attribute inputs and nested items. Expression and method turbofish syntax stays.
 - Identifier arguments of the std formatting macros move into the format string, `println!("{}", x)` becoming `println!("{x}")`.
 - Macro calls take parentheses, and every statement macro but the tail one takes a semicolon.
 - `derive` lists of std derives merge into one sorted list.

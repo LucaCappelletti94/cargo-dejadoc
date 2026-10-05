@@ -94,9 +94,8 @@ struct Drift {
     /// Inside an impl header's trait path or self type, where a path may not
     /// elide its lifetime (E0726).
     in_impl_header: bool,
-    /// Inside the fields or variants of an item a proc macro derive reads, docs and lint
-    /// attributes included.
-    in_derive_input: bool,
+    /// Inside syntax read by a procedural macro.
+    in_macro_input: bool,
 }
 
 impl VisitMut for Drift {
@@ -221,6 +220,11 @@ impl VisitMut for Drift {
                 syn::FnArg::Typed(typed) => drop_binding_mut(&mut typed.pat),
             }
         }
+        if !self.in_macro_input
+            && let syn::FnArg::Receiver(receiver) = node
+        {
+            fold_explicit_shared_receiver(receiver);
+        }
     }
 
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
@@ -233,9 +237,90 @@ impl VisitMut for Drift {
         fold_paren_type(ty);
     }
 
+    fn visit_type_path_mut(&mut self, node: &mut syn::TypePath) {
+        syn::visit_mut::visit_type_path_mut(self, node);
+        if !self.in_macro_input {
+            fold_type_path(&mut node.path);
+        }
+    }
+
+    fn visit_type_fn_ptr_mut(&mut self, node: &mut syn::TypeFnPtr) {
+        syn::visit_mut::visit_type_fn_ptr_mut(self, node);
+        if !self.in_macro_input {
+            fold_unit_return(&mut node.output);
+        }
+    }
+
     fn visit_generics_mut(&mut self, generics: &mut syn::Generics) {
         syn::visit_mut::visit_generics_mut(self, generics);
         bounds_to_where(generics);
+        if !self.in_macro_input
+            && let Some(clause) = &mut generics.where_clause
+        {
+            for predicate in &mut clause.predicates {
+                match predicate {
+                    syn::WherePredicate::Type(predicate) => {
+                        drop_trailing_plus(&mut predicate.bounds);
+                    }
+                    syn::WherePredicate::Lifetime(predicate) => {
+                        drop_trailing_plus(&mut predicate.bounds);
+                    }
+                    _ => {}
+                }
+            }
+        }
+    }
+
+    fn visit_item_trait_mut(&mut self, node: &mut syn::ItemTrait) {
+        syn::visit_mut::visit_item_trait_mut(self, node);
+        if !self.in_macro_input {
+            drop_trailing_plus(&mut node.supertraits);
+        }
+    }
+
+    fn visit_item_trait_alias_mut(&mut self, node: &mut syn::ItemTraitAlias) {
+        syn::visit_mut::visit_item_trait_alias_mut(self, node);
+        if !self.in_macro_input {
+            drop_trailing_plus(&mut node.bounds);
+        }
+    }
+
+    fn visit_trait_bound_mut(&mut self, node: &mut syn::TraitBound) {
+        syn::visit_mut::visit_trait_bound_mut(self, node);
+        if !self.in_macro_input {
+            fold_type_path(&mut node.path);
+            if node.paren_token.is_some() && !fn_sugar_output(&node.path) {
+                node.paren_token = None;
+            }
+        }
+    }
+
+    fn visit_trait_item_type_mut(&mut self, node: &mut syn::TraitItemType) {
+        syn::visit_mut::visit_trait_item_type_mut(self, node);
+        if !self.in_macro_input {
+            drop_trailing_plus(&mut node.bounds);
+        }
+    }
+
+    fn visit_type_impl_trait_mut(&mut self, node: &mut syn::TypeImplTrait) {
+        syn::visit_mut::visit_type_impl_trait_mut(self, node);
+        if !self.in_macro_input {
+            drop_trailing_plus(&mut node.bounds);
+        }
+    }
+
+    fn visit_type_trait_object_mut(&mut self, node: &mut syn::TypeTraitObject) {
+        syn::visit_mut::visit_type_trait_object_mut(self, node);
+        if !self.in_macro_input {
+            drop_trailing_plus(&mut node.bounds);
+        }
+    }
+
+    fn visit_constraint_mut(&mut self, node: &mut syn::Constraint) {
+        syn::visit_mut::visit_constraint_mut(self, node);
+        if !self.in_macro_input {
+            drop_trailing_plus(&mut node.bounds);
+        }
     }
 
     fn visit_type_reference_mut(&mut self, node: &mut syn::TypeReference) {
@@ -260,6 +345,9 @@ impl VisitMut for Drift {
         let outer = core::mem::replace(&mut self.in_impl_header, true);
         if let Some((path, _)) = &mut node.trait_ {
             self.visit_path_mut(path);
+            if !self.in_macro_input {
+                fold_type_path(path);
+            }
         }
         self.visit_type_mut(&mut node.self_ty);
         self.in_impl_header = outer;
@@ -308,42 +396,78 @@ impl VisitMut for Drift {
         if !macro_derived && let Some(attrs) = item_attrs(item) {
             strip_inert_attrs(attrs);
         }
-        let outer = core::mem::replace(&mut self.in_derive_input, macro_derived);
+        let macro_input = self.in_macro_input
+            || macro_derived
+            || item_attrs(item).is_some_and(|attrs| has_macro_attribute(attrs));
+        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
         syn::visit_mut::visit_item_mut(self, item);
-        self.in_derive_input = outer;
+        self.in_macro_input = outer;
     }
 
     fn visit_impl_item_mut(&mut self, item: &mut syn::ImplItem) {
-        match item {
-            syn::ImplItem::Const(v) => strip_inert_attrs(&mut v.attrs),
-            syn::ImplItem::Fn(v) => strip_inert_attrs(&mut v.attrs),
-            syn::ImplItem::Type(v) => strip_inert_attrs(&mut v.attrs),
-            syn::ImplItem::Macro(v) => strip_inert_attrs(&mut v.attrs),
-            _ => {}
+        let attrs = match item {
+            syn::ImplItem::Const(v) => Some(&mut v.attrs),
+            syn::ImplItem::Fn(v) => Some(&mut v.attrs),
+            syn::ImplItem::Type(v) => Some(&mut v.attrs),
+            syn::ImplItem::Macro(v) => Some(&mut v.attrs),
+            _ => None,
+        };
+        let macro_input = self.in_macro_input
+            || attrs
+                .as_ref()
+                .is_some_and(|attrs| has_macro_attribute(attrs));
+        if let Some(attrs) = attrs {
+            strip_inert_attrs(attrs);
         }
+        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
         syn::visit_mut::visit_impl_item_mut(self, item);
+        self.in_macro_input = outer;
     }
 
     fn visit_trait_item_mut(&mut self, item: &mut syn::TraitItem) {
-        match item {
-            syn::TraitItem::Const(v) => strip_inert_attrs(&mut v.attrs),
-            syn::TraitItem::Fn(v) => strip_inert_attrs(&mut v.attrs),
-            syn::TraitItem::Type(v) => strip_inert_attrs(&mut v.attrs),
-            syn::TraitItem::Macro(v) => strip_inert_attrs(&mut v.attrs),
-            _ => {}
+        let attrs = match item {
+            syn::TraitItem::Const(v) => Some(&mut v.attrs),
+            syn::TraitItem::Fn(v) => Some(&mut v.attrs),
+            syn::TraitItem::Type(v) => Some(&mut v.attrs),
+            syn::TraitItem::Macro(v) => Some(&mut v.attrs),
+            _ => None,
+        };
+        let macro_input = self.in_macro_input
+            || attrs
+                .as_ref()
+                .is_some_and(|attrs| has_macro_attribute(attrs));
+        if let Some(attrs) = attrs {
+            strip_inert_attrs(attrs);
         }
+        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
         syn::visit_mut::visit_trait_item_mut(self, item);
+        self.in_macro_input = outer;
+    }
+
+    fn visit_foreign_item_mut(&mut self, item: &mut syn::ForeignItem) {
+        let attrs = match item {
+            syn::ForeignItem::Fn(v) => Some(&v.attrs),
+            syn::ForeignItem::Static(v) => Some(&v.attrs),
+            syn::ForeignItem::Type(v) => Some(&v.attrs),
+            syn::ForeignItem::Macro(v) => Some(&v.attrs),
+            _ => None,
+        };
+        let macro_input =
+            self.in_macro_input || attrs.is_some_and(|attrs| has_macro_attribute(attrs));
+        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
+        syn::visit_mut::visit_foreign_item_mut(self, item);
+        self.in_macro_input = outer;
     }
 
     fn visit_field_mut(&mut self, field: &mut syn::Field) {
-        if !self.in_derive_input {
+        if !self.in_macro_input {
             strip_inert_attrs(&mut field.attrs);
         }
         syn::visit_mut::visit_field_mut(self, field);
     }
 
     fn visit_variant_mut(&mut self, variant: &mut syn::Variant) {
-        if !self.in_derive_input {
+        if !self.in_macro_input {
             strip_inert_attrs(&mut variant.attrs);
         }
         syn::visit_mut::visit_variant_mut(self, variant);
@@ -439,6 +563,32 @@ fn drop_binding_mut(pat: &mut syn::Pat) {
         && ident.by_ref.is_none()
     {
         ident.mutability = None;
+    }
+}
+
+/// Normalize a shared `Self` receiver without changing its lifetime or borrow kind.
+fn fold_explicit_shared_receiver(receiver: &mut syn::Receiver) {
+    if receiver.mutability.is_some() {
+        return;
+    }
+    let syn::ReceiverKind::Typed(_colon, ty) = &mut receiver.kind else {
+        return;
+    };
+    let syn::Type::Reference(reference) = &mut **ty else {
+        return;
+    };
+    if reference.mutability.is_some() {
+        return;
+    }
+    let syn::Type::Path(path) = reference.elem.as_ref() else {
+        return;
+    };
+    if path.attrs.is_empty() && path.qself.is_none() && path.path.is_ident("Self") {
+        let (ampersand, lifetime) = (
+            reference.and_token,
+            core::mem::take(&mut reference.lifetime),
+        );
+        receiver.kind = syn::ReceiverKind::Reference(ampersand, lifetime, None);
     }
 }
 
@@ -612,6 +762,14 @@ fn fold_unit_return(output: &mut syn::ReturnType) {
     }
 }
 
+fn fold_type_path(path: &mut syn::Path) {
+    for segment in &mut path.segments {
+        if let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments {
+            args.colon2_token = None;
+        }
+    }
+}
+
 /// Remove a no-attribute `Expr::Paren` wrapper, leaving the inner expression.
 fn fold_paren_expr(expr: &mut syn::Expr) {
     if !matches!(expr, syn::Expr::Paren(p) if p.attrs.is_empty()) {
@@ -687,6 +845,19 @@ fn bounds_to_where(generics: &mut syn::Generics) {
     clause.predicates.extend(written);
 }
 
+/// Bounds retain their order and values.
+fn drop_trailing_plus<T>(bounds: &mut syn::punctuated::Punctuated<T, syn::Token![+]>) {
+    bounds.pop_punct();
+}
+
+/// Function-trait output types can absorb a following bound separator.
+fn fn_sugar_output(path: &syn::Path) -> bool {
+    matches!(
+        path.segments.last().map(|segment| &segment.arguments),
+        Some(syn::PathArguments::Parenthesized(args)) if matches!(args.output, syn::ReturnType::Type(..))
+    )
+}
+
 /// Drop every `'_` argument from angle-bracketed path arguments, and the
 /// brackets once nothing is left, `Foo<'_>` spelling `Foo`.
 fn drop_anonymous_lifetimes(arguments: &mut syn::PathArguments) {
@@ -739,6 +910,30 @@ fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
                 })
             })
         })
+}
+
+fn has_macro_attribute(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| {
+        !is_inert_attr(attr)
+            && ![
+                "cfg",
+                "derive",
+                "inline",
+                "cold",
+                "repr",
+                "must_use",
+                "deprecated",
+                "non_exhaustive",
+                "track_caller",
+                "no_mangle",
+                "export_name",
+                "link_name",
+                "link_section",
+                "automatically_derived",
+            ]
+            .iter()
+            .any(|name| attr.path().is_ident(name))
+    })
 }
 
 /// Merge an item's `derive` attributes into one sorted list at the place of
