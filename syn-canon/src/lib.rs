@@ -1355,6 +1355,304 @@ mod tests {
     }
 
     #[test]
+    fn spelling_drift_type_position_turbofish() {
+        assert_merge(&[
+            ("type A = Vec::<u8>;", "type A = Vec<u8>;"),
+            (
+                "type A = <Vec::<u8> as IntoIterator>::Item;",
+                "type A = <Vec<u8> as IntoIterator>::Item;",
+            ),
+            (
+                "fn f(x: Option::<Vec::<u8>>) -> usize { x.map_or(0, |v| v.len()) }",
+                "fn f(x: Option<Vec<u8>>) -> usize { x.map_or(0, |v| v.len()) }",
+            ),
+            (
+                "trait Tr<T> {} fn f<T: Tr::<u8>>(x: T) {}",
+                "trait Tr<T> {} fn f<T: Tr<u8>>(x: T) {}",
+            ),
+            (
+                "trait Tr<T> {} struct S; impl Tr::<u8> for S {}",
+                "trait Tr<T> {} struct S; impl Tr<u8> for S {}",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn spelling_drift_trailing_bound_separator() {
+        assert_merge(&[
+            (
+                "fn f<T: Clone +>(x: T) -> T { x.clone() }",
+                "fn f<T: Clone>(x: T) -> T { x.clone() }",
+            ),
+            (
+                "fn f<T>(x: T) -> T where T: Clone + { x.clone() }",
+                "fn f<T>(x: T) -> T where T: Clone { x.clone() }",
+            ),
+            ("trait T: Send + {}", "trait T: Send {}"),
+            ("type A = dyn Send +;", "type A = dyn Send;"),
+            (
+                "fn f() -> impl Clone + { 1u8 }",
+                "fn f() -> impl Clone { 1u8 }",
+            ),
+            ("trait T { type A: Clone +; }", "trait T { type A: Clone; }"),
+            ("fn f<'a: 'static +>() {}", "fn f<'a: 'static>() {}"),
+            ("trait A = Send +;", "trait A = Send;"),
+            (
+                "fn f<T: Iterator<Item: Clone +>>(x: T) {}",
+                "fn f<T: Iterator<Item: Clone>>(x: T) {}",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn spelling_drift_parenthesized_single_bound() {
+        assert_merge(&[
+            (
+                "fn f<T: (Clone)>(x: T) -> T { x.clone() }",
+                "fn f<T: Clone>(x: T) -> T { x.clone() }",
+            ),
+            ("trait T: (Send) {}", "trait T: Send {}"),
+            ("type A = dyn (Send);", "type A = dyn Send;"),
+            (
+                "fn f<T: Iterator<Item: (Clone)>>(x: T) {}",
+                "fn f<T: Iterator<Item: Clone>>(x: T) {}",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn spelling_drift_function_pointer_unit_return() {
+        assert_merge(&[
+            ("type F = fn(u8) -> ();", "type F = fn(u8);"),
+            (
+                "type F = for<'a> unsafe extern \"C\" fn(&'a u8) -> ();",
+                "type F = for<'a> unsafe extern \"C\" fn(&'a u8);",
+            ),
+            (
+                "unsafe extern \"C\" { static F: fn(u8) -> (); fn take(f: fn() -> ()); }",
+                "unsafe extern \"C\" { static F: fn(u8); fn take(f: fn()); }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn spelling_drift_explicit_shared_receiver() {
+        assert_merge(&[
+            (
+                "struct S(u8); impl S { fn f(self: &Self) -> u8 { self.0 } }",
+                "struct S(u8); impl S { fn f(&self) -> u8 { self.0 } }",
+            ),
+            (
+                "struct S(u8); impl S { fn f<'a>(self: &'a Self) -> &'a u8 { &self.0 } }",
+                "struct S(u8); impl S { fn f<'a>(&'a self) -> &'a u8 { &self.0 } }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn spelling_drift_preserves_opaque_macro_inputs() {
+        for (a, b) in [
+            ("inspect!(Vec::<u8>);", "inspect!(Vec<u8>);"),
+            ("inspect!(T: Clone +);", "inspect!(T: Clone);"),
+            ("inspect!(T: (Clone));", "inspect!(T: Clone);"),
+            ("inspect!(fn(u8) -> ());", "inspect!(fn(u8));"),
+            ("inspect!(self: &Self);", "inspect!(&self);"),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn spelling_drift_preserves_derive_inputs() {
+        for (a, b) in [
+            (
+                "#[derive(Inspect)] struct S(Vec::<u8>);",
+                "#[derive(Inspect)] struct S(Vec<u8>);",
+            ),
+            (
+                "#[derive(Inspect)] struct S<T: Clone +>(T);",
+                "#[derive(Inspect)] struct S<T: Clone>(T);",
+            ),
+            (
+                "#[derive(Inspect)] struct S<T: (Clone)>(T);",
+                "#[derive(Inspect)] struct S<T: Clone>(T);",
+            ),
+            (
+                "#[derive(Inspect)] struct S(fn(u8) -> ());",
+                "#[derive(Inspect)] struct S(fn(u8));",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn spelling_drift_preserves_attribute_inputs() {
+        for (a, b) in [
+            (
+                "#[inspect] type A = Vec::<u8>;",
+                "#[inspect] type A = Vec<u8>;",
+            ),
+            (
+                "#[inspect] fn f<T: Clone +>(x: T) -> T { x.clone() }",
+                "#[inspect] fn f<T: Clone>(x: T) -> T { x.clone() }",
+            ),
+            (
+                "#[inspect] fn f<T: (Clone)>(x: T) -> T { x.clone() }",
+                "#[inspect] fn f<T: Clone>(x: T) -> T { x.clone() }",
+            ),
+            (
+                "#[inspect] type F = fn(u8) -> ();",
+                "#[inspect] type F = fn(u8);",
+            ),
+            (
+                "struct S; #[inspect] impl S { fn f(self: &Self) {} }",
+                "struct S; #[inspect] impl S { fn f(&self) {} }",
+            ),
+            (
+                "#[derive(Inspect)] struct S([u8; { type F = fn() -> (); 0 }]);",
+                "#[derive(Inspect)] struct S([u8; { type F = fn(); 0 }]);",
+            ),
+            (
+                "struct S; impl S { #[inspect] fn f(self: &Self) {} }",
+                "struct S; impl S { #[inspect] fn f(&self) {} }",
+            ),
+            (
+                "trait Tr { #[inspect] fn f(self: &Self); }",
+                "trait Tr { #[inspect] fn f(&self); }",
+            ),
+            (
+                "unsafe extern \"C\" { #[inspect] static F: fn(u8) -> (); }",
+                "unsafe extern \"C\" { #[inspect] static F: fn(u8); }",
+            ),
+            (
+                "unsafe extern \"C\" { #[inspect] fn take(f: fn() -> ()); }",
+                "unsafe extern \"C\" { #[inspect] fn take(f: fn()); }",
+            ),
+            (
+                "unsafe extern \"C\" { #[inspect = 1 as fn() -> ()] type T; }",
+                "unsafe extern \"C\" { #[inspect = 1 as fn()] type T; }",
+            ),
+            (
+                "unsafe extern \"C\" { #[inspect = 1 as fn() -> ()] m!(); }",
+                "unsafe extern \"C\" { #[inspect = 1 as fn()] m!(); }",
+            ),
+            (
+                "#[inspect] trait T: Send + {}",
+                "#[inspect] trait T: Send {}",
+            ),
+            ("#[inspect] trait T = Send +;", "#[inspect] trait T = Send;"),
+            (
+                "trait T { #[inspect] type A: Clone +; }",
+                "trait T { #[inspect] type A: Clone; }",
+            ),
+            (
+                "#[inspect] fn f() -> impl Clone + { 1u8 }",
+                "#[inspect] fn f() -> impl Clone { 1u8 }",
+            ),
+            (
+                "#[inspect] type A = dyn Send +;",
+                "#[inspect] type A = dyn Send;",
+            ),
+            (
+                "#[inspect] fn f<T: Iterator<Item: Clone +>>(x: T) {}",
+                "#[inspect] fn f<T: Iterator<Item: Clone>>(x: T) {}",
+            ),
+            (
+                "trait Tr<T> {} struct S; #[inspect] impl Tr::<u8> for S {}",
+                "trait Tr<T> {} struct S; #[inspect] impl Tr<u8> for S {}",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn spelling_drift_preserves_verbatim_items() {
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        for (a, b) in [
+            (
+                "struct S; impl S { type A: Clone +; }",
+                "struct S; impl S { type A: Clone; }",
+            ),
+            ("trait T { pub fn f() -> (); }", "trait T { pub fn f(); }"),
+            (
+                "unsafe extern \"C\" { type A: Clone +; }",
+                "unsafe extern \"C\" { type A: Clone; }",
+            ),
+        ] {
+            assert_ne!(failing(a), failing(b), "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn spelling_drift_failing_programs_keep_equivalent_spellings() {
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        for (a, b) in [
+            (
+                "fn f(x: Vec::<u8>) { missing(x); }",
+                "fn f(x: Vec<u8>) { missing(x); }",
+            ),
+            (
+                "fn f<T: Clone +>(x: T) { missing(x); }",
+                "fn f<T: Clone>(x: T) { missing(x); }",
+            ),
+            (
+                "fn f<T: (Clone)>(x: T) { missing(x); }",
+                "fn f<T: Clone>(x: T) { missing(x); }",
+            ),
+            (
+                "type F = fn(u8) -> (); missing();",
+                "type F = fn(u8); missing();",
+            ),
+            (
+                "struct S; impl S { fn f(self: &Self) { missing(); } }",
+                "struct S; impl S { fn f(&self) { missing(); } }",
+            ),
+        ] {
+            assert_eq!(failing(a), failing(b), "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn function_bounds_keep_output_grouping_parentheses() {
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        assert_ne!(
+            failing("fn f<T: (Fn() -> &'static dyn core::fmt::Display) + Clone>(x: T) {}"),
+            failing("fn f<T: Fn() -> &'static dyn core::fmt::Display + Clone>(x: T) {}")
+        );
+    }
+
+    #[test]
+    fn shared_and_mutable_receivers_keep_their_borrow_kind() {
+        assert_ne!(
+            canonicalize("struct S(u8); impl S { fn f(&self) -> u8 { self.0 } }").text,
+            canonicalize("struct S(u8); impl S { fn f(&mut self) -> u8 { self.0 } }").text
+        );
+        assert_ne!(
+            canonicalize("struct S(u8); impl S { fn f(self: &Self) -> u8 { self.0 } }").text,
+            canonicalize("struct S(u8); impl S { fn f(self: &mut Self) -> u8 { self.0 } }").text
+        );
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        assert_ne!(
+            failing(
+                "struct S; impl S { fn f<'a>(mut self: &'a Self, other: &'a Self) { self = other; } }"
+            ),
+            failing(
+                "struct S; impl S { fn f<'a>(self: &'a Self, other: &'a Self) { self = other; } }"
+            )
+        );
+        assert_ne!(
+            failing("struct S; struct Other; impl S { fn f(self: &Other) {} }"),
+            failing("struct S; struct Other; impl S { fn f(&self) {} }")
+        );
+        assert_ne!(
+            failing("struct S; impl S { fn f(self: &[Self]) {} }"),
+            failing("struct S; impl S { fn f(&self) {} }")
+        );
+    }
+
+    #[test]
     fn unit_return_type_folds_fn() {
         let a = canonicalize("fn f() -> () {}");
         let b = canonicalize("fn f() {}");
@@ -1394,6 +1692,110 @@ mod tests {
         let a = canonicalize("let pino = 1;\npino + 1\n");
         let b = canonicalize("let abete = 1;\nabete + 1\n");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn raw_bindings_resolve_through_either_spelling() {
+        assert_merge(&[
+            ("let r#value = 2; f(value);", "let value = 2; f(value);"),
+            ("let value = 2; f(r#value);", "let value = 2; f(value);"),
+            (
+                "fn f(r#value: u8) -> u8 { value }",
+                "fn g(value: u8) -> u8 { value }",
+            ),
+            (
+                "mod r#inner { pub fn r#value() -> u8 { 2 } } let n = inner::value();",
+                "mod outer { pub fn result() -> u8 { 2 } } let n = outer::result();",
+            ),
+            (
+                "struct r#Value; let _: Value = r#Value;",
+                "struct Other; let _: Other = Other;",
+            ),
+            (
+                "use std::mem::drop as r#dispose; dispose(2);",
+                "use std::mem::drop as discard; discard(2);",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn raw_shadowing_uses_the_nearest_binding() {
+        for raw in [
+            "fn f() -> u8 { let x = 1; let r#x = 2; x }",
+            "fn f() -> u8 { let r#x = 1; let x = 2; r#x }",
+        ] {
+            assert_eq!(
+                canonicalize(raw).text,
+                canonicalize("fn g() -> u8 { let a = 1; let a = 2; a }").text
+            );
+            assert_ne!(
+                canonicalize(raw).text,
+                canonicalize("fn g() -> u8 { let a = 1; let b = 2; a }").text
+            );
+        }
+    }
+
+    #[test]
+    fn raw_identifier_macro_inputs_keep_their_spelling() {
+        assert_split(&[
+            (
+                "let value = 2; opaque!(r#value);",
+                "let value = 2; opaque!(value);",
+            ),
+            (
+                "let r#value = 2; opaque!(value);",
+                "let other = 2; opaque!(other);",
+            ),
+            (
+                "let value = 1; let r#value = 2; opaque!(value);",
+                "let value = 1; let other = 2; opaque!(value);",
+            ),
+            (
+                "let value = 1; { let r#value = 2; opaque!(value); }",
+                "let value = 1; { let other = 2; opaque!(value); }",
+            ),
+            (
+                "struct r#Value; opaque!(::r#Value);",
+                "struct r#Value; opaque!(r#Value);",
+            ),
+            (
+                "mod inner { pub fn value() {} } opaque!(inner::r#value);",
+                "mod inner { pub fn value() {} } opaque!(inner::value);",
+            ),
+            (
+                "mod inner { pub fn r#value() {} } opaque!(inner::value);",
+                "mod inner { pub fn other() {} } opaque!(inner::other);",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn raw_unit_patterns_keep_their_item_relationship() {
+        assert_merge(&[(
+            "struct r#Unit; fn f(x: Unit) { let r#Unit = x; }",
+            "struct Other; fn g(x: Other) { let Other = x; }",
+        )]);
+    }
+
+    #[test]
+    fn raw_binding_resolution_preserves_compilation_failures() {
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        assert_eq!(
+            failing("fn f() { let r#value = 2; missing(value); }"),
+            failing("fn g() { let other = 2; missing(other); }")
+        );
+        assert_ne!(
+            failing("fn f() { let value = 2; missing(r#unbound); }"),
+            failing("fn g() { let other = 2; missing(other); }")
+        );
+        assert_ne!(
+            failing("fn f<'r#static>(x: &'static u8) -> &'static u8 { x }"),
+            failing("fn g<'a>(x: &'a u8) -> &'a u8 { x }")
+        );
+        assert_ne!(
+            failing("'r#static: loop { break 'static; }"),
+            failing("'good: loop { break 'good; }")
+        );
     }
 
     #[test]

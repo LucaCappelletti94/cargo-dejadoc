@@ -43,24 +43,39 @@ enum Ns {
     Macro,
 }
 
+impl Ns {
+    fn key(self, name: &str) -> &str {
+        match self {
+            Self::Value | Self::Type | Self::Macro => name.strip_prefix("r#").unwrap_or(name),
+            Self::Lifetime | Self::Label => name,
+        }
+    }
+}
+
+struct Binding {
+    canon: String,
+    raw: bool,
+}
+
 /// A scope frame, one per block, function, generics list, impl, closure
 /// or `for<'a>` binder, with one map per namespace.
 #[derive(Default)]
-struct Frame([BTreeMap<String, String>; 5]);
+struct Frame([BTreeMap<String, Binding>; 5]);
 
 impl Frame {
-    fn bind(&mut self, ns: Ns, name: String, canon: String) {
+    fn bind(&mut self, ns: Ns, name: &str, canon: String) {
+        let raw = name.starts_with("r#");
         // A fieldless enum's discriminant, 0 to 4.
-        self.0[ns as usize].insert(name, canon);
+        self.0[ns as usize].insert(ns.key(name).to_string(), Binding { canon, raw });
     }
 
-    fn lookup(&self, ns: Ns, name: &str) -> Option<&String> {
+    fn lookup(&self, ns: Ns, name: &str) -> Option<&Binding> {
         // A fieldless enum's discriminant, 0 to 4.
-        self.0[ns as usize].get(name)
+        self.0[ns as usize].get(ns.key(name))
     }
 
     /// First binder of `name` in `ns`, in priority order.
-    fn lookup_any(&self, ns: &[Ns], name: &str) -> Option<&String> {
+    fn lookup_any(&self, ns: &[Ns], name: &str) -> Option<&Binding> {
         ns.iter().find_map(|ns| self.lookup(*ns, name))
     }
 }
@@ -80,6 +95,8 @@ struct Renamer {
     in_type: bool,
     /// A bare `<T>` was just visited, so the next path names associated items of `T`.
     after_bare_qself: bool,
+    /// Raw-involved identifiers in macro input keep their token spelling.
+    opaque_tokens: bool,
 }
 
 impl Renamer {
@@ -91,6 +108,7 @@ impl Renamer {
             self_ty: None,
             in_type: false,
             after_bare_qself: false,
+            opaque_tokens: false,
         }
     }
 
@@ -114,7 +132,7 @@ impl Renamer {
         self.frames
             .last_mut()
             .expect("a scope frame")
-            .bind(ns, name.to_string(), canon);
+            .bind(ns, name, canon);
     }
 
     /// Bind `ident` in the current frame and rename it.
@@ -137,8 +155,10 @@ impl Renamer {
     fn lookup(&self, ns: &[Ns], name: &str) -> Option<String> {
         for ns in ns {
             for frame in self.frames.iter().rev() {
-                if let Some(canon) = frame.lookup(*ns, name) {
-                    return Some(canon.clone());
+                if let Some(binding) = frame.lookup(*ns, name) {
+                    // Opaque tokens retain raw spelling without falling through a shadowing binder.
+                    return (!self.opaque_tokens || (!binding.raw && !name.starts_with("r#")))
+                        .then(|| binding.canon.clone());
                 }
             }
         }
@@ -150,7 +170,7 @@ impl Renamer {
     fn rename_binder(&mut self, ns: Ns, ident: &mut Ident) -> String {
         let name = ident.to_string();
         let canon = match self.frames.last().and_then(|frame| frame.lookup(ns, &name)) {
-            Some(canon) => canon.clone(),
+            Some(binding) => binding.canon.clone(),
             None => self.bind(ns, &name),
         };
         rename(ident, &canon);
@@ -186,7 +206,14 @@ impl Renamer {
     /// Drop a leading `::` when no local item binds the first segment `first`
     /// of its path, `::std` and `std` then naming the same crate.
     fn unroot(&self, leading_colon: &mut Option<syn::Token![::]>, first: Option<&Ident>) {
-        if first.is_some_and(|first| self.lookup(&[Ns::Type], &first.to_string()).is_none()) {
+        if leading_colon.is_some()
+            && first.is_some_and(|first| {
+                let name = first.to_string();
+                self.frames
+                    .iter()
+                    .all(|frame| frame.lookup(Ns::Type, &name).is_none())
+            })
+        {
             *leading_colon = None;
         }
     }
@@ -216,7 +243,10 @@ impl Renamer {
                 else {
                     break;
                 };
-                canon = next.clone();
+                if self.opaque_tokens && (next.raw || segment.ident.to_string().starts_with("r#")) {
+                    break;
+                }
+                canon = next.canon.clone();
                 rename(&mut segment.ident, &canon);
             }
         }
@@ -395,10 +425,11 @@ pub(crate) fn normalize_file(file: &mut syn::File) {
 /// True for an ident pattern that names a unit struct, variant, or
 /// const rather than a binding, by the uppercase naming convention.
 fn is_unit_path(id: &syn::PatIdent) -> bool {
+    let name = id.ident.to_string();
     id.by_ref.is_none()
         && id.mutability.is_none()
         && id.subpat.is_none()
-        && id.ident.to_string().starts_with(|c: char| c.is_uppercase())
+        && Ns::Value.key(&name).starts_with(|c: char| c.is_uppercase())
 }
 
 /// Call `f` on every identifier pattern of `pat`, in traversal order.
@@ -977,7 +1008,9 @@ impl VisitMut for Renamer {
             self.resolve(&[Ns::Macro], &mut first.ident);
         }
         let format_at = crate::drift::format_operand(&mac.path).map(|(at, _)| at);
+        let outer = core::mem::replace(&mut self.opaque_tokens, true);
         mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
+        self.opaque_tokens = outer;
     }
 
     fn visit_type_path_mut(&mut self, node: &mut syn::TypePath) {
