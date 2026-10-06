@@ -80,6 +80,9 @@ fn canon_float_str(s: &str) -> String {
 /// Fold arm braces, doc attributes, and `use` shapes in place. When `compiles`, also fold the
 /// spellings only a compiling program makes equivalent.
 pub(crate) fn normalize_file(file: &mut syn::File, compiles: bool) {
+    if compiles {
+        crate::const_items::inline_array_constants(file);
+    }
     Drift {
         compiles,
         ..Drift::default()
@@ -189,16 +192,28 @@ impl VisitMut for Drift {
         fold_paren_expr(expr);
         if let syn::Expr::If(expr_if) = expr {
             collapse_else_if(expr_if);
+            if self.compiles && !self.in_macro_input {
+                fold_empty_else(expr_if);
+            }
         }
         if let syn::Expr::Closure(closure) = expr {
-            if !self.in_macro_input
-                && closure.inputs.trailing_punct()
-                && !closure
-                    .inputs
-                    .iter_mut()
-                    .any(|pat| pat_attrs(pat).is_some_and(|attrs| has_macro_attribute(attrs)))
-            {
-                closure.inputs.pop_punct();
+            let protected_inputs = closure
+                .inputs
+                .iter_mut()
+                .any(|pat| pat_attrs(pat).is_some_and(|attrs| has_macro_attribute(attrs)));
+            if !self.in_macro_input && !protected_inputs {
+                if closure.inputs.trailing_punct() {
+                    closure.inputs.pop_punct();
+                }
+                if matches!(
+                    closure.body.as_ref(),
+                    syn::Expr::Block(block)
+                        if block.attrs.is_empty()
+                            && block.label.is_none()
+                            && block.block.stmts.is_empty()
+                ) {
+                    fold_unit_return(&mut closure.output);
+                }
             }
             if let syn::Expr::Block(block) = closure.body.as_mut() {
                 fold_tail_return(&mut block.block.stmts);
@@ -222,6 +237,12 @@ impl VisitMut for Drift {
             }
             if let Some(block) = unit_block(expr) {
                 drop_tail_semicolon(&mut block.stmts);
+            }
+        }
+        if !self.in_macro_input {
+            fold_signed_zero(expr);
+            if self.compiles {
+                fold_scalar_const(expr);
             }
         }
         self.in_macro_input = outer;
@@ -287,6 +308,9 @@ impl VisitMut for Drift {
 
     fn visit_type_fn_ptr_mut(&mut self, node: &mut syn::TypeFnPtr) {
         syn::visit_mut::visit_type_fn_ptr_mut(self, node);
+        if self.compiles && !self.in_macro_input {
+            fold_fn_pointer_lifetime(node);
+        }
         if !self.in_macro_input {
             fold_unit_return(&mut node.output);
         }
@@ -344,6 +368,13 @@ impl VisitMut for Drift {
         syn::visit_mut::visit_angle_bracketed_generic_arguments_mut(self, node);
         if !self.in_macro_input {
             node.args.pop_punct();
+            if self.compiles {
+                for arg in &mut node.args {
+                    if let syn::GenericArgument::Const(expr) = arg {
+                        fold_scalar_argument_block(expr);
+                    }
+                }
+            }
         }
     }
 
@@ -913,6 +944,190 @@ fn fold_unit_return(output: &mut syn::ReturnType) {
     }
 }
 
+fn fold_fn_pointer_lifetime(node: &mut syn::TypeFnPtr) {
+    use syn::visit::Visit;
+
+    let Some(bound) = &node.lifetimes else {
+        return;
+    };
+    let Some(syn::GenericParam::Lifetime(binder)) = bound.lifetimes.first() else {
+        return;
+    };
+    if bound.lifetimes.len() != 1
+        || node.inputs.len() != 1
+        || node.variadic.is_some()
+        || !binder.attrs.is_empty()
+        || !binder.bounds.is_empty()
+        || !node.inputs[0].attrs.is_empty()
+    {
+        return;
+    }
+    let spelling = binder.lifetime.ident.to_string();
+    if spelling.starts_with("r#") || matches!(spelling.as_str(), "static" | "_") {
+        return;
+    }
+    let syn::Type::Reference(reference) = &node.inputs[0].ty else {
+        return;
+    };
+    if reference.lifetime.as_ref() != Some(&binder.lifetime) {
+        return;
+    }
+    let mut uses = LifetimeUses {
+        name: &binder.lifetime.ident,
+        count: 0,
+        opaque: false,
+    };
+    uses.visit_type(&node.inputs[0].ty);
+    uses.visit_return_type(&node.output);
+    if uses.opaque || uses.count != 1 {
+        return;
+    }
+    node.lifetimes = None;
+    if let syn::Type::Reference(reference) = &mut node.inputs[0].ty {
+        reference.lifetime = None;
+    }
+}
+
+struct LifetimeUses<'a> {
+    name: &'a syn::Ident,
+    count: usize,
+    opaque: bool,
+}
+
+impl<'ast> syn::visit::Visit<'ast> for LifetimeUses<'_> {
+    fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
+        self.count += usize::from(lifetime.ident == *self.name);
+    }
+
+    fn visit_attribute(&mut self, _: &'ast syn::Attribute) {
+        self.opaque = true;
+    }
+
+    fn visit_bound_lifetimes(&mut self, _: &'ast syn::BoundLifetimes) {
+        self.opaque = true;
+    }
+
+    fn visit_type(&mut self, ty: &'ast syn::Type) {
+        if matches!(
+            ty,
+            syn::Type::FnPtr(_) | syn::Type::Group(_) | syn::Type::Verbatim(_)
+        ) {
+            self.opaque = true;
+        }
+        syn::visit::visit_type(self, ty);
+    }
+
+    fn visit_macro(&mut self, _: &'ast syn::Macro) {
+        self.opaque = true;
+    }
+
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        if matches!(expr, syn::Expr::Group(_) | syn::Expr::Verbatim(_)) {
+            self.opaque = true;
+        }
+        syn::visit::visit_expr(self, expr);
+    }
+
+    fn visit_type_param_bound(&mut self, bound: &'ast syn::TypeParamBound) {
+        if matches!(bound, syn::TypeParamBound::Verbatim(_)) {
+            self.opaque = true;
+        }
+        syn::visit::visit_type_param_bound(self, bound);
+    }
+
+    fn visit_token_stream(&mut self, _: &'ast TokenStream) {
+        self.opaque = true;
+    }
+
+    fn visit_lit(&mut self, literal: &'ast syn::Lit) {
+        if matches!(literal, syn::Lit::Verbatim(_)) {
+            self.opaque = true;
+        }
+        syn::visit::visit_lit(self, literal);
+    }
+}
+
+fn fold_empty_else(expr_if: &mut syn::ExprIf) {
+    if expr_if
+        .else_branch
+        .as_ref()
+        .is_some_and(|(_, alternative)| {
+            matches!(
+                alternative.as_ref(),
+                syn::Expr::Block(block)
+                    if block.attrs.is_empty()
+                        && block.label.is_none()
+                        && block.block.stmts.is_empty()
+            )
+        })
+    {
+        expr_if.else_branch = None;
+    }
+}
+
+fn fold_scalar_const(expr: &mut syn::Expr) {
+    let syn::Expr::Const(block) = expr else {
+        return;
+    };
+    if block.attrs.is_empty()
+        && scalar_tail(&block.block.stmts)
+        && let Some(syn::Stmt::Expr(value, None)) = block.block.stmts.pop()
+    {
+        *expr = value;
+    }
+}
+
+fn fold_scalar_argument_block(expr: &mut syn::Expr) {
+    let syn::Expr::Block(block) = expr else {
+        return;
+    };
+    if block.attrs.is_empty()
+        && block.label.is_none()
+        && scalar_tail(&block.block.stmts)
+        && let Some(syn::Stmt::Expr(value, None)) = block.block.stmts.pop()
+    {
+        *expr = value;
+    }
+}
+
+fn scalar_tail(stmts: &[syn::Stmt]) -> bool {
+    matches!(
+        stmts,
+        [syn::Stmt::Expr(syn::Expr::Lit(literal), None)]
+            if literal.attrs.is_empty()
+                && matches!(
+                    literal.lit,
+                    syn::Lit::Int(_)
+                        | syn::Lit::Float(_)
+                        | syn::Lit::Bool(_)
+                        | syn::Lit::Char(_)
+                        | syn::Lit::Byte(_)
+                )
+    )
+}
+
+fn fold_signed_zero(expr: &mut syn::Expr) {
+    let syn::Expr::Unary(unary) = expr else {
+        return;
+    };
+    let syn::Expr::Lit(literal) = unary.expr.as_ref() else {
+        return;
+    };
+    if unary.attrs.is_empty()
+        && literal.attrs.is_empty()
+        && matches!(unary.op, syn::UnOp::Neg(_))
+        && matches!(
+            &literal.lit,
+            syn::Lit::Int(integer)
+                if integer.base10_digits().bytes().all(|digit| digit == b'0')
+                    && ["i8", "i16", "i32", "i64", "i128", "isize"]
+                        .contains(&integer.suffix())
+        )
+    {
+        *expr = core::mem::replace(unary.expr.as_mut(), syn::Expr::Verbatim(TokenStream::new()));
+    }
+}
+
 fn fold_type_path(path: &mut syn::Path) {
     for segment in &mut path.segments {
         if let syn::PathArguments::AngleBracketed(args) = &mut segment.arguments {
@@ -1043,7 +1258,7 @@ pub(crate) const STD_DERIVES: [&str; 9] = [
 ];
 
 /// Whether `attrs` derive anything outside the std derives, a proc macro that reads the item.
-fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
     use syn::parse::Parser;
 
     let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
@@ -1063,7 +1278,7 @@ fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
         })
 }
 
-fn has_macro_attribute(attrs: &[syn::Attribute]) -> bool {
+pub(crate) fn has_macro_attribute(attrs: &[syn::Attribute]) -> bool {
     attrs.iter().any(|attr| {
         !is_inert_attr(attr)
             && ![

@@ -38,6 +38,12 @@ Style folds, each applied only where it keeps the meaning:
 - Inline generic bounds move into `where`, `&'_ T` becomes `&T`, `Foo<'_>` becomes `Foo` outside an impl header, and `&'static` becomes `&` in a `const` or `static` type.
 - Type paths omit `::` before generic arguments, bound lists omit a trailing `+`, and simple trait bounds omit parentheses. Function-trait output bounds retain grouping parentheses.
 - Function-pointer and function-trait types omit a unit return, `self: &Self` becomes `&self` with named lifetimes preserved, and `self: Self` becomes `self`. These syntax folds also apply to `canonicalize_failing`.
+- Empty-body closures omit `-> ()`. Nonempty closure return annotations stay.
+- Unary minus goes from zero literals with an explicit signed integer suffix, such as `-0i8`. Unsuffixed integers, unsigned integers and floating-point zero retain the minus.
+- When the code compiles, an empty, unlabeled, attribute-free `else {}` goes.
+- When the code compiles, a function pointer with one lifetime binder used only by its single direct reference input elides that binder and reference lifetime. Bounds, shared output lifetimes, nested binders and opaque syntax stay.
+- When the code compiles, a `const` block containing only a scalar literal becomes that literal, including array lengths and const-generic arguments. Scalar const-generic arguments omit redundant braces, while strings and nonliteral bodies stay.
+- When the code compiles, private, attribute-free `usize` integer constants used only as direct array lengths are substituted and removed together. Other uses, shadowing, raw spellings, opaque references, imports and unresolved macros or modules keep the declaration.
 - Empty angle-bracketed path and method arguments go. Nonempty expression and method turbofish arguments stay, and `use<>` capture bounds stay.
 - Generic declaration and argument lists and closure parameter lists omit trailing commas without changing element order or tuple arity.
 - `pub(in crate)`, `pub(in self)` and `pub(in super)` omit `in`.

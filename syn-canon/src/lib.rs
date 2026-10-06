@@ -6,6 +6,7 @@ extern crate alloc;
 extern crate std;
 
 mod alpha;
+mod const_items;
 mod drift;
 
 use alloc::vec::Vec;
@@ -178,6 +179,287 @@ mod tests {
     fn canonicalize(code: &str) -> Canon {
         Canon {
             text: canon(parse(code)).to_string(),
+        }
+    }
+
+    #[test]
+    fn six_fold_const_items_account_all_uses() {
+        assert_merge(&[
+            (
+                "const N: usize = 4; const M: usize = 2; let a: [u8; N] = [0; N]; let b: [u8; M] = [0; M];",
+                "let a: [u8; 4] = [0; 4]; let b: [u8; 2] = [0; 2];",
+            ),
+            (
+                "const N: usize = 4usize; let a: [u8; N] = [0; N];",
+                "let a: [u8; 4usize] = [0; 4usize];",
+            ),
+        ]);
+        for (a, b) in [
+            ("const N: usize = 4; work();", "work();"),
+            ("const r#N: usize = 4; let a: [u8; N];", "let a: [u8; 4];"),
+            ("const N: usize = 4; let a: [u8; r#N];", "let a: [u8; 4];"),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn six_fold_function_pointer_lifetime_boundaries() {
+        for (a, b) in [
+            (
+                "let f: for<'a> fn(#[inspect] &'a u8) = read;",
+                "let f: fn(#[inspect] &u8) = read;",
+            ),
+            (
+                "let f: for<'a> fn(&'a &'a u8) = read;",
+                "let f: fn(&&'a u8) = read;",
+            ),
+            (
+                "let f: for<'a> fn(&'a (fn(&'a u8))) = read;",
+                "let f: fn(&(fn(&'a u8))) = read;",
+            ),
+            (
+                "let f: for<'a> fn(&'a opaque!()) = read;",
+                "let f: fn(&opaque!()) = read;",
+            ),
+            (
+                "let f: for<'a> fn(&'a [u8; { let _: &'a u8 = x; 4 }]) = read;",
+                "let f: fn(&[u8; { let _: &'a u8 = x; 4 }]) = read;",
+            ),
+            (
+                "let f: for<'a: 'b> fn(&'a u8) = read;",
+                "let f: fn(&u8) = read;",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn six_fold_empty_closure_output() {
+        for (a, b) in [
+            ("let f = || -> () {};", "let f = || {};"),
+            ("let f = |x: u8| -> () {};", "let f = |x: u8| {};"),
+        ] {
+            assert_eq!(canonicalize(a).text, canonicalize(b).text);
+            assert_eq!(
+                super::canonicalize_failing(parse(a)).to_string(),
+                super::canonicalize_failing(parse(b)).to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn six_fold_empty_else() {
+        assert_merge(&[
+            ("if b { work(); } else {}", "if b { work(); }"),
+            (
+                "if a { first(); } else if b { second(); } else {}",
+                "if a { first(); } else if b { second(); }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn six_fold_function_pointer_lifetime() {
+        assert_merge(&[
+            (
+                "let f: for<'a> fn(&'a u8) -> u8 = read;",
+                "let f: fn(&u8) -> u8 = read;",
+            ),
+            (
+                "let f: for<'a> unsafe extern \"C\" fn(&'a mut u8) = write;",
+                "let f: unsafe extern \"C\" fn(&mut u8) = write;",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn six_fold_literal_const_block() {
+        assert_merge(&[
+            ("let x = const { 7u8 };", "let x = 7u8;"),
+            ("let x = const { true };", "let x = true;"),
+            ("let x = const { 'x' };", "let x = 'x';"),
+            ("let x = [1u8; const { 7 }];", "let x = [1u8; 7];"),
+            ("f::<{ const { 7 } }>();", "f::<7>();"),
+        ]);
+    }
+
+    #[test]
+    fn six_fold_const_generic_literal_braces() {
+        assert_merge(&[
+            ("f::<{ const { 7 } }>();", "f::<7>();"),
+            ("f::<{ 7 }>();", "f::<7>();"),
+        ]);
+    }
+
+    #[test]
+    fn six_fold_signed_integer_zero() {
+        for suffix in ["i8", "i16", "i32", "i64", "i128", "isize"] {
+            let a = format!("let x = -0x0{suffix};");
+            let b = format!("let x = 0{suffix};");
+            assert_eq!(canonicalize(&a).text, canonicalize(&b).text);
+            assert_eq!(
+                super::canonicalize_failing(parse(&a)).to_string(),
+                super::canonicalize_failing(parse(&b)).to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn six_fold_const_item_array_length() {
+        assert_merge(&[
+            (
+                "const N: usize = 4; fn main() { let a: [u8; N] = [1, 2, 3, 4]; assert_eq!(a.len(), 4); }",
+                "fn main() { let a: [u8; 4] = [1, 2, 3, 4]; assert_eq!(a.len(), 4); }",
+            ),
+            (
+                "const N: usize = 4; let a: [u8; N] = [0; N];",
+                "let a: [u8; 4] = [0; 4];",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn six_fold_const_item_inline_module() {
+        assert_merge(&[(
+            "mod child { const N: usize = 4; pub fn f() { let a: [u8; N] = [0; N]; } }",
+            "mod child { pub fn f() { let a: [u8; 4] = [0; 4]; } }",
+        )]);
+    }
+
+    #[test]
+    fn six_fold_const_item_format_width_escape() {
+        assert_ne!(
+            canonicalize(
+                "const N: usize = 4; let a: [u8; N]; println!(\"{value:N$}\", value = 1);"
+            )
+            .text,
+            canonicalize("let a: [u8; 4]; println!(\"{value:N$}\", value = 1);").text,
+        );
+    }
+
+    #[test]
+    fn six_fold_preserves_semantic_neighbors() {
+        for (a, b) in [
+            ("let f = || -> () { panic!() };", "let f = || { panic!() };"),
+            ("if b { work(); } else { other(); }", "if b { work(); }"),
+            ("let x = const { { 7u8 } };", "let x = 7u8;"),
+            ("let x = const { let y = 7; y };", "let x = 7;"),
+            ("let x = const { \"text\" };", "let x = \"text\";"),
+            ("let x = -0;", "let x = 0;"),
+            ("let x = -0u8;", "let x = 0u8;"),
+            ("let x = -0.0f32;", "let x = 0.0f32;"),
+            ("let x = -1i8;", "let x = 1i8;"),
+            (
+                "let f: for<'a, 'b> fn(&'a u8, &'b u8) = read;",
+                "let f: fn(&u8, &u8) = read;",
+            ),
+            (
+                "let f: for<'a> fn(&'a u8) -> &'a u8 = read;",
+                "let f: fn(&u8) -> &u8 = read;",
+            ),
+            (
+                "let f: for<'r#static> fn(&'r#static u8) = read;",
+                "let f: fn(&u8) = read;",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+    }
+
+    #[test]
+    fn six_fold_preserves_failing_semantic_forms() {
+        for (a, b) in [
+            ("if b { work(); } else {}", "if b { work(); }"),
+            ("let x = const { 7u8 };", "let x = 7u8;"),
+            (
+                "let f: for<'a> fn(&'a u8) -> u8 = read;",
+                "let f: fn(&u8) -> u8 = read;",
+            ),
+            ("const N: usize = 4; let a: [u8; N];", "let a: [u8; 4];"),
+        ] {
+            assert_ne!(
+                super::canonicalize_failing(parse(a)).to_string(),
+                super::canonicalize_failing(parse(b)).to_string(),
+                "{a} vs {b}"
+            );
+        }
+    }
+
+    #[test]
+    fn six_fold_preserves_opaque_inputs() {
+        for (a, b) in [
+            ("let f = || -> () {};", "let f = || {};"),
+            ("if b { work(); } else {}", "if b { work(); }"),
+            ("let x = const { 7u8 };", "let x = 7u8;"),
+            ("let x = -0i8;", "let x = 0i8;"),
+            (
+                "let f: for<'a> fn(&'a u8) -> u8 = read;",
+                "let f: fn(&u8) -> u8 = read;",
+            ),
+            ("const N: usize = 4; let a: [u8; N];", "let a: [u8; 4];"),
+        ] {
+            let a = format!("#[inspect] fn f() {{ {a} }}");
+            let b = format!("#[inspect] fn f() {{ {b} }}");
+            assert_ne!(canonicalize(&a).text, canonicalize(&b).text);
+        }
+        assert_ne!(
+            canonicalize("opaque!(-0i8, const { 7 }, || -> () {});").text,
+            canonicalize("opaque!(0i8, 7, || {});").text
+        );
+    }
+
+    #[test]
+    fn six_fold_preserves_const_item_escapes() {
+        for (a, b) in [
+            (
+                "const N: usize = 4; let a: [u8; N]; let x = N;",
+                "let a: [u8; 4]; let x = N;",
+            ),
+            (
+                "const N: usize = 4; let a: [u8; N]; assert_eq!(N, 4);",
+                "let a: [u8; 4]; assert_eq!(N, 4);",
+            ),
+            (
+                "const N: usize = 4; let a: [u8; N]; let x = r#N;",
+                "let a: [u8; 4]; let x = r#N;",
+            ),
+            (
+                "const N: usize = 4; let a: [u8; N]; assert_eq!(r#N, 4);",
+                "let a: [u8; 4]; assert_eq!(r#N, 4);",
+            ),
+            (
+                "const N: usize = 4; fn main() { let a: [u8; N]; let x = crate::r#N; }",
+                "fn main() { let a: [u8; 4]; let x = crate::r#N; }",
+            ),
+            (
+                "const N: usize = 4; { const r#N: usize = 2; let a: [u8; N]; }",
+                "{ const r#N: usize = 2; let a: [u8; 4]; }",
+            ),
+            ("pub const N: usize = 4; let a: [u8; N];", "let a: [u8; 4];"),
+            (
+                "const N: usize = 4; fn f<const N: usize>() { let a: [u8; N]; }",
+                "fn f<const N: usize>() { let a: [u8; 4]; }",
+            ),
+            (
+                "const N: usize = 4; { const N: usize = 2; let a: [u8; N]; }",
+                "{ const N: usize = 2; let a: [u8; 4]; }",
+            ),
+            (
+                "const N: usize = 4; let a: [u8; N]; opaque!();",
+                "let a: [u8; 4]; opaque!();",
+            ),
+            (
+                "use std::*; const N: usize = 4; let a: [u8; N];",
+                "use std::*; let a: [u8; 4];",
+            ),
+            (
+                "const N: usize = 4; mod child; let a: [u8; N];",
+                "mod child; let a: [u8; 4];",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
         }
     }
 
