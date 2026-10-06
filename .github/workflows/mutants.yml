@@ -56,6 +56,8 @@ jobs:
       - name: Install cargo-mutants
         run: cargo install cargo-mutants --locked
 
+      # `Analysis` discards hazardous candidates, and macro traversal rejects named definitions.
+      # Attribute payloads are opaque, leaves have no guarded descendants, and supported macro paths omit generics.
       - name: Run mutants
         run: >-
           cargo mutants --workspace --cap-lints true --timeout 180
@@ -69,3 +71,7 @@ jobs:
           -E 'replace \+ with - in flat_literal'
           -E 'replace match guard rustdoc with (true|false) in mod_decls'
           -E 'replace match guard path.exists\(\) with true in mod_decls'
+          -E '^syn-canon/src/const_items\.rs:\d+:\d+: replace match guard (!self\.hazard with true|mac\.ident\.is_some\(\) with false) in .*Analysis>::visit_item$'
+          -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Type::(Macro|Never)\(ty\) in type_attrs$'
+          -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Expr::(Continue|Lit|Macro)\(expr\) in expr_attrs$'
+          -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::ForeignItem::Macro\(v\) in <impl VisitMut for Drift>::visit_foreign_item_mut$'
