@@ -56,6 +56,7 @@ jobs:
       - name: Install cargo-mutants
         run: cargo install cargo-mutants --locked
 
+      # `Analysis` discards hazardous candidates, and macro traversal rejects named definitions.
       - name: Run mutants
         run: >-
           cargo mutants --workspace --cap-lints true --timeout 180
@@ -69,3 +70,4 @@ jobs:
           -E 'replace \+ with - in flat_literal'
           -E 'replace match guard rustdoc with (true|false) in mod_decls'
           -E 'replace match guard path.exists\(\) with true in mod_decls'
+          -E '^syn-canon/src/const_items\.rs:\d+:\d+: replace match guard (!self\.hazard with true|mac\.ident\.is_some\(\) with false) in .*Analysis>::visit_item$'

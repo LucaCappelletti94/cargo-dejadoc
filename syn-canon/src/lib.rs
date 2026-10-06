@@ -200,6 +200,227 @@ mod tests {
     }
 
     #[test]
+    fn mutation85_const_items_preserve_opaque_syntax() {
+        let mut alias: syn::ItemType = syn::parse_quote!(
+            type Alias = u8;
+        );
+        *alias.ty = syn::Type::Verbatim(quote::quote!(u8));
+        let syn::Stmt::Local(mut local) = syn::parse_quote!(let value = 0;) else {
+            unreachable!();
+        };
+        local.pat = syn::Pat::Verbatim(quote::quote!(value));
+        let mut foreign: syn::ItemForeignMod = syn::parse_quote!(
+            unsafe extern "C" {}
+        );
+        foreign.items.push(syn::ForeignItem::Verbatim(quote::quote!(
+            static FOREIGN: u8;
+        )));
+        let mut trait_item: syn::ItemTrait = syn::parse_quote!(
+            trait Marker {}
+        );
+        trait_item
+            .items
+            .push(syn::TraitItem::Verbatim(quote::quote!(
+                fn read(&self);
+            )));
+        let mut implementation: syn::ItemImpl = syn::parse_quote!(impl Target {});
+        implementation
+            .items
+            .push(syn::ImplItem::Verbatim(quote::quote!(
+                fn read(&self) {}
+            )));
+        let mut bounded: syn::ItemType = syn::parse_quote!(
+            type Bounded = dyn core::fmt::Debug;
+        );
+        let syn::Type::TraitObject(object) = bounded.ty.as_mut() else {
+            unreachable!();
+        };
+        object.bounds.clear();
+        object
+            .bounds
+            .push(syn::TypeParamBound::Verbatim(quote::quote!(
+                core::fmt::Debug
+            )));
+        for extra in [
+            syn::Stmt::Expr(
+                syn::Expr::Verbatim(quote::quote!(0)),
+                Some(syn::token::Semi::default()),
+            ),
+            syn::Stmt::Item(syn::Item::Type(alias)),
+            syn::Stmt::Local(local),
+            syn::Stmt::Expr(
+                syn::Expr::Lit(syn::ExprLit {
+                    attrs: Vec::new(),
+                    lit: syn::Lit::Verbatim(proc_macro2::Literal::usize_unsuffixed(0)),
+                }),
+                Some(syn::token::Semi::default()),
+            ),
+            syn::Stmt::Item(syn::Item::ForeignMod(foreign)),
+            syn::Stmt::Item(syn::Item::Trait(trait_item)),
+            syn::Stmt::Item(syn::Item::Impl(implementation)),
+            syn::Stmt::Item(syn::Item::Type(bounded)),
+        ] {
+            let texts = [
+                "struct Target; const N: usize = 4; let a: [u8; N] = [0; N];",
+                "struct Target; let a: [u8; 4] = [0; 4];",
+            ]
+            .map(|source| {
+                let mut file = parse(source);
+                let syn::Item::Fn(main) = &mut file.items[0] else {
+                    unreachable!();
+                };
+                main.block.stmts.push(extra.clone());
+                canon(file).to_string()
+            });
+            assert_ne!(texts[0], texts[1]);
+        }
+    }
+
+    #[test]
+    fn mutation85_pointer_lifetime_preserves_arity_variadics_and_binder_attributes() {
+        for (explicit, elided) in [
+            ("for<'a> fn()", "fn()"),
+            ("for<'a> fn(&'a u8, u8)", "fn(&u8, u8)"),
+            (
+                "for<'a> unsafe extern \"C\" fn(&'a u8, ...)",
+                "unsafe extern \"C\" fn(&u8, ...)",
+            ),
+            ("for<#[cfg(all())] 'a> fn(&'a u8)", "fn(&u8)"),
+        ] {
+            let a = type_input(syn::parse_str(explicit).unwrap());
+            let b = type_input(syn::parse_str(elided).unwrap());
+            assert_ne!(canon(a).to_string(), canon(b).to_string(), "{explicit}");
+        }
+    }
+
+    #[test]
+    fn mutation85_pointer_lifetime_preserves_opaque_array_patterns() {
+        let mut element: syn::Type = syn::parse_quote!(
+            [u8; {
+                let value = 0;
+                4
+            }]
+        );
+        let syn::Type::Array(array) = &mut element else {
+            unreachable!();
+        };
+        let syn::Expr::Block(block) = &mut array.len else {
+            unreachable!();
+        };
+        let syn::Stmt::Local(local) = &mut block.block.stmts[0] else {
+            unreachable!();
+        };
+        local.pat = syn::Pat::Verbatim(quote::quote!(value));
+        let explicit = pointer_with_element(element.clone(), true);
+        let elided = pointer_with_element(element, false);
+        assert_ne!(canon(explicit).to_string(), canon(elided).to_string());
+    }
+
+    #[test]
+    fn mutation85_const_items_accept_item_shaped_assertions() {
+        let texts = [
+            "const N: usize = 4; let a: [u8; N] = [0; N];",
+            "let a: [u8; 4] = [0; 4];",
+        ]
+        .map(|source| {
+            let mut file = parse(source);
+            let syn::Item::Fn(main) = &mut file.items[0] else {
+                unreachable!();
+            };
+            main.block.stmts.push(syn::Stmt::Item(syn::Item::Macro(
+                syn::parse_quote!(assert_eq!(1, 1);),
+            )));
+            canon(file).to_string()
+        });
+        assert_eq!(texts[0], texts[1]);
+    }
+
+    #[test]
+    fn mutation85_const_items_preserve_declaration_metadata() {
+        let original: syn::ItemConst = syn::parse_quote!(
+            const N: usize = 4;
+        );
+        let mut specialized = original.clone();
+        specialized.modifiers.defaultness = Some(syn::parse_quote!(default));
+        let mut generic = original.clone();
+        generic.generics = syn::parse_quote!(<T>);
+        let mut constrained = original.clone();
+        constrained.generics.where_clause = Some(syn::parse_quote!(where usize: Copy));
+        let mut attributed_type = original.clone();
+        let syn::Type::Path(path) = attributed_type.ty.as_mut() else {
+            unreachable!();
+        };
+        path.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        let mut attributed_literal = original;
+        let syn::Expr::Lit(literal) = attributed_literal.expr.as_mut() else {
+            unreachable!();
+        };
+        literal.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        for item in [
+            specialized,
+            generic,
+            constrained,
+            attributed_type,
+            attributed_literal,
+        ] {
+            let mut file = parse("const N: usize = 4; let a: [u8; N];");
+            let syn::Item::Fn(main) = &mut file.items[0] else {
+                unreachable!();
+            };
+            main.block.stmts[0] = syn::Stmt::Item(syn::Item::Const(item));
+            assert_ne!(
+                canon(file).to_string(),
+                canonicalize("let a: [u8; 4];").text
+            );
+        }
+    }
+
+    #[test]
+    fn mutation85_const_items_preserve_types_and_suffixes() {
+        assert_split(&[
+            (
+                "const N: <usize>::usize = 4; let a: [u8; N];",
+                "let a: [u8; 4];",
+            ),
+            ("const N: u32 = 4; let a: [u8; N];", "let a: [u8; 4];"),
+            (
+                "const N: usize = 4u32; let a: [u8; N];",
+                "let a: [u8; 4u32];",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn mutation85_const_items_preserve_attributed_length_paths() {
+        let mut file = parse("const N: usize = 4; let a: [u8; N];");
+        let syn::Item::Fn(main) = &mut file.items[0] else {
+            unreachable!();
+        };
+        let syn::Stmt::Local(local) = &mut main.block.stmts[1] else {
+            unreachable!();
+        };
+        let syn::Pat::Type(typed) = &mut local.pat else {
+            unreachable!();
+        };
+        let syn::Type::Array(array) = typed.ty.as_mut() else {
+            unreachable!();
+        };
+        let syn::Expr::Path(path) = &mut array.len else {
+            unreachable!();
+        };
+        path.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        assert_ne!(
+            canon(file).to_string(),
+            canonicalize("let a: [u8; 4];").text
+        );
+    }
+
+    #[test]
+    fn mutation85_const_items_inline_repeat_only_lengths() {
+        assert_merge(&[("const N: usize = 4; let a = [0; N];", "let a = [0; 4];")]);
+    }
+
+    #[test]
     fn six_fold_pointer_lifetime_retains_unmatched_and_nested_binders() {
         for (a, b) in [
             ("let f: for<> fn(&u8) = read;", "let f: fn(&u8) = read;"),
