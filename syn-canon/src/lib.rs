@@ -12,15 +12,13 @@ use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 
-/// The canonical token stream of `file`, equal across formatting drift and local binder names.
-/// `file` is taken to compile, so an unneeded `mut` and the semicolon of a `()` tail fold too.
+/// The canonical tokens of a compiling `file`, equal across style and local binder names.
 #[must_use]
 pub fn canonicalize(file: syn::File) -> TokenStream {
     canonical(file, true)
 }
 
-/// `canonicalize` for a `file` meant to fail compilation, a `compile_fail` doctest for instance,
-/// keeping the `mut` and the semicolons that may be the error it shows.
+/// The canonical tokens of a `file` meant to fail, retaining spellings whose equivalence requires compilation.
 #[must_use]
 pub fn canonicalize_failing(file: syn::File) -> TokenStream {
     canonical(file, false)
@@ -1352,6 +1350,602 @@ mod tests {
             canonicalize("mod std { pub fn f() {} }\n::std::mem::drop(1);").text,
             canonicalize("mod std { pub fn f() {} }\nstd::mem::drop(1);").text
         );
+    }
+
+    #[test]
+    fn grammar_drift_empty_path_arguments() {
+        for (a, b) in [
+            ("struct S; type A = S<>;", "struct S; type A = S;"),
+            (
+                "fn f() {} fn main() { f::<>(); }",
+                "fn f() {} fn main() { f(); }",
+            ),
+            (
+                "struct S; impl S { fn f(&self) {} } fn main() { S.f::<>(); }",
+                "struct S; impl S { fn f(&self) {} } fn main() { S.f(); }",
+            ),
+            (
+                "trait T {} struct S; impl T<> for S<> {}",
+                "trait T {} struct S; impl T for S {}",
+            ),
+            (
+                "struct S<'a>(&'a u8); impl S<> {}",
+                "struct S<'a>(&'a u8); impl S {}",
+            ),
+            (
+                "fn f<T>(x: T) { missing(x); } fn main() { f::<>(7); }",
+                "fn f<T>(x: T) { missing(x); } fn main() { f(7); }",
+            ),
+        ] {
+            assert_eq!(canonicalize(a).text, canonicalize(b).text, "{a}");
+            assert_eq!(
+                super::canonicalize_failing(parse(a)).to_string(),
+                super::canonicalize_failing(parse(b)).to_string(),
+                "{a}"
+            );
+        }
+    }
+
+    #[test]
+    fn empty_arguments_preserve_values_captures_and_macro_inputs() {
+        for (a, b) in [
+            ("fn f(x: Vec<u8>) {}", "fn f(x: Vec<u16>) {}"),
+            (
+                "fn f<T>(x: T) {} fn main() { f::<u8>(7); }",
+                "fn f<T>(x: T) {} fn main() { f::<u16>(7); }",
+            ),
+            (
+                "fn f(_: &u8) -> impl Sized + use<> { 7u8 }",
+                "fn f(_: &u8) -> impl Sized { 7u8 }",
+            ),
+            ("#[inspect] type A = S<>;", "#[inspect] type A = S;"),
+            (
+                "fn f() { #[inspect] let x: S<>; }",
+                "fn f() { #[inspect] let x: S; }",
+            ),
+            (
+                "fn f() { let x = #[inspect] g::<>(); }",
+                "fn f() { let x = #[inspect] g(); }",
+            ),
+            (
+                "#[inspect] fn f() { x.read::<>(); }",
+                "#[inspect] fn f() { x.read(); }",
+            ),
+            (
+                "#[derive(Inspect)] struct S(T<>);",
+                "#[derive(Inspect)] struct S(T);",
+            ),
+            ("inspect!(f::<>());", "inspect!(f());"),
+            ("fn f() { x.read::<u8>(); }", "fn f() { x.read::<u16>(); }"),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a}");
+        }
+    }
+
+    #[test]
+    fn grammar_drift_default_abi() {
+        assert_merge(&[
+            (
+                "extern fn f(x: u8) -> u8 { x }",
+                "extern \"C\" fn f(x: u8) -> u8 { x }",
+            ),
+            (
+                "type F = unsafe extern fn(u8) -> u8;",
+                "type F = unsafe extern \"C\" fn(u8) -> u8;",
+            ),
+            (
+                "unsafe extern { fn f(x: u8) -> u8; }",
+                "unsafe extern \"C\" { fn f(x: u8) -> u8; }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_drift_function_trait_unit_output() {
+        assert_merge(&[
+            (
+                "fn f<T: Fn(u8) -> ()>(x: T) { x(7); }",
+                "fn f<T: Fn(u8)>(x: T) { x(7); }",
+            ),
+            (
+                "fn f<T: FnMut() -> ()>(mut x: T) { x(); }",
+                "fn f<T: FnMut()>(mut x: T) { x(); }",
+            ),
+            (
+                "fn f<T: FnOnce() -> ()>(x: T) { x(); }",
+                "fn f<T: FnOnce()>(x: T) { x(); }",
+            ),
+            ("type F = dyn Fn(u8) -> ();", "type F = dyn Fn(u8);"),
+        ]);
+    }
+
+    #[test]
+    fn grammar_drift_restricted_visibility() {
+        assert_merge(&[
+            ("pub(in crate) struct S;", "pub(crate) struct S;"),
+            (
+                "mod m { pub(in self) fn f() {} }",
+                "mod m { pub(self) fn f() {} }",
+            ),
+            (
+                "mod m { pub(in super) struct S; }",
+                "mod m { pub(super) struct S; }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_drift_value_receiver() {
+        assert_merge(&[
+            (
+                "struct S(u8); impl S { fn f(self: Self) -> u8 { self.0 } }",
+                "struct S(u8); impl S { fn f(self) -> u8 { self.0 } }",
+            ),
+            (
+                "struct S(u8); impl S { fn f(mut self: Self) -> u8 { self.0 += 1; self.0 } }",
+                "struct S(u8); impl S { fn f(mut self) -> u8 { self.0 += 1; self.0 } }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_drift_leading_pattern_pipe() {
+        assert_merge(&[
+            (
+                "fn f(x: u8) -> u8 { match x { | 0 | 1 => 7, _ => 9 } }",
+                "fn f(x: u8) -> u8 { match x { 0 | 1 => 7, _ => 9 } }",
+            ),
+            (
+                "fn f(x: (u8,)) -> u8 { match x { (| 0 | 1,) => 7, _ => 9 } }",
+                "fn f(x: (u8,)) -> u8 { match x { (0 | 1,) => 7, _ => 9 } }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_drift_wildcard_binding() {
+        assert_merge(&[
+            ("fn f(x @ _: u8) -> u8 { x }", "fn f(x: u8) -> u8 { x }"),
+            (
+                "fn f(x: &u8) -> u8 { let y @ _ = x; *y }",
+                "fn f(x: &u8) -> u8 { let y = x; *y }",
+            ),
+            (
+                "fn f(x: u8) -> u8 { match x { ref y @ _ => *y } }",
+                "fn f(x: u8) -> u8 { match x { ref y => *y } }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_drift_generic_list_commas() {
+        for (a, b) in [
+            ("struct S<T,>(T);", "struct S<T>(T);"),
+            (
+                "fn f<'a, T, const N: usize,>(x: &'a T) {}",
+                "fn f<'a, T, const N: usize>(x: &'a T) {}",
+            ),
+            ("fn f(x: Vec<u8,>) {}", "fn f(x: Vec<u8>) {}"),
+            ("fn f() { g::<u8,>(); }", "fn f() { g::<u8>(); }"),
+            ("fn f() { x.g::<u8,>(); }", "fn f() { x.g::<u8>(); }"),
+        ] {
+            assert_eq!(canonicalize(a).text, canonicalize(b).text, "{a}");
+            assert_eq!(
+                super::canonicalize_failing(parse(a)).to_string(),
+                super::canonicalize_failing(parse(b)).to_string(),
+                "{a}"
+            );
+        }
+    }
+
+    #[test]
+    fn grammar_drift_closure_parameter_commas() {
+        let a = "fn f() { let c = |x: u8,| x + 1; c(7); }";
+        let b = "fn f() { let c = |x: u8| x + 1; c(7); }";
+        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+        assert_eq!(
+            super::canonicalize_failing(parse(a)).to_string(),
+            super::canonicalize_failing(parse(b)).to_string()
+        );
+    }
+
+    #[test]
+    fn grammar_drift_unit_return_value() {
+        assert_merge(&[
+            ("fn f() { return (); }", "fn f() { return; }"),
+            (
+                "fn f(x: bool) { if x { return (); } let _ = x; }",
+                "fn f(x: bool) { if x { return; } let _ = x; }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_commas_and_returns_preserve_inputs_and_failures() {
+        for (a, b) in [
+            ("#[inspect] struct S<T,>(T);", "#[inspect] struct S<T>(T);"),
+            ("struct S<#[inspect] T,>(T);", "struct S<#[inspect] T>(T);"),
+            (
+                "#[inspect] fn f() { g::<u8,>(); }",
+                "#[inspect] fn f() { g::<u8>(); }",
+            ),
+            (
+                "#[inspect] fn f() { x.g::<u8,>(); }",
+                "#[inspect] fn f() { x.g::<u8>(); }",
+            ),
+            (
+                "#[inspect] fn f() { let c = |x,| x; }",
+                "#[inspect] fn f() { let c = |x| x; }",
+            ),
+            (
+                "fn f() { let c = |#[inspect] x,| x; }",
+                "fn f() { let c = |#[inspect] x| x; }",
+            ),
+            (
+                "#[inspect] fn f() { return (); }",
+                "#[inspect] fn f() { return; }",
+            ),
+            ("fn f() { g::<u8, u16>(); }", "fn f() { g::<u16, u8>(); }"),
+            ("fn f() { let _ = (7,); }", "fn f() { let _ = (7); }"),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a}");
+        }
+        let a = "fn f() -> ! { return (); }";
+        let b = "fn f() -> ! { return; }";
+        assert_ne!(
+            super::canonicalize_failing(parse(a)).to_string(),
+            super::canonicalize_failing(parse(b)).to_string()
+        );
+    }
+
+    #[test]
+    fn grammar_folds_preserve_failure_distinctions() {
+        let failing = |code: &str| super::canonicalize_failing(parse(code)).to_string();
+        for (a, b) in [
+            (
+                "#![deny(missing_abi)] extern fn f() {}",
+                "#![deny(missing_abi)] extern \"C\" fn f() {}",
+            ),
+            (
+                "const c: u8 = 7; fn f() { let c @ _ = 7; }",
+                "const c: u8 = 7; fn f() { let c = 7; }",
+            ),
+        ] {
+            assert_ne!(failing(a), failing(b), "{a}");
+        }
+        for (a, b) in [
+            (
+                "fn f<T: Fn() -> ()>(x: T) { missing(x); }",
+                "fn f<T: Fn()>(x: T) { missing(x); }",
+            ),
+            (
+                "pub(in crate) fn f() { missing(); }",
+                "pub(crate) fn f() { missing(); }",
+            ),
+            (
+                "struct S; impl S { fn f(mut self: Self) { missing(self); } }",
+                "struct S; impl S { fn f(mut self) { missing(self); } }",
+            ),
+        ] {
+            assert_eq!(failing(a), failing(b), "{a}");
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_semantic_neighbors() {
+        for (a, b) in [
+            ("extern \"C\" fn f() {}", "fn f() {}"),
+            (
+                "type F = extern \"C\" fn();",
+                "type F = extern \"C-unwind\" fn();",
+            ),
+            (
+                "type F = extern \"C\" fn();",
+                "type F = extern \"system\" fn();",
+            ),
+            (
+                "type F = extern \"C\" fn();",
+                "type F = unsafe extern \"C\" fn();",
+            ),
+            (
+                "fn f<T: Fn() -> u8>(x: T) { x(); }",
+                "fn f<T: Fn()>(x: T) { x(); }",
+            ),
+            (
+                "mod m { pub(in crate) struct S; }",
+                "mod m { pub(in self) struct S; }",
+            ),
+            (
+                "struct S; impl S { fn f(self: Box<Self>) {} }",
+                "struct S; impl S { fn f(self) {} }",
+            ),
+            (
+                "struct S; impl S { fn f(self: &mut Self) {} }",
+                "struct S; impl S { fn f(self) {} }",
+            ),
+            (
+                "fn f(x: u8) { match x { y @ 7 => (), _ => () } }",
+                "fn f(x: u8) { match x { y => (), _ => () } }",
+            ),
+            (
+                "fn f(x: u8) { match x { ref y @ _ => (), } }",
+                "fn f(x: u8) { match x { y => (), } }",
+            ),
+            (
+                "fn f(x: (u8, u8)) { let (Upper @ _, lower) = x; }",
+                "fn f(x: (u8, u8)) { let (Upper, lower) = x; }",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a}");
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_macro_item_inputs() {
+        for (a, b) in [
+            (
+                "#[inspect] extern fn f() {}",
+                "#[inspect] extern \"C\" fn f() {}",
+            ),
+            (
+                "#[inspect] fn f<T: Fn() -> ()>(x: T) {}",
+                "#[inspect] fn f<T: Fn()>(x: T) {}",
+            ),
+            (
+                "#[inspect] pub(in crate) struct S;",
+                "#[inspect] pub(crate) struct S;",
+            ),
+            (
+                "struct S; impl S { #[inspect] fn f(self: Self) {} }",
+                "struct S; impl S { #[inspect] fn f(self) {} }",
+            ),
+            (
+                "#[inspect] fn f(x: u8) { match x { | 0 | 1 => (), _ => () } }",
+                "#[inspect] fn f(x: u8) { match x { 0 | 1 => (), _ => () } }",
+            ),
+            ("#[inspect] fn f(x @ _: u8) {}", "#[inspect] fn f(x: u8) {}"),
+            (
+                "#[derive(Inspect)] struct S(extern fn());",
+                "#[derive(Inspect)] struct S(extern \"C\" fn());",
+            ),
+            ("inspect!(extern fn());", "inspect!(extern \"C\" fn());"),
+            ("inspect!(x @ _);", "inspect!(x);"),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a}");
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_nested_macro_inputs() {
+        for (a, b) in [
+            (
+                "fn f() { #[inspect] let x: extern fn(); }",
+                "fn f() { #[inspect] let x: extern \"C\" fn(); }",
+            ),
+            (
+                "fn f() { #[inspect] { let x: extern fn(); } }",
+                "fn f() { #[inspect] { let x: extern \"C\" fn(); } }",
+            ),
+            (
+                "fn f(x: u8) { match x { #[inspect] | 0 | 1 => (), _ => () } }",
+                "fn f(x: u8) { match x { #[inspect] 0 | 1 => (), _ => () } }",
+            ),
+            ("fn f(#[inspect] x @ _: u8) {}", "fn f(#[inspect] x: u8) {}"),
+            (
+                "struct S { #[inspect] x: extern fn() }",
+                "struct S { #[inspect] x: extern \"C\" fn() }",
+            ),
+            (
+                "enum S { #[inspect] V(extern fn()) }",
+                "enum S { #[inspect] V(extern \"C\" fn()) }",
+            ),
+            (
+                "fn f<#[inspect] T: Fn() -> ()>(x: T) {}",
+                "fn f<#[inspect] T: Fn()>(x: T) {}",
+            ),
+            (
+                "#[inspect = 0 as extern fn()] const S: u8 = 7;",
+                "#[inspect = 0 as extern \"C\" fn()] const S: u8 = 7;",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a}");
+        }
+    }
+
+    #[test]
+    fn grammar_macro_scope_ends_at_its_node() {
+        assert_merge(&[
+            (
+                "#[inspect] fn held() {} extern fn ordinary() {}",
+                "#[inspect] fn held() {} extern \"C\" fn ordinary() {}",
+            ),
+            (
+                "fn f() { #[inspect] let held: extern fn(); let ordinary: extern fn(); }",
+                "fn f() { #[inspect] let held: extern fn(); let ordinary: extern \"C\" fn(); }",
+            ),
+            (
+                "fn f() { let held = #[inspect] { 7 }; let ordinary: extern fn(); }",
+                "fn f() { let held = #[inspect] { 7 }; let ordinary: extern \"C\" fn(); }",
+            ),
+        ]);
+    }
+
+    #[test]
+    fn grammar_folds_preserve_file_and_argument_inputs() {
+        for (a, b) in [
+            (
+                "#![inspect] fn main() { let x: extern fn(); }",
+                "#![inspect] fn main() { let x: extern \"C\" fn(); }",
+            ),
+            (
+                "type F = fn(#[inspect] x: extern fn());",
+                "type F = fn(#[inspect] x: extern \"C\" fn());",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a}");
+        }
+    }
+
+    fn type_input(ty: syn::Type) -> syn::File {
+        let mut alias: syn::ItemType = syn::parse_quote!(
+            type Alias = ();
+        );
+        alias.ty = alloc::boxed::Box::new(ty);
+        syn::File {
+            shebang: None,
+            frontmatter: None,
+            attrs: Vec::new(),
+            items: alloc::vec![syn::Item::Type(alias)],
+        }
+    }
+
+    fn expression_input(expr: syn::Expr) -> syn::File {
+        let mut function: syn::ItemFn = syn::parse_quote!(
+            fn main() {}
+        );
+        function
+            .block
+            .stmts
+            .push(syn::Stmt::Expr(expr, Some(syn::token::Semi::default())));
+        syn::File {
+            shebang: None,
+            frontmatter: None,
+            attrs: Vec::new(),
+            items: alloc::vec![syn::Item::Fn(function)],
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_extended_expression_inputs() {
+        for failing in [false, true] {
+            let normalize = if failing {
+                super::canonicalize_failing
+            } else {
+                canon
+            };
+            for expr in [
+                "g::<u8,>().await",
+                "const { g::<u8,>() }",
+                "&raw const g::<u8,>()",
+                "[g::<u8,>(); 2]",
+                "try { g::<u8,>() }",
+                "yield g::<u8,>()",
+            ] {
+                let ordinary = format!("fn main() {{ let x = {expr}; }}");
+                assert_eq!(
+                    normalize(parse(&ordinary)).to_string(),
+                    normalize(parse(&ordinary.replace(",>", ">"))).to_string(),
+                    "{expr}, failing={failing}",
+                );
+                let held = format!("fn main() {{ let x = #[inspect] {expr}; }}");
+                assert_ne!(
+                    normalize(parse(&held)).to_string(),
+                    normalize(parse(&held.replace(",>", ">"))).to_string(),
+                    "{expr}, failing={failing}",
+                );
+                let scoped = format!(
+                    "fn main() {{ let held = #[inspect] {expr}; let ordinary = g::<u8,>(); }}"
+                );
+                let scoped_neighbor = format!(
+                    "fn main() {{ let held = #[inspect] {expr}; let ordinary = g::<u8>(); }}"
+                );
+                assert_eq!(
+                    normalize(parse(&scoped)).to_string(),
+                    normalize(parse(&scoped_neighbor)).to_string(),
+                    "{expr}, failing={failing}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_invisible_group_inputs() {
+        for failing in [false, true] {
+            let normalize = if failing {
+                super::canonicalize_failing
+            } else {
+                canon
+            };
+            for marked in [false, true] {
+                let attrs = if marked {
+                    alloc::vec![syn::parse_quote!(#[inspect])]
+                } else {
+                    Vec::new()
+                };
+                let types = ["S<u8,>", "S<u8>"].map(|source| {
+                    normalize(type_input(syn::Type::Group(syn::TypeGroup {
+                        attrs: attrs.clone(),
+                        group_token: syn::token::Group::default(),
+                        elem: alloc::boxed::Box::new(syn::parse_str(source).unwrap()),
+                    })))
+                    .to_string()
+                });
+                let expressions = ["g::<u8,>()", "g::<u8>()"].map(|source| {
+                    normalize(expression_input(syn::Expr::Group(syn::ExprGroup {
+                        attrs: attrs.clone(),
+                        group_token: syn::token::Group::default(),
+                        expr: alloc::boxed::Box::new(syn::parse_str(source).unwrap()),
+                    })))
+                    .to_string()
+                });
+                assert_eq!(types[0] == types[1], !marked, "type, failing={failing}");
+                assert_eq!(
+                    expressions[0] == expressions[1],
+                    !marked,
+                    "expression, failing={failing}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_verbatim_inputs() {
+        for failing in [false, true] {
+            let normalize = if failing {
+                super::canonicalize_failing
+            } else {
+                canon
+            };
+            let types = ["S<u8,>", "S<u8>"].map(|source| {
+                normalize(type_input(syn::Type::Verbatim(source.parse().unwrap()))).to_string()
+            });
+            let expressions = ["g::<u8,>()", "g::<u8>()"].map(|source| {
+                normalize(expression_input(syn::Expr::Verbatim(
+                    source.parse().unwrap(),
+                )))
+                .to_string()
+            });
+            let patterns = ["x @ _", "x"].map(|source| {
+                let mut function: syn::ItemFn = syn::parse_quote!(
+                    fn main() {}
+                );
+                function.block.stmts.push(syn::Stmt::Local(syn::Local {
+                    attrs: Vec::new(),
+                    let_token: syn::token::Let::default(),
+                    modifiers: syn::LocalModifiers::default(),
+                    pat: syn::Pat::Verbatim(source.parse().unwrap()),
+                    init: Some(syn::LocalInit {
+                        eq_token: syn::token::Eq::default(),
+                        expr: alloc::boxed::Box::new(syn::parse_quote!(7)),
+                        diverge: None,
+                    }),
+                    semi_token: syn::token::Semi::default(),
+                }));
+                normalize(syn::File {
+                    shebang: None,
+                    frontmatter: None,
+                    attrs: Vec::new(),
+                    items: alloc::vec![syn::Item::Fn(function)],
+                })
+                .to_string()
+            });
+            assert_ne!(types[0], types[1], "type, failing={failing}");
+            assert_ne!(
+                expressions[0], expressions[1],
+                "expression, failing={failing}"
+            );
+            assert_ne!(patterns[0], patterns[1], "pattern, failing={failing}");
+        }
     }
 
     #[test]

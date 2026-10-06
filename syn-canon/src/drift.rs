@@ -104,6 +104,7 @@ impl VisitMut for Drift {
         reason = "a non-use entry goes back to the list"
     )]
     fn visit_file_mut(&mut self, file: &mut syn::File) {
+        let outer = self.enter_attrs(&file.attrs);
         hoist_uses(
             &mut file.items,
             |item| match item {
@@ -113,6 +114,7 @@ impl VisitMut for Drift {
             syn::Item::Use,
         );
         syn::visit_mut::visit_file_mut(self, file);
+        self.in_macro_input = outer;
     }
 
     #[expect(
@@ -161,6 +163,7 @@ impl VisitMut for Drift {
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
         strip_inert_attrs(&mut arm.attrs);
+        let outer = self.enter_attrs(&arm.attrs);
         unwrap_arm_block(arm);
         // The printer writes the comma a non-block arm needs, a written one is drift.
         arm.comma = None;
@@ -168,28 +171,49 @@ impl VisitMut for Drift {
         if self.compiles {
             drop_binding_mut(&mut arm.pat);
         }
+        self.in_macro_input = outer;
     }
 
     fn visit_local_mut(&mut self, local: &mut syn::Local) {
+        let outer = self.enter_attrs(&local.attrs);
         syn::visit_mut::visit_local_mut(self, local);
         if self.compiles {
             drop_binding_mut(&mut local.pat);
         }
+        self.in_macro_input = outer;
     }
 
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        let outer = self.enter_attrs(expr_attrs(expr));
         syn::visit_mut::visit_expr_mut(self, expr);
         fold_paren_expr(expr);
         if let syn::Expr::If(expr_if) = expr {
             collapse_else_if(expr_if);
         }
         if let syn::Expr::Closure(closure) = expr {
+            if !self.in_macro_input
+                && closure.inputs.trailing_punct()
+                && !closure
+                    .inputs
+                    .iter_mut()
+                    .any(|pat| pat_attrs(pat).is_some_and(|attrs| has_macro_attribute(attrs)))
+            {
+                closure.inputs.pop_punct();
+            }
             if let syn::Expr::Block(block) = closure.body.as_mut() {
                 fold_tail_return(&mut block.block.stmts);
             }
             unwrap_single_expr_block(&mut closure.body);
         }
         if self.compiles {
+            if !self.in_macro_input
+                && let syn::Expr::Return(ret) = expr
+                && ret.expr.as_ref().is_some_and(
+                    |value| matches!(value.as_ref(), syn::Expr::Tuple(tuple) if tuple.elems.is_empty() && tuple.attrs.is_empty()),
+                )
+            {
+                ret.expr = None;
+            }
             match expr {
                 syn::Expr::Closure(closure) => closure.inputs.iter_mut().for_each(drop_binding_mut),
                 syn::Expr::ForLoop(for_loop) => drop_binding_mut(&mut for_loop.pat),
@@ -200,12 +224,20 @@ impl VisitMut for Drift {
                 drop_tail_semicolon(&mut block.stmts);
             }
         }
+        self.in_macro_input = outer;
     }
 
     fn visit_pat_mut(&mut self, pat: &mut syn::Pat) {
-        strip_pat_inert_attrs(pat);
+        let outer = pat_attrs(pat).map_or(self.in_macro_input, |attrs| {
+            strip_inert_attrs(attrs);
+            self.enter_attrs(attrs)
+        });
         syn::visit_mut::visit_pat_mut(self, pat);
         fold_paren_pat(pat);
+        if self.compiles && !self.in_macro_input {
+            fold_pattern_spelling(pat);
+        }
+        self.in_macro_input = outer;
     }
 
     fn visit_fn_arg_mut(&mut self, node: &mut syn::FnArg) {
@@ -213,6 +245,10 @@ impl VisitMut for Drift {
             syn::FnArg::Receiver(receiver) => strip_inert_attrs(&mut receiver.attrs),
             syn::FnArg::Typed(typed) => strip_inert_attrs(&mut typed.attrs),
         }
+        let outer = self.enter_attrs(match node {
+            syn::FnArg::Receiver(receiver) => &receiver.attrs,
+            syn::FnArg::Typed(typed) => &typed.attrs,
+        });
         syn::visit_mut::visit_fn_arg_mut(self, node);
         if self.compiles {
             match node {
@@ -223,18 +259,23 @@ impl VisitMut for Drift {
         if !self.in_macro_input
             && let syn::FnArg::Receiver(receiver) = node
         {
-            fold_explicit_shared_receiver(receiver);
+            fold_explicit_receiver(receiver);
         }
+        self.in_macro_input = outer;
     }
 
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
         strip_inert_attrs(&mut node.attrs);
+        let outer = self.enter_attrs(&node.attrs);
         syn::visit_mut::visit_named_arg_mut(self, node);
+        self.in_macro_input = outer;
     }
 
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {
+        let outer = self.enter_attrs(type_attrs(ty));
         syn::visit_mut::visit_type_mut(self, ty);
         fold_paren_type(ty);
+        self.in_macro_input = outer;
     }
 
     fn visit_type_path_mut(&mut self, node: &mut syn::TypePath) {
@@ -251,9 +292,76 @@ impl VisitMut for Drift {
         }
     }
 
+    fn visit_abi_mut(&mut self, node: &mut syn::Abi) {
+        if self.compiles && !self.in_macro_input && node.name.is_none() {
+            node.name = Some(syn::LitStr::new("C", node.extern_token.span));
+        }
+    }
+
+    fn visit_vis_restricted_mut(&mut self, node: &mut syn::VisRestricted) {
+        syn::visit_mut::visit_vis_restricted_mut(self, node);
+        if !self.in_macro_input
+            && ["crate", "self", "super"]
+                .iter()
+                .any(|name| node.path.is_ident(name))
+        {
+            node.in_token = None;
+        }
+    }
+
+    fn visit_parenthesized_generic_arguments_mut(
+        &mut self,
+        node: &mut syn::ParenthesizedGenericArguments,
+    ) {
+        syn::visit_mut::visit_parenthesized_generic_arguments_mut(self, node);
+        if !self.in_macro_input {
+            fold_unit_return(&mut node.output);
+        }
+    }
+
+    fn visit_expr_method_call_mut(&mut self, node: &mut syn::ExprMethodCall) {
+        syn::visit_mut::visit_expr_method_call_mut(self, node);
+        if !self.in_macro_input
+            && node
+                .turbofish
+                .as_ref()
+                .is_some_and(|args| args.args.is_empty())
+        {
+            node.turbofish = None;
+        }
+    }
+
+    fn visit_attribute_mut(&mut self, node: &mut syn::Attribute) {
+        let outer = core::mem::replace(&mut self.in_macro_input, true);
+        syn::visit_mut::visit_attribute_mut(self, node);
+        self.in_macro_input = outer;
+    }
+
+    fn visit_angle_bracketed_generic_arguments_mut(
+        &mut self,
+        node: &mut syn::AngleBracketedGenericArguments,
+    ) {
+        syn::visit_mut::visit_angle_bracketed_generic_arguments_mut(self, node);
+        if !self.in_macro_input {
+            node.args.pop_punct();
+        }
+    }
+
     fn visit_generics_mut(&mut self, generics: &mut syn::Generics) {
+        let outer = self.in_macro_input;
+        self.in_macro_input = outer
+            || generics.params.iter().any(|param| {
+                has_macro_attribute(match param {
+                    syn::GenericParam::Lifetime(param) => &param.attrs,
+                    syn::GenericParam::Type(param) => &param.attrs,
+                    syn::GenericParam::Const(param) => &param.attrs,
+                })
+            });
         syn::visit_mut::visit_generics_mut(self, generics);
         bounds_to_where(generics);
+        if !self.in_macro_input {
+            generics.params.pop_punct();
+        }
         if !self.in_macro_input
             && let Some(clause) = &mut generics.where_clause
         {
@@ -269,6 +377,7 @@ impl VisitMut for Drift {
                 }
             }
         }
+        self.in_macro_input = outer;
     }
 
     fn visit_item_trait_mut(&mut self, node: &mut syn::ItemTrait) {
@@ -334,6 +443,11 @@ impl VisitMut for Drift {
         syn::visit_mut::visit_path_arguments_mut(self, node);
         if !self.in_impl_header {
             drop_anonymous_lifetimes(node);
+        }
+        if !self.in_macro_input
+            && matches!(node, syn::PathArguments::AngleBracketed(args) if args.args.is_empty())
+        {
+            *node = syn::PathArguments::None;
         }
     }
 
@@ -463,14 +577,18 @@ impl VisitMut for Drift {
         if !self.in_macro_input {
             strip_inert_attrs(&mut field.attrs);
         }
+        let outer = self.enter_attrs(&field.attrs);
         syn::visit_mut::visit_field_mut(self, field);
+        self.in_macro_input = outer;
     }
 
     fn visit_variant_mut(&mut self, variant: &mut syn::Variant) {
         if !self.in_macro_input {
             strip_inert_attrs(&mut variant.attrs);
         }
+        let outer = self.enter_attrs(&variant.attrs);
         syn::visit_mut::visit_variant_mut(self, variant);
+        self.in_macro_input = outer;
     }
 
     fn visit_expr_macro_mut(&mut self, node: &mut syn::ExprMacro) {
@@ -512,6 +630,12 @@ impl VisitMut for Drift {
 }
 
 impl Drift {
+    fn enter_attrs(&mut self, attrs: &[syn::Attribute]) -> bool {
+        let outer = self.in_macro_input;
+        self.in_macro_input = outer || has_macro_attribute(attrs);
+        outer
+    }
+
     /// Fold a function body's tail `return`, and its tail semicolon when the
     /// signature makes the value `()`, before and after the return fold since
     /// each can expose the other.
@@ -566,8 +690,17 @@ fn drop_binding_mut(pat: &mut syn::Pat) {
     }
 }
 
-/// Normalize a shared `Self` receiver without changing its lifetime or borrow kind.
-fn fold_explicit_shared_receiver(receiver: &mut syn::Receiver) {
+/// Normalize an explicit `Self` receiver without changing its binding or borrow kind.
+fn fold_explicit_receiver(receiver: &mut syn::Receiver) {
+    if matches!(
+        &receiver.kind,
+        syn::ReceiverKind::Typed(_, ty)
+            if matches!(ty.as_ref(), syn::Type::Path(path)
+                if path.attrs.is_empty() && path.qself.is_none() && path.path.is_ident("Self"))
+    ) {
+        receiver.kind = syn::ReceiverKind::Value;
+        return;
+    }
     if receiver.mutability.is_some() {
         return;
     }
@@ -589,6 +722,24 @@ fn fold_explicit_shared_receiver(receiver: &mut syn::Receiver) {
             core::mem::take(&mut reference.lifetime),
         );
         receiver.kind = syn::ReceiverKind::Reference(ampersand, lifetime, None);
+    }
+}
+
+fn fold_pattern_spelling(pat: &mut syn::Pat) {
+    match pat {
+        syn::Pat::Or(pat) => pat.leading_vert = None,
+        syn::Pat::Ident(pat)
+            if pat.subpat.as_ref().is_some_and(
+                |(_, sub)| matches!(sub.as_ref(), syn::Pat::Wild(wild) if wild.attrs.is_empty()),
+            ) =>
+        {
+            let name = pat.ident.to_string();
+            let name = name.strip_prefix("r#").unwrap_or(&name);
+            if !name.starts_with(char::is_uppercase) {
+                pat.subpat = None;
+            }
+        }
+        _ => {}
     }
 }
 
@@ -756,7 +907,7 @@ fn semicolon_non_tail_macros(stmts: &mut [syn::Stmt]) {
 /// Drop an explicit `-> ()`, which a signature means by omitting it.
 fn fold_unit_return(output: &mut syn::ReturnType) {
     if let syn::ReturnType::Type(_, ty) = output
-        && matches!(ty.as_ref(), syn::Type::Tuple(t) if t.elems.is_empty())
+        && matches!(ty.as_ref(), syn::Type::Tuple(t) if t.attrs.is_empty() && t.elems.is_empty())
     {
         *output = syn::ReturnType::Default;
     }
@@ -1018,9 +1169,8 @@ fn strip_inert_attrs(attrs: &mut Vec<syn::Attribute>) {
     attrs.retain(|attr| !is_inert_attr(attr));
 }
 
-/// Strip inert attributes from a pattern, where an untyped closure parameter's attribute sits.
-fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
-    let attrs = match pat {
+fn pat_attrs(pat: &mut syn::Pat) -> Option<&mut Vec<syn::Attribute>> {
+    Some(match pat {
         syn::Pat::Const(p) => &mut p.attrs,
         syn::Pat::Guard(p) => &mut p.attrs,
         syn::Pat::Ident(p) => &mut p.attrs,
@@ -1038,9 +1188,71 @@ fn strip_pat_inert_attrs(pat: &mut syn::Pat) {
         syn::Pat::TupleStruct(p) => &mut p.attrs,
         syn::Pat::Type(p) => &mut p.attrs,
         syn::Pat::Wild(p) => &mut p.attrs,
-        _ => return,
-    };
-    strip_inert_attrs(attrs);
+        _ => return None,
+    })
+}
+
+fn type_attrs(ty: &syn::Type) -> &[syn::Attribute] {
+    match ty {
+        syn::Type::Array(ty) => &ty.attrs,
+        syn::Type::FnPtr(ty) => &ty.attrs,
+        syn::Type::Group(ty) => &ty.attrs,
+        syn::Type::ImplTrait(ty) => &ty.attrs,
+        syn::Type::Macro(ty) => &ty.attrs,
+        syn::Type::Never(ty) => &ty.attrs,
+        syn::Type::Paren(ty) => &ty.attrs,
+        syn::Type::Path(ty) => &ty.attrs,
+        syn::Type::Ptr(ty) => &ty.attrs,
+        syn::Type::Reference(ty) => &ty.attrs,
+        syn::Type::Slice(ty) => &ty.attrs,
+        syn::Type::TraitObject(ty) => &ty.attrs,
+        syn::Type::Tuple(ty) => &ty.attrs,
+        _ => &[],
+    }
+}
+
+fn expr_attrs(expr: &syn::Expr) -> &[syn::Attribute] {
+    match expr {
+        syn::Expr::Array(expr) => &expr.attrs,
+        syn::Expr::Assign(expr) => &expr.attrs,
+        syn::Expr::Async(expr) => &expr.attrs,
+        syn::Expr::Await(expr) => &expr.attrs,
+        syn::Expr::Binary(expr) => &expr.attrs,
+        syn::Expr::Block(expr) => &expr.attrs,
+        syn::Expr::Break(expr) => &expr.attrs,
+        syn::Expr::Call(expr) => &expr.attrs,
+        syn::Expr::Cast(expr) => &expr.attrs,
+        syn::Expr::Closure(expr) => &expr.attrs,
+        syn::Expr::Const(expr) => &expr.attrs,
+        syn::Expr::Continue(expr) => &expr.attrs,
+        syn::Expr::Field(expr) => &expr.attrs,
+        syn::Expr::ForLoop(expr) => &expr.attrs,
+        syn::Expr::Group(expr) => &expr.attrs,
+        syn::Expr::If(expr) => &expr.attrs,
+        syn::Expr::Index(expr) => &expr.attrs,
+        syn::Expr::Let(expr) => &expr.attrs,
+        syn::Expr::Lit(expr) => &expr.attrs,
+        syn::Expr::Loop(expr) => &expr.attrs,
+        syn::Expr::Macro(expr) => &expr.attrs,
+        syn::Expr::Match(expr) => &expr.attrs,
+        syn::Expr::MethodCall(expr) => &expr.attrs,
+        syn::Expr::Paren(expr) => &expr.attrs,
+        syn::Expr::Path(expr) => &expr.attrs,
+        syn::Expr::Range(expr) => &expr.attrs,
+        syn::Expr::RawAddr(expr) => &expr.attrs,
+        syn::Expr::Reference(expr) => &expr.attrs,
+        syn::Expr::Repeat(expr) => &expr.attrs,
+        syn::Expr::Return(expr) => &expr.attrs,
+        syn::Expr::Struct(expr) => &expr.attrs,
+        syn::Expr::Try(expr) => &expr.attrs,
+        syn::Expr::TryBlock(expr) => &expr.attrs,
+        syn::Expr::Tuple(expr) => &expr.attrs,
+        syn::Expr::Unary(expr) => &expr.attrs,
+        syn::Expr::Unsafe(expr) => &expr.attrs,
+        syn::Expr::While(expr) => &expr.attrs,
+        syn::Expr::Yield(expr) => &expr.attrs,
+        _ => &[],
+    }
 }
 
 fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
