@@ -1,0 +1,2 @@
+#[docfn  =t!("prefix ",for lude_or("!stdc."))]
+pub fn f() {}

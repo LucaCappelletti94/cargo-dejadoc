@@ -1,0 +1,2 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(feature = "b")), doc =-include_str!("doc.md")y(noture = "b"), doc = "`(f, not(`")]
+pub fn gated() {}

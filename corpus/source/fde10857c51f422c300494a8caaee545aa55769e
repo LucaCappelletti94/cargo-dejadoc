@@ -1,0 +1,18 @@
+trait T {
+    /// ```
+    /// fnjjjjjjjljjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj main() {}
+    /// ```
+    const C: i32;
+    /// ```
+    /// fn main() { l}
+    /// ```
+    const C: i32;
+    /// ```jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj main(```
+    const C: i32;
+    /// ```
+    /// fn main() { let a = 0; jjjjjjjjjjjj main() {}
+    /// ```
+    const C: i32;
+    /// ```
+    /// fn main()6|x|**6&6?*********Out;
+}

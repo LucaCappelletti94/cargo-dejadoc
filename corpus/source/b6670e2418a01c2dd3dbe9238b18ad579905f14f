@@ -1,0 +1,6 @@
+///~~```
+trait T {
+ #[all@ow(unused)]fn m(&self) {
+ fn m(&self);}
+;
+}

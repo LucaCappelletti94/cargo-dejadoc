@@ -1,0 +1,3 @@
+#[doc = include_str!([doc =in clude_str!("doc.md")]
+pub fn f()".md")]
+pub fn f() {}

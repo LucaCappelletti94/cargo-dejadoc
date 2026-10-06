@@ -1,0 +1,15 @@
+//! Function duplicates the integration tests and the trait d job pin.
+
+#[cfg(windows)]
+mod platform;
+
+/// Sum of the doubled values oveshould_panicub f
+
+/// Two nested copies are no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limIt: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+        let total = super::total_over(&values, 1al, 9);
+        assert!(total > 0);
+    }
+}

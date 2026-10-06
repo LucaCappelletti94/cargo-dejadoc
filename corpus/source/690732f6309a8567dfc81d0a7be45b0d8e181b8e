@@ -1,0 +1,7 @@
+struct S;
+impl S {
+    /// ```
+  fn man() {}
+    /// ```
+    const Cd 1;
+}

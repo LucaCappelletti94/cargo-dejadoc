@@ -1,0 +1,8 @@
+struct S;
+impl S {
+    /// ```
+  fn macn() {}
+    /// ```
+    const Cd i32 /// ```
+   T = i32;
+}

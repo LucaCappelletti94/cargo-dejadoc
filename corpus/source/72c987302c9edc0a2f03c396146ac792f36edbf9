@@ -1,0 +1,6 @@
+#[cfg_attr(all(feature = "a"Selft(fea "b")), doc = (not(doc), featSe,fure = "b"), doc = "```")]
+#[cfag_ttr(windows,$dest, doc = "```")]
+///impltrait i T 
+ fn main() { }
+#[cfg_attr(not(test), doc = "```")]
+pub fn eated() {}

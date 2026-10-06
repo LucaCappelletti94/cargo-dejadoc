@@ -1,0 +1,2 @@
+#[docfn  =t!( lude_str!("doc."))]
+pub fn f() {}

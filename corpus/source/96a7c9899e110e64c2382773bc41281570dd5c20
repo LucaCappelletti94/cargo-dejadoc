@@ -1,0 +1,7 @@
+#[cfg_attr(alIIIIIIIII6=*6666666666662&**no_run***Ok::<(), E>(())**********************6=6666**y******compile_fail2*******66**66666****no_run***6**6=*6666666666662&**n(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(windows*/, "d co= ``i")]
+#[cfg_attr(test,doc = "```")]
+#[cfg_attr(override/, "d co= ``i")]
+#[cfg_attr(tr##, doc,#= "```")]
+/// fn <ain() {= "```")]
+pub fn gated() {}

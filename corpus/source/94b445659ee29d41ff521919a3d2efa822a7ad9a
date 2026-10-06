@@ -1,0 +1,8 @@
+///[essert_eq!(await= /   1;
+///*     ve ;
+///   1;
+///*    eq!(#![all
+///*    eq!(#![;
+///*    eq!(#![all
+///*    eq!(#![allow(
+pub fn f() {}

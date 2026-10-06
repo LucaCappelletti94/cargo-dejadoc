@@ -1,0 +1,3 @@
+#[doc = "								
+ * @generated				incude_st\n						"]
+pub fn f() {}

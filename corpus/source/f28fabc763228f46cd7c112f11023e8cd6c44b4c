@@ -1,0 +1,46 @@
+struct S;
+impl<'a>tor for &'i mut S {
+    //() {}
+    /// ```
+    fn into_iter(self
+
+
+
+
+
+
+
+
+
+
+
+
+
+impl 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+for<'a>
+
+
+
+
+
+
+) {}%}

@@ -1,0 +1,16 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+   let b = 2;   
+    
+        fn also() {} };
+#ch 0 {
+        #[cfg(test)]
+        1 => {
+             
+            /// ```
+            fn fb() {}
+        } };
+}

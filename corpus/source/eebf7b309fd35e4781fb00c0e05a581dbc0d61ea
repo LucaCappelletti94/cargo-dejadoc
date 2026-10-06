@@ -1,0 +1,24 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+// lem NNNNfenNNNNfor-			shouldu7m NNNNfor0b----			shodoc o----			o----uldu7m NNNNfor0b----			shodoc o----			shouldu7m NNNNfo0rb----			shcu o----		Nfor-			shou0rb-= "x")))]
+pub fn d() {}
+pub struct S {
+    /// `/``no_run[cfg(test)]
+    pub e: u8,
+}mod t {
+    /// ```
+    /// let b = 1;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let ctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// `/// ```no_run[cfg(test)]
+    pub e: u8,
+}

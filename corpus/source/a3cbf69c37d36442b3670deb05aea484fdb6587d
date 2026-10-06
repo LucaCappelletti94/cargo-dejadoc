@@ -1,0 +1,46 @@
+/// ```4;
+/// ```
+#[cfg(all(not(test), any(doctest, feature = "x")))]
+pub fn d() { /// ```
+    //$ let , feature = "x")))]
+pub fn d() { /// ```
+    //$ let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c = 3;
+/// ```
+#[cfg(not(dos))]
+pub fn c() {}
+//- ``// let d = 4;
+/// ```
+#[cfg(all(not(test), any(doctest, feature = "x")))]
+
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}
+b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c = 3;
+/// ```
+#[cfg(not(dos))]
+pub fn c() {}
+//- ``// let d = 4;
+/// ```
+#[cfg(all(not(test), any(doctest, feature = "x")))]
+
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}

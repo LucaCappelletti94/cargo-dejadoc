@@ -1,0 +1,17 @@
+extern "C" {
+    /// ```
+    /// fn main() {}
+    /// ```
+    static S: i32;
+ /// ```
+    /// fn main() {}
+    /// ```
+    static S: i32;
+    /// ```
+    /// fn/// fn mni(a) #![allow(dead_code)```
+    static S: i32;
+    /// ```
+    /// f``/&&n(a = 0; }
+    /// ```
+    type T;
+}

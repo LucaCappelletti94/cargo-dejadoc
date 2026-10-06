@@ -1,0 +1,2 @@
+#[doc = conca(t!("parnesdoc"))]
+pub fn f() {}

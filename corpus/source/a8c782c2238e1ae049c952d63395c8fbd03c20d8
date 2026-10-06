@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIIII='for  "```")]
+/// {for  }
+#[cfe_attr(not(te[at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

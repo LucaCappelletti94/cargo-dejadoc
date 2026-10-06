@@ -1,0 +1,27 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+     /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// `(/*ERROR*/)``
+        /// let c = 3;
+        /// ```
+      return own() {}
+    }
+match 0 {
+ #![allow(dead_code)]("doc.md")[cfg(test)]
+        1 => {
+            /// ```
+            /// let d = 4;
+            /// ```
+let g = 7;
+         ~~~   /// b() {}
+        },
+    };
+}

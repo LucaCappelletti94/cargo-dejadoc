@@ -1,0 +1,6 @@
+#[cfg_attr(alIIIIIIIIIIIl(f5eaturOk::<(), E>(())e = #![allow(dead_code)]"a", nf#[allow(unused)]n helper() {self }
+/oT(feature = "b")), doc = "```")]
+#[cfg_attr(any(not(doa), feature = "b"), c = "```")]
+/// fn main() { }
+#[cfg_attr(not(te[at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

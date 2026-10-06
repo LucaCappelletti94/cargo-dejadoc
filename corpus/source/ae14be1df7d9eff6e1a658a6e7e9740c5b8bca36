@@ -1,0 +1,123 @@
+/**
+
+ * ```test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+p x = 1;
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * `* ```
+::{
+pub  * ```test_harness
+ * let x = 1harness
+ * le*
+
+ * ```test_harness
+ * let x =1;
+ * ```
+t x = 1;
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * `* ```
+::{
+pub  * ```test_harness
+ * let x = 1;
+ * ```
+t x = 1;
+ * le*
+
+ * ```test_harness
+ * let x = 1l<On<pl<On<Ok>>::mpl<OOk>>::mpl<On<Ok>>:::test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+t xfn f() {let x =
+ * ```test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+t x = 0;
+ * l 1;
+;
+ * ```
+t x = 0;
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * `* ```
+::{
+pub fn f() {let x =
+ * ```test_harness
+ * le*
+
+ * ```test_ 1;
+ * ```
+t x = 1;
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * `* ```
+::{
+pub  * ```test_harness
+ * let x = 1;
+ * ```
+t x = 1;
+ * le*
+
+ * ```test_harness
+ * let x = 1l<On<pl<On<Ok>>::mpl<OOk>>::mpl<On<Ok>>:::test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+t xfn f() {let x =
+ * ```test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+t x = 0;
+ * l 1;
+;
+ * ```
+t x = 0;
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * `* ```
+::{
+pub fn f() {let x =
+ * ```test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+t xfn f() {let x =
+ * ```test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 1;
+ * ```
+t x = 0;
+ * l 1;
+ * ```
+ */
+pub fn f() {}

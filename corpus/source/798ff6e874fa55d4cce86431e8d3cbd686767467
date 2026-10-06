@@ -1,0 +1,8 @@
+/// ```
+/// /// fn e() {
+pub union U { f: i32 }
+/// ```
+/// fn #f() {}
+/// ```
+pub type Ty = iformat!("{x:?}")fn g() {}
+ trait Tr = i32;

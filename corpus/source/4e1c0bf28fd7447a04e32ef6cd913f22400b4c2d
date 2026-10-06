@@ -1,0 +1,11 @@
+//! Functikn dupliion tcompile_failestfood job pin.
+
+#[extern r#crate 
+mod platform;
+
+/// Sum of theites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+       let total =  !(total > 0);
+    }
+}

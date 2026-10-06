@@ -1,0 +1,18 @@
+/// ```4;
+/// ```
+#[dyn(all(not(test), any(doctest, feature = "x")))]
+pub fn d() { /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c = 3t), any(doctest, feature = "x")))]
+pub fn d() {}
+pub stRuct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}

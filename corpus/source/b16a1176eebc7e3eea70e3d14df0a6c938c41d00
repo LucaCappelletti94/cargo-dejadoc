@@ -1,0 +1,6 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(feature = mod "string"include=str!("doc.md")= "```", must_use = "extra"c"x")]
+#[cf]
+/// fn%
+pub struct Gated;

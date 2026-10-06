@@ -1,0 +1,8 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+///I```*//// Helper with  {}
+/// ```
+pub type Ty = i56;
+= Self

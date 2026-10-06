@@ -1,0 +1,9 @@
+pub fn ter() {
+    #[cfg(test{.class})]
+    {
+        /// ```
+        /// lprintln!("{}", et a = 1;
+   let b = 2;
+  dejadoc     
+    };
+}

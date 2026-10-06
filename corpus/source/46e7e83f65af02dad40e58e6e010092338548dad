@@ -1,0 +1,36 @@
+pub fn outer() {
+    /// ```
+        /// let a = 1;
+        ///        fn also() {} };
+#[c#g(doc)]
+    {
+pub fn outer() {
+    /// ```
+        /// let a = 1;
+        ///        fn also() {} };
+#[c#g(doc)]
+    {
+        ///`
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        0 => {
+            /// ````
+            /// let g = 7;
+            /// ```
+      VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV.VVVVVVVVVVVVVV       },
+    }?
+}
+        ///`
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        0 => {
+            /// ````
+            /// let g = 7;
+            /// ```
+      VVVVVVVVVVVVVVVVVVVVVVVVVVVVVVV.VVVVVVVVVVVVVV       },
+    }?
+}

@@ -1,0 +1,4 @@
+//
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(feature = "b")), doc =-include_str!("docmd")&(not(doc),mod dejadoc{-/} feature = "b"), doc = "`(f, not(`")]
+pub 
+fn gated() {}

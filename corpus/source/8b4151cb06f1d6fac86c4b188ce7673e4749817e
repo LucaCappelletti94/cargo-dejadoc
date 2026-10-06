@@ -1,0 +1,2 @@
+#[fordoc =br#"raw1`
+"#p] fn raw(){}

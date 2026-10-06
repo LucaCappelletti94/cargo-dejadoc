@@ -1,0 +1,30 @@
+pub fn outer() {
+    /// ```
+    /// let a = 1;
+    /// ```
+    fn inner() {}
+    
+/// f]*ѽ**/s'*ѽ**/ilde ~~~
+/// f*ѽ**let lpt lpr] ,e]doctes'*ѽ*ѽ**/ilde ~~~
+/// f*ѽ**let lpt lpr] ,e]doctes'*ѽ**/ilde ~~compile_failes'e```let lpt lpe],]r doctes'*ѽ**/ilde ~~~
+let _ = || {
+        /// ```
+        /// let b = 2;
+        /// ```
+        struct Deep;
+    };
+}
+pub struct S{}
+    
+/// f]*ѽ**/s'*ѽ**/ilde ~~~
+/// f*ѽ**let lpt lpr] ,e]doctes'*ѽ*ѽ**/ilde ~~~
+/// f]*ѽ**/s'*ѽ**/ilde ~~~
+/// f*ѽ**let l;
+impl S {
+    pub fn m(&self) {
+        /// ``
+        /// let d = 4;
+        /// ```
+        fn dflt() {}
+    }
+}
