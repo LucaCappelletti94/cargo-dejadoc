@@ -966,7 +966,7 @@ fn fold_fn_pointer_lifetime(node: &mut syn::TypeFnPtr) {
     if spelling.starts_with("r#") || matches!(spelling.as_str(), "static" | "_") {
         return;
     }
-    let syn::Type::Reference(reference) = &node.inputs[0].ty else {
+    let syn::Type::Reference(reference) = &mut node.inputs[0].ty else {
         return;
     };
     if reference.lifetime.as_ref() != Some(&binder.lifetime) {
@@ -977,15 +977,13 @@ fn fold_fn_pointer_lifetime(node: &mut syn::TypeFnPtr) {
         count: 0,
         opaque: false,
     };
-    uses.visit_type(&node.inputs[0].ty);
+    uses.visit_type_reference(reference);
     uses.visit_return_type(&node.output);
     if uses.opaque || uses.count != 1 {
         return;
     }
+    reference.lifetime = None;
     node.lifetimes = None;
-    if let syn::Type::Reference(reference) = &mut node.inputs[0].ty {
-        reference.lifetime = None;
-    }
 }
 
 struct LifetimeUses<'a> {

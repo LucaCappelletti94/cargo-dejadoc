@@ -182,6 +182,140 @@ mod tests {
         }
     }
 
+    fn pointer_with_element(element: syn::Type, explicit: bool) -> syn::File {
+        let source = if explicit {
+            "for<'a> fn(&'a u8)"
+        } else {
+            "fn(&u8)"
+        };
+        let mut ty: syn::Type = syn::parse_str(source).unwrap();
+        let syn::Type::FnPtr(pointer) = &mut ty else {
+            unreachable!();
+        };
+        let syn::Type::Reference(reference) = &mut pointer.inputs[0].ty else {
+            unreachable!();
+        };
+        *reference.elem = element;
+        type_input(ty)
+    }
+
+    #[test]
+    fn six_fold_pointer_lifetime_retains_unmatched_and_nested_binders() {
+        for (a, b) in [
+            ("let f: for<> fn(&u8) = read;", "let f: fn(&u8) = read;"),
+            ("let f: for<'a> fn(u8) = read;", "let f: fn(u8) = read;"),
+            ("let f: for<'a> fn(&u8) = read;", "let f: fn(&u8) = read;"),
+            (
+                "let f: for<'a> fn(&'a dyn for<'b> Fn(&'b u8)) = read;",
+                "let f: fn(&dyn for<'b> Fn(&'b u8)) = read;",
+            ),
+        ] {
+            assert_ne!(canonicalize(a).text, canonicalize(b).text, "{a} vs {b}");
+        }
+        assert_merge(&[(
+            "let f: for<'a> fn(&'a dyn core::fmt::Debug) = read;",
+            "let f: fn(&dyn core::fmt::Debug) = read;",
+        )]);
+    }
+
+    #[test]
+    fn six_fold_pointer_lifetime_preserves_opaque_type_elements() {
+        let mut bounded: syn::Type = syn::parse_quote!(dyn core::fmt::Debug);
+        let syn::Type::TraitObject(object) = &mut bounded else {
+            unreachable!();
+        };
+        object
+            .bounds
+            .push(syn::TypeParamBound::Verbatim(quote::quote!(Send)));
+        let mut attributed: syn::Type = syn::parse_quote!(u8);
+        let syn::Type::Path(path) = &mut attributed else {
+            unreachable!();
+        };
+        path.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        for element in [
+            syn::Type::Group(syn::TypeGroup {
+                attrs: Vec::new(),
+                group_token: syn::token::Group::default(),
+                elem: alloc::boxed::Box::new(syn::parse_quote!(u8)),
+            }),
+            syn::Type::Verbatim(quote::quote!(u8)),
+            bounded,
+            attributed,
+        ] {
+            let explicit = pointer_with_element(element.clone(), true);
+            let elided = pointer_with_element(element, false);
+            assert_ne!(canon(explicit).to_string(), canon(elided).to_string());
+        }
+    }
+
+    #[test]
+    fn six_fold_pointer_lifetime_preserves_opaque_array_lengths() {
+        for length in [
+            syn::Expr::Group(syn::ExprGroup {
+                attrs: Vec::new(),
+                group_token: syn::token::Group::default(),
+                expr: alloc::boxed::Box::new(syn::parse_quote!(4)),
+            }),
+            syn::Expr::Verbatim(quote::quote!(4)),
+            syn::Expr::Lit(syn::ExprLit {
+                attrs: Vec::new(),
+                lit: syn::Lit::Verbatim(proc_macro2::Literal::usize_unsuffixed(4)),
+            }),
+        ] {
+            let mut element: syn::Type = syn::parse_quote!([u8; 4]);
+            let syn::Type::Array(array) = &mut element else {
+                unreachable!();
+            };
+            array.len = length;
+            let explicit = pointer_with_element(element.clone(), true);
+            let elided = pointer_with_element(element, false);
+            assert_ne!(canon(explicit).to_string(), canon(elided).to_string());
+        }
+    }
+
+    #[test]
+    fn six_fold_const_item_retains_named_and_raw_captures() {
+        for format in ["{N}", "{N:>4}", "{r#N}"] {
+            let a =
+                format!("const N: usize = 4; let a: [u8; N]; assert_eq!({format:?}, {format:?});");
+            let b = format!("let a: [u8; 4]; assert_eq!({format:?}, {format:?});");
+            assert_ne!(canonicalize(&a).text, canonicalize(&b).text, "{format}");
+        }
+        assert_merge(&[(
+            "const N: usize = 4; let a: [u8; N]; assert_eq!(\"name N}\", \"name N}\");",
+            "let a: [u8; 4]; assert_eq!(\"name N}\", \"name N}\");",
+        )]);
+    }
+
+    #[test]
+    fn six_fold_const_item_preserves_unrelated_and_attributed_array_lengths() {
+        let canonical = [
+            "const N: usize = 4; #[cfg(all())] const M: usize = 2; const F: f32 = 1.0; let a: [u8; N] = [0; N]; let b: [u8; M] = [0; M]; let c: [u8; 2] = [0; 2]; assert_eq!(F, 1.0);",
+            "#[cfg(all())] const M: usize = 2; const F: f32 = 1.0; let a: [u8; 4] = [0; 4]; let b: [u8; M] = [0; M]; let c: [u8; 2] = [0; 2]; assert_eq!(F, 1.0);",
+        ].map(|source| {
+            let mut file = parse(source);
+            let syn::Item::Fn(main) = &mut file.items[0] else {
+                unreachable!();
+            };
+            for stmt in &mut main.block.stmts {
+                if let syn::Stmt::Local(local) = stmt {
+                    if let syn::Pat::Type(typed) = &mut local.pat
+                        && let syn::Type::Array(array) = typed.ty.as_mut()
+                    {
+                        array.attrs.push(syn::parse_quote!(#[cfg(all())]));
+                    }
+                    if let Some(init) = &mut local.init
+                        && let syn::Expr::Repeat(repeat) = init.expr.as_mut()
+                    {
+                        repeat.attrs.push(syn::parse_quote!(#[cfg(all())]));
+                    }
+                }
+            }
+            canon(file).to_string()
+        });
+        assert_eq!(canonical[0], canonical[1]);
+    }
+
     #[test]
     fn six_fold_const_items_account_all_uses() {
         assert_merge(&[
