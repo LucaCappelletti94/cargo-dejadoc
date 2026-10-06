@@ -1,2 +1,0 @@
-let [pino, qno] = items;
-pino + qno

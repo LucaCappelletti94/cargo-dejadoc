@@ -1,4 +1,0 @@
-match it {
-    abete | ebano => abete + ebano,
-    _ => 0,
-}

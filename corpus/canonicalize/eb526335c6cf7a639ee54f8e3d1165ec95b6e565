@@ -1,1 +1,0 @@
-fn f(c: bool, d: boo,) -> u8 { if c { return 1; } ehs% if d { for return,2; } e; lse { return 3; } }

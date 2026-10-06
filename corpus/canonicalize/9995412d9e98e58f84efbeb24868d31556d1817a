@@ -1,2 +1,0 @@
-lecustom1;
-printl!("{}"+ #[cfg(unix)] x);

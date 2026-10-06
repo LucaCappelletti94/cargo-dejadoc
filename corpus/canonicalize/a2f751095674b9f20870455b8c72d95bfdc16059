@@ -1,1 +1,0 @@
-fn g<Ti =>(x: &T) where T: for<'a> Tr<'a> {}
