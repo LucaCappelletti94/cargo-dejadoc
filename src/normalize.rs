@@ -342,7 +342,7 @@ pub(crate) fn body_tokens(function: proc_macro2::TokenStream) -> usize {
 }
 
 /// The tokens of `stream` as `body_tokens` counts them.
-fn units(stream: proc_macro2::TokenStream) -> usize {
+pub(crate) fn units(stream: proc_macro2::TokenStream) -> usize {
     use proc_macro2::{Spacing, TokenTree};
 
     let mut trees = stream.into_iter().peekable();

@@ -12,7 +12,7 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
 
-The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function check on, point at a config file, and switch the output to JSON.
+The flags under `cargo dejadoc --help` restrict the package, set the threshold and minimum token counts, turn the function and context block checks on, point at a config file, and switch the output to JSON.
 Without flags, parameters come from `.dejadoc.toml` at the workspace root.
 
 Generated files are skipped, a file being generated when one of its first five lines contains `@generated` or is a `// Code generated … DO NOT EDIT.` line. In `.dejadoc.toml`, `generated-markers = ["…"]` adds phrases of your own generators and `scan-generated = true` scans them anyway.
@@ -30,6 +30,12 @@ To keep a copy on purpose, write `dejadoc` after `rust` on the opening line of i
 The function check is off by default. `--functions`, `functions = true` in `.dejadoc.toml` or the action's `functions: true` turns it on.
 
 Functions compare within their module, in every target and under every `cfg`. Two match when they differ only in their name, visibility, local names, formatting, or attributes such as `cfg`, `inline` and lint levels. A test marker, `should_panic` or `ignore` keeps them apart. A copy gets a suggestion to delete only when it is a free function or an inherent method under the same `cfg` as the copy kept, and is not already public API of a library, which is better made to call the kept copy or deprecated. Copies on different self types point to a generic or a macro, trait methods and exported symbols to a helper or a macro, and copies under different `cfg`s to one function under both. Functions whose body counts fewer than 30 tokens are skipped, the signature left out, a path like `core::str::from_utf8` or an operator like `=>` counting as one token and a comma as none. A `// dejadoc: allow` line above a function keeps it.
+
+The context block check is off by default. `--context-blocks`, `context-blocks = true` in `.dejadoc.toml` or `context_blocks()` in the library turns it on, and `--context-min-tokens`, `context-min-tokens` in the config or `context_min_tokens` set its own token floor, default `30`, independent of the doctest and function floors.
+
+It records function bodies, including methods, trait defaults and nested functions, explicit blocks, complete match arms with patterns and guards, and closures with inputs and bodies. Each source context is independently normalized with the parse-only `syn-canon` policy, preserving `mut` and compilation-dependent semicolons. Renamed locals and captures merge, repeated references remain related, and literal values, field/method names, available import targets, inherited nominal trait-bound spellings and predicate order remain significant.
+
+The separate `context_groups` report contains approximate matches and source ranges, without a keeper or deletion advice. A contained group is suppressed only when one larger matching group covers all its sites, so additional sites keep the smaller group visible. Unresolved imports and globs, macros, receiver types, inference, enclosing `cfg`, `Self` owners and control-flow targets remain unverified, and context groups never feed Action review suggestions.
 
 In CI, one workflow covers it. The [action](https://github.com/marketplace/actions/dejadoc) installs the crate, scans, and posts the findings as a pull request review, with every other input optional.
 
@@ -127,13 +133,16 @@ The payload holds the pull request number, the head commit, and one rendered com
 
 </details>
 
-The library builds the same report in memory, so a project's own task runner can gate on it with `dejadoc = { version = "0.5", default-features = false, features = ["std"] }`, which leaves the CLI and its `clap` dependency out. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set. `functions()` adds the function check.
+The library builds the same report in memory, so a project's own task runner can gate on it with `dejadoc = { version = "0.5", default-features = false, features = ["std"] }`, which leaves the CLI and its `clap` dependency out. The scan compiles nothing, so a crate whose features are mutually exclusive needs one run rather than one per feature set. `functions()` adds the function check, and `context_blocks()` adds the context block check.
 
 ```rust
 let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
 assert_eq!(report.groups.len(), 2);
 let report = dejadoc::Dejadoc::default().functions().run("tests/fixtures/fnws").unwrap();
 assert_eq!(report.groups.len(), 7);
+let report = dejadoc::Dejadoc::default().context_blocks().context_min_tokens(0).run("tests/fixtures/contextws").unwrap();
+let group = report.context_groups.iter().find(|g| g.sites.iter().any(|s| s.item == "contextws::count_up")).unwrap();
+assert_eq!(group.sites.len(), 2);
 ```
 
 Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), installed with the [skills CLI](https://github.com/vercel-labs/skills).

@@ -6,12 +6,15 @@ extern crate alloc;
 extern crate std;
 
 mod alpha;
+mod blocks;
 mod const_items;
 mod drift;
 
 use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
+
+pub use blocks::{Context, ContextKind, ContextWork, contexts};
 
 /// The canonical tokens of a compiling `file`, equal across style and local binder names.
 #[must_use]
@@ -65,7 +68,7 @@ const COMMA_BLIND_ATTRIBUTES: [&str; 10] = [
 
 /// Drop each group's trailing comma unless `keep_commas`, set inside the tokens of a macro or an
 /// attribute that may match on it, and respell literals outside `opaque` macro and attribute tokens.
-fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
+pub(crate) fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
     let mut out: Vec<TokenTree> = Vec::new();
     // A proc macro derive was seen, then the `struct`, `enum` or `union` whose body it reads.
     let (mut derived, mut derived_item) = (false, false);

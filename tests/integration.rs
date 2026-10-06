@@ -2,7 +2,7 @@
 
 #![cfg(feature = "std")]
 
-use dejadoc::{Dejadoc, Remedy, Report};
+use dejadoc::{ContextKind, Dejadoc, Remedy, Report};
 use std::path::Path;
 #[cfg(feature = "cli")]
 use std::process::Command;
@@ -350,4 +350,353 @@ fn threshold_builder_narrows_groups() {
         .unwrap();
     assert_eq!(report.total, 9);
     assert_eq!(report.groups.len(), 1);
+}
+
+const CONTEXT_FIXTURE: &str = "tests/fixtures/contextws";
+
+fn context_scan() -> Report {
+    Dejadoc::default()
+        .context_blocks()
+        .context_min_tokens(0)
+        .run(CONTEXT_FIXTURE)
+        .unwrap()
+}
+
+fn context_items(group: &dejadoc::ContextGroup) -> Vec<&str> {
+    group.sites.iter().map(|s| s.item.as_str()).collect()
+}
+
+#[test]
+fn context_blocks_are_off_by_default() {
+    let report = Dejadoc::default().run(CONTEXT_FIXTURE).unwrap();
+    assert_eq!(report.context_blocks, 0);
+    assert_eq!(report.unique_context_blocks, 0);
+    assert_eq!(report.context_groups.len(), 0);
+    assert_eq!(
+        dejadoc::exit_code(&report, false),
+        std::process::ExitCode::SUCCESS
+    );
+}
+
+#[test]
+fn renamed_locals_and_captures_group_across_functions() {
+    let report = context_scan();
+    let group = report
+        .context_groups
+        .iter()
+        .find(|g| g.sites.iter().any(|s| s.item.ends_with("::count_up")))
+        .expect("count_up context group");
+    assert_eq!(
+        context_items(group),
+        vec!["contextws::count_up", "contextws::count_down"]
+    );
+    assert!(
+        group
+            .sites
+            .iter()
+            .all(|s| s.kind == ContextKind::FunctionBody)
+    );
+    assert!(group.sites.iter().all(|s| s.file.ends_with("src/lib.rs")));
+}
+
+#[test]
+fn closure_captures_merge_and_distinct_references_do_not() {
+    let report = context_scan();
+    let closures = report
+        .context_groups
+        .iter()
+        .find(|g| {
+            g.sites.iter().all(|s| s.kind == ContextKind::Closure)
+                && g.sites.iter().any(|s| s.item.ends_with("::mixed"))
+        })
+        .expect("closure group with the mixed extra site");
+    // The repeated-reference closure in mixed stays out of this group,
+    // so mixed contributes exactly one site.
+    assert_eq!(
+        context_items(closures),
+        vec!["contextws::shifted", "contextws::moved", "contextws::mixed"]
+    );
+    assert!(report.context_groups.iter().all(|g| {
+        g.sites
+            .iter()
+            .filter(|s| s.item.ends_with("::mixed"))
+            .count()
+            <= 1
+    }));
+    let functions = report
+        .context_groups
+        .iter()
+        .find(|g| {
+            g.sites.iter().all(|s| s.kind == ContextKind::FunctionBody)
+                && g.sites.iter().any(|s| s.item.ends_with("::shifted"))
+        })
+        .expect("shifted/moved function group");
+    assert_eq!(
+        context_items(functions),
+        vec!["contextws::shifted", "contextws::moved"]
+    );
+}
+
+#[test]
+fn distinct_import_targets_do_not_group() {
+    let report = context_scan();
+    assert!(report.context_groups.iter().all(|g| {
+        !(g.sites.iter().any(|s| s.item.ends_with("::via_first"))
+            && g.sites.iter().any(|s| s.item.ends_with("::via_second")))
+    }));
+}
+
+#[test]
+fn contained_block_group_survives_with_an_extra_site() {
+    let report = context_scan();
+    let blocks = report
+        .context_groups
+        .iter()
+        .find(|g| {
+            g.sites.iter().all(|s| s.kind == ContextKind::Block)
+                && g.sites.iter().any(|s| s.item.ends_with("::bare"))
+        })
+        .expect("small block group with its extra site");
+    assert_eq!(
+        context_items(blocks),
+        vec![
+            "contextws::framed_left",
+            "contextws::framed_right",
+            "contextws::bare"
+        ]
+    );
+    let functions = report
+        .context_groups
+        .iter()
+        .find(|g| {
+            g.sites.iter().all(|s| s.kind == ContextKind::FunctionBody)
+                && g.sites.iter().any(|s| s.item.ends_with("::framed_left"))
+        })
+        .expect("framed function group");
+    assert_eq!(
+        context_items(functions),
+        vec!["contextws::framed_left", "contextws::framed_right"]
+    );
+}
+
+#[test]
+fn same_line_context_sites_keep_their_columns() {
+    let report = context_scan();
+    let group = report
+        .context_groups
+        .iter()
+        .find(|g| g.sites.iter().any(|s| s.item.ends_with("::paired")))
+        .expect("paired closure group");
+    assert_eq!(group.sites.len(), 2);
+    assert!(group.sites.iter().all(|s| s.kind == ContextKind::Closure));
+    let (a, b) = (&group.sites[0], &group.sites[1]);
+    assert_eq!(a.line, b.line);
+    assert_ne!(a.column, b.column);
+    assert!(a.end_column <= b.column);
+}
+
+#[test]
+fn the_default_context_floor_drops_the_fixture_contexts() {
+    let report = Dejadoc::default()
+        .context_blocks()
+        .run(CONTEXT_FIXTURE)
+        .unwrap();
+    assert!(report.context_blocks > 0);
+    assert_eq!(report.unique_context_blocks, 0);
+    assert_eq!(report.context_groups.len(), 0);
+}
+
+#[test]
+fn exit_code_reflects_context_groups() {
+    let report = context_scan();
+    assert_eq!(
+        dejadoc::exit_code(&report, false),
+        std::process::ExitCode::from(1)
+    );
+    assert_eq!(
+        dejadoc::exit_code(&report, true),
+        std::process::ExitCode::SUCCESS
+    );
+}
+
+#[test]
+fn config_file_enables_context_blocks() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".dejadoc.toml");
+    std::fs::write(&path, "context-blocks = true\ncontext-min-tokens = 0\n").unwrap();
+    let report = Dejadoc::default()
+        .config(&path)
+        .unwrap()
+        .run(CONTEXT_FIXTURE)
+        .unwrap();
+    assert!(
+        report
+            .context_groups
+            .iter()
+            .any(|g| g.sites.iter().any(|s| s.item.ends_with("::count_up")))
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join(".dejadoc.toml");
+    std::fs::write(&path, "context-blocks = true\n").unwrap();
+    let report = Dejadoc::default()
+        .config(&path)
+        .unwrap()
+        .run(CONTEXT_FIXTURE)
+        .unwrap();
+    assert!(report.context_blocks > 0);
+    assert_eq!(report.context_groups.len(), 0);
+}
+
+#[test]
+#[cfg(feature = "cli")]
+fn context_flags_run_the_scan_end_to_end() {
+    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let out = Command::new(bin)
+        .current_dir(CONTEXT_FIXTURE)
+        .args([
+            "dejadoc",
+            "--context-blocks",
+            "--context-min-tokens",
+            "0",
+            "--json",
+        ])
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
+    assert!(
+        value["context_blocks"]
+            .as_u64()
+            .expect("context block count")
+            > 0
+    );
+    let groups = value["context_groups"].as_array().expect("context groups");
+    for group in groups {
+        assert!(group["id"].is_string());
+        assert!(group["hash"].is_string());
+        assert!(group["tokens"].is_u64());
+        for site in group["sites"].as_array().expect("context sites") {
+            assert!(site["file"].is_string());
+            assert!(site["line"].is_u64());
+            assert!(site["column"].is_u64());
+            assert!(site["end"].is_u64());
+            assert!(site["end_column"].is_u64());
+            assert!(site["item"].is_string());
+            assert!(matches!(
+                site["kind"].as_str(),
+                Some("function-body" | "block" | "arm" | "closure")
+            ));
+        }
+    }
+    let renamed = groups
+        .iter()
+        .find(|group| {
+            group["sites"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|site| site["item"] == "contextws::count_up")
+        })
+        .expect("renamed function group");
+    let items: Vec<_> = renamed["sites"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|site| site["item"].as_str().unwrap())
+        .collect();
+    assert_eq!(items, ["contextws::count_up", "contextws::count_down"]);
+}
+
+#[test]
+#[cfg(feature = "cli")]
+fn context_default_floor_and_no_fail_from_the_command_line() {
+    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let out = Command::new(bin)
+        .current_dir(CONTEXT_FIXTURE)
+        .args(["dejadoc", "--context-blocks", "--json"])
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
+    assert!(
+        value["context_blocks"]
+            .as_u64()
+            .expect("context block count")
+            > 0
+    );
+    assert_eq!(value["context_groups"].as_array().unwrap().len(), 0);
+    let out = Command::new(bin)
+        .current_dir(CONTEXT_FIXTURE)
+        .args([
+            "dejadoc",
+            "--context-blocks",
+            "--context-min-tokens",
+            "0",
+            "--no-fail",
+        ])
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+}
+
+#[test]
+#[cfg(feature = "cli")]
+fn context_annotations_are_approximate_with_coordinates() {
+    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let out = Command::new(bin)
+        .current_dir(CONTEXT_FIXTURE)
+        .args([
+            "dejadoc",
+            "--context-blocks",
+            "--context-min-tokens",
+            "0",
+            "--github",
+        ])
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(
+        out.status.code(),
+        Some(1),
+        "stderr: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let text = String::from_utf8(out.stdout).expect("utf8 output");
+    let marks: Vec<std::collections::BTreeMap<_, _>> = text
+        .lines()
+        .filter_map(|line| line.strip_prefix("::error "))
+        .map(|mark| {
+            mark.split_once("::")
+                .unwrap()
+                .0
+                .split(',')
+                .filter_map(|field| field.split_once('='))
+                .collect()
+        })
+        .collect();
+    let paired: Vec<_> = marks
+        .iter()
+        .filter(|mark| mark.get("line") == Some(&"86"))
+        .map(|mark| (mark["col"], mark["endLine"], mark["endColumn"]))
+        .collect();
+    assert_eq!(paired, [("19", "86", "32"), ("35", "86", "48")]);
+    assert!(
+        marks
+            .iter()
+            .all(|mark| mark.get("file") == Some(&"src/lib.rs"))
+    );
 }
