@@ -1786,6 +1786,168 @@ mod tests {
         }
     }
 
+    fn type_input(ty: syn::Type) -> syn::File {
+        let mut alias: syn::ItemType = syn::parse_quote!(
+            type Alias = ();
+        );
+        alias.ty = alloc::boxed::Box::new(ty);
+        syn::File {
+            shebang: None,
+            frontmatter: None,
+            attrs: Vec::new(),
+            items: alloc::vec![syn::Item::Type(alias)],
+        }
+    }
+
+    fn expression_input(expr: syn::Expr) -> syn::File {
+        let mut function: syn::ItemFn = syn::parse_quote!(
+            fn main() {}
+        );
+        function
+            .block
+            .stmts
+            .push(syn::Stmt::Expr(expr, Some(syn::token::Semi::default())));
+        syn::File {
+            shebang: None,
+            frontmatter: None,
+            attrs: Vec::new(),
+            items: alloc::vec![syn::Item::Fn(function)],
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_extended_expression_inputs() {
+        for failing in [false, true] {
+            let normalize = if failing {
+                super::canonicalize_failing
+            } else {
+                canon
+            };
+            for expr in [
+                "g::<u8,>().await",
+                "const { g::<u8,>() }",
+                "&raw const g::<u8,>()",
+                "[g::<u8,>(); 2]",
+                "try { g::<u8,>() }",
+                "yield g::<u8,>()",
+            ] {
+                let ordinary = format!("fn main() {{ let x = {expr}; }}");
+                assert_eq!(
+                    normalize(parse(&ordinary)).to_string(),
+                    normalize(parse(&ordinary.replace(",>", ">"))).to_string(),
+                    "{expr}, failing={failing}",
+                );
+                let held = format!("fn main() {{ let x = #[inspect] {expr}; }}");
+                assert_ne!(
+                    normalize(parse(&held)).to_string(),
+                    normalize(parse(&held.replace(",>", ">"))).to_string(),
+                    "{expr}, failing={failing}",
+                );
+                let scoped = format!(
+                    "fn main() {{ let held = #[inspect] {expr}; let ordinary = g::<u8,>(); }}"
+                );
+                let scoped_neighbor = format!(
+                    "fn main() {{ let held = #[inspect] {expr}; let ordinary = g::<u8>(); }}"
+                );
+                assert_eq!(
+                    normalize(parse(&scoped)).to_string(),
+                    normalize(parse(&scoped_neighbor)).to_string(),
+                    "{expr}, failing={failing}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_invisible_group_inputs() {
+        for failing in [false, true] {
+            let normalize = if failing {
+                super::canonicalize_failing
+            } else {
+                canon
+            };
+            for marked in [false, true] {
+                let attrs = if marked {
+                    alloc::vec![syn::parse_quote!(#[inspect])]
+                } else {
+                    Vec::new()
+                };
+                let types = ["S<u8,>", "S<u8>"].map(|source| {
+                    normalize(type_input(syn::Type::Group(syn::TypeGroup {
+                        attrs: attrs.clone(),
+                        group_token: syn::token::Group::default(),
+                        elem: alloc::boxed::Box::new(syn::parse_str(source).unwrap()),
+                    })))
+                    .to_string()
+                });
+                let expressions = ["g::<u8,>()", "g::<u8>()"].map(|source| {
+                    normalize(expression_input(syn::Expr::Group(syn::ExprGroup {
+                        attrs: attrs.clone(),
+                        group_token: syn::token::Group::default(),
+                        expr: alloc::boxed::Box::new(syn::parse_str(source).unwrap()),
+                    })))
+                    .to_string()
+                });
+                assert_eq!(types[0] == types[1], !marked, "type, failing={failing}");
+                assert_eq!(
+                    expressions[0] == expressions[1],
+                    !marked,
+                    "expression, failing={failing}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn grammar_folds_preserve_verbatim_inputs() {
+        for failing in [false, true] {
+            let normalize = if failing {
+                super::canonicalize_failing
+            } else {
+                canon
+            };
+            let types = ["S<u8,>", "S<u8>"].map(|source| {
+                normalize(type_input(syn::Type::Verbatim(source.parse().unwrap()))).to_string()
+            });
+            let expressions = ["g::<u8,>()", "g::<u8>()"].map(|source| {
+                normalize(expression_input(syn::Expr::Verbatim(
+                    source.parse().unwrap(),
+                )))
+                .to_string()
+            });
+            let patterns = ["x @ _", "x"].map(|source| {
+                let mut function: syn::ItemFn = syn::parse_quote!(
+                    fn main() {}
+                );
+                function.block.stmts.push(syn::Stmt::Local(syn::Local {
+                    attrs: Vec::new(),
+                    let_token: syn::token::Let::default(),
+                    modifiers: syn::LocalModifiers::default(),
+                    pat: syn::Pat::Verbatim(source.parse().unwrap()),
+                    init: Some(syn::LocalInit {
+                        eq_token: syn::token::Eq::default(),
+                        expr: alloc::boxed::Box::new(syn::parse_quote!(7)),
+                        diverge: None,
+                    }),
+                    semi_token: syn::token::Semi::default(),
+                }));
+                normalize(syn::File {
+                    shebang: None,
+                    frontmatter: None,
+                    attrs: Vec::new(),
+                    items: alloc::vec![syn::Item::Fn(function)],
+                })
+                .to_string()
+            });
+            assert_ne!(types[0], types[1], "type, failing={failing}");
+            assert_ne!(
+                expressions[0], expressions[1],
+                "expression, failing={failing}"
+            );
+            assert_ne!(patterns[0], patterns[1], "pattern, failing={failing}");
+        }
+    }
+
     #[test]
     fn spelling_drift_type_position_turbofish() {
         assert_merge(&[

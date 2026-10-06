@@ -43,6 +43,7 @@ Style folds, each applied only where it keeps the meaning:
 - `pub(in crate)`, `pub(in self)` and `pub(in super)` omit `in`.
 - When the code compiles, an omitted `extern` ABI becomes `"C"`, `return ()` becomes `return`, leading pattern pipes go, and a non-uppercase `x @ _` becomes `x` with its binding mode preserved. `canonicalize_failing` keeps these spellings.
 - These syntax folds preserve procedural macro inputs, including fields, arguments, nested syntax and attribute payloads.
+- Unparsed `Verbatim` nodes retain generic-list punctuation and pattern-binding spelling.
 - Identifier arguments of the std formatting macros move into the format string, `println!("{}", x)` becoming `println!("{x}")`.
 - Macro calls take parentheses, and every statement macro but the tail one takes a semicolon.
 - `derive` lists of std derives merge into one sorted list.
