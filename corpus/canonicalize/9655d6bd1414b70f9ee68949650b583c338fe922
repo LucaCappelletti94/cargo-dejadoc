@@ -1,0 +1,4 @@
+fo;
+st;
+trait T {}
+impl T for (S,) {};
