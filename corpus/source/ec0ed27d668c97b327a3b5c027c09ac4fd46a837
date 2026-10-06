@@ -1,2 +1,0 @@
-#[dfn = inclu_str!("dnclude_str.md")]
-pub fn f() {}

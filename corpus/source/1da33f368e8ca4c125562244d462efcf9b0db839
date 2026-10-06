@@ -1,2 +1,0 @@
-#[doc = " *# "]
-pub fn f() {{.class}}

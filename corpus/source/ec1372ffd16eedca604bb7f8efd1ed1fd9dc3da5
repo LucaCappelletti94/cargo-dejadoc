@@ -1,9 +1,0 @@
-pub fn outer() {
-    #[cfg(test)]
-    {
-        /// ```
-        /// lprintln!("{}", et a = 1;
-   let b = 2;
-          dejadoc     
-    };
-}

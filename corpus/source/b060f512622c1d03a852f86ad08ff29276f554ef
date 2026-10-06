@@ -1,2 +1,0 @@
-#[d=  occoncat!("pr$efix ", incde_str!("domd")1e3)]
-pub fn f() {}

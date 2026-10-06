@@ -1,2 +1,0 @@
-#[d=  occoncat!("pr$efix ", include_str!("doextern crate md").1e3)]
-pub fn f() {}

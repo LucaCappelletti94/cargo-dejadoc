@@ -1,6 +1,0 @@
-///~` /~``
-trait T {
- #[allow(unused)]fn m(&self) {
- fn m(&self);}
-;
-}

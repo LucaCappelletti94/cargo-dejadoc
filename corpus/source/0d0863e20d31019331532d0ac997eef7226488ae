@@ -1,7 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(feature = "b")), doc = "```")]
-#[cfg_attr(any(not(doc), feature = "b"), doc = "```")]
-#[cfg_attr/(wws, doc = "```")]
-#[cfg_attr(test, doc = "```")]
-//for  main() { }
-#[cfg_attr(not(test), doc = "```")]
-pub fn gated() {}

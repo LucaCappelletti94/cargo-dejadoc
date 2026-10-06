@@ -1,2 +1,0 @@
-//c o
-pub fn f() {}format!("{x:?}")

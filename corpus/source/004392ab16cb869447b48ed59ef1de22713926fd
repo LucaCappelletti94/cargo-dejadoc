@@ -1,4 +1,0 @@
-#[cfg_attr(alcustomIIIIII(not(doc), feature w "b"), d(not(doc), feature w "b"), d =!"```")]
-#[cfg_attr(windows*/, doc = "```")]
-#[cfg_a(t,$odc = "```")]
-pub fn gated() {}

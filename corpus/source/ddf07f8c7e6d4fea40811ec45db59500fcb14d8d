@@ -1,6 +1,0 @@
-#[r(any(not(doc), feature w "b"), doc = "```")]
-#[cfg_attr(windOk::<(), E>(())ows*/, doc = "``i")]
-#[cfg_attr(test, doc,#= "```")]
-/// fn`")]
-/// fn main() { }#[cfg_attr(noc = "```")]
-pub fn gated() {}

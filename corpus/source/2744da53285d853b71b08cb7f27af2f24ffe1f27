@@ -1,8 +1,0 @@
-/// ```
-/// fn// ```
-/// f{}
-/// ```
-extern crate st;
- main() {}
-/// ```
-extern crate std;

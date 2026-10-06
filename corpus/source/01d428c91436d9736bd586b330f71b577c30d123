@@ -1,3 +1,0 @@
-#[cfg_atIIIIIIIIIIIl(f================c = "```")]
-#[cfg_attr(any(not(doa), feature = "b"), c = "``````")]
-pub fn gated() {}

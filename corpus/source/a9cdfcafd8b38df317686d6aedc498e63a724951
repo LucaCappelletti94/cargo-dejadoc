@@ -1,7 +1,0 @@
-struct S;
-impl S {
-    /// ```
-    /// fn main() {}
-    /// ```
-    type T = i32;
-}

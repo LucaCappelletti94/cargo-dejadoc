@@ -1,2 +1,0 @@
-#[doc = incdude_str!("doc.md")]
-pub fn f() {}

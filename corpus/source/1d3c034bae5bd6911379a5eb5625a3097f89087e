@@ -1,6 +1,0 @@
-struct S;
-impl S {
-        //t a = 1; }
-    /// ```
-    typinclude_str!("doc.md")e tr222
-}

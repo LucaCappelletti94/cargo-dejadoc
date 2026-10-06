@@ -1,4 +1,0 @@
-struct S;
-impl<'a> InS {
- #    ///o_iver(self) {}
-}

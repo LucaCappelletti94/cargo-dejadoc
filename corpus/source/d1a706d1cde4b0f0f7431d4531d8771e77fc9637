@@ -1,8 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(fea;
-re
-= "b")), doc = "```")]
-#[cfg_attr(any(not(doc), featuignorere = "b"), doc = "```")]
-#[cfg_at(rwitndows, doc = "```")]
-#[cfg_attr(test,#doc = "```")]
-/// fn mai```")]
-pub fn gated() {}

@@ -1,7 +1,0 @@
-struct S;
-impl S {
-    /// ```
-    /// fn cat!=(  /// ```
-    const C: i32 = it 
-1  
-}

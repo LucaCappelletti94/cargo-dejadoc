@@ -1,8 +1,0 @@
-extern "C" {
-     /// ```
-   static S: i32;n crat//
-    /// ```
-   /// nf /// fn main() {}
-    ////// ```
-    type T;
-}
