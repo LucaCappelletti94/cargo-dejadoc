@@ -182,21 +182,361 @@ mod tests {
         }
     }
 
+    #[test]
+    fn main44_preserves_macro_observed_attribute_payloads() {
+        for (a, b) in [
+            (
+                "#[reader::inspect] #[must_use = 0 as &'_ u8] fn main() {}",
+                "#[reader::inspect] #[must_use = 0 as &u8] fn main() {}",
+            ),
+            (
+                "#[reader::inspect] #[must_use = stringify!{value}] fn main() {}",
+                "#[reader::inspect] #[must_use = stringify!(value)] fn main() {}",
+            ),
+        ] {
+            assert_ne!(canon(parse(a)).to_string(), canon(parse(b)).to_string());
+            assert_ne!(
+                super::canonicalize_failing(parse(a)).to_string(),
+                super::canonicalize_failing(parse(b)).to_string(),
+            );
+        }
+    }
+
+    fn assert_type_attribute_scope<T: Clone>(
+        mut a: T,
+        mut b: T,
+        wrap: fn(T) -> syn::Type,
+        attrs: fn(&mut T) -> &mut Vec<syn::Attribute>,
+    ) {
+        let plain_a = type_input(wrap(a.clone()));
+        let plain_b = type_input(wrap(b.clone()));
+        attrs(&mut a).push(syn::parse_quote!(#[reader::inspect]));
+        attrs(&mut b).push(syn::parse_quote!(#[reader::inspect]));
+        let held_a = type_input(wrap(a));
+        let held_b = type_input(wrap(b));
+        let mut sibling_a = held_a.clone();
+        let mut sibling_b = held_a.clone();
+        sibling_a.items.push(syn::parse_quote!(
+            type After = Foo<u8>;
+        ));
+        sibling_b.items.push(syn::parse_quote!(
+            type After = Foo<u8>;
+        ));
+        for normalize in [canon, super::canonicalize_failing] {
+            assert_eq!(
+                normalize(plain_a.clone()).to_string(),
+                normalize(plain_b.clone()).to_string()
+            );
+            assert_ne!(
+                normalize(held_a.clone()).to_string(),
+                normalize(held_b.clone()).to_string()
+            );
+            assert_eq!(
+                normalize(sibling_a.clone()).to_string(),
+                normalize(sibling_b.clone()).to_string()
+            );
+        }
+    }
+
+    #[test]
+    fn main44_type_attributes_preserve_descendants_and_release_scope() {
+        assert_type_attribute_scope(
+            syn::parse_quote!([Foo::<u8>; 1]),
+            syn::parse_quote!([Foo<u8>; 1]),
+            syn::Type::Array,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!(fn() -> Foo::<u8>),
+            syn::parse_quote!(fn() -> Foo<u8>),
+            syn::Type::FnPtr,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!(impl Foo::<u8>),
+            syn::parse_quote!(impl Foo<u8>),
+            syn::Type::ImplTrait,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!((Foo::<u8>)),
+            syn::parse_quote!((Foo<u8>)),
+            syn::Type::Paren,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!(Foo::<u8>),
+            syn::parse_quote!(Foo<u8>),
+            syn::Type::Path,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!(*const Foo::<u8>),
+            syn::parse_quote!(*const Foo<u8>),
+            syn::Type::Ptr,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!(&Foo::<u8>),
+            syn::parse_quote!(&Foo<u8>),
+            syn::Type::Reference,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!([Foo::<u8>]),
+            syn::parse_quote!([Foo<u8>]),
+            syn::Type::Slice,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!(dyn Foo::<u8>),
+            syn::parse_quote!(dyn Foo<u8>),
+            syn::Type::TraitObject,
+            |node| &mut node.attrs,
+        );
+        assert_type_attribute_scope(
+            syn::parse_quote!((Foo::<u8>,)),
+            syn::parse_quote!((Foo<u8>,)),
+            syn::Type::Tuple,
+            |node| &mut node.attrs,
+        );
+    }
+
+    #[test]
+    fn main44_foreign_type_attributes_preserve_visibility_and_release_scope() {
+        let held = [
+            "unsafe extern \"C\" { #[reader::inspect] pub(in crate) type Opaque; }",
+            "unsafe extern \"C\" { #[reader::inspect] pub(crate) type Opaque; }",
+        ];
+        let plain = [
+            "unsafe extern \"C\" { pub(in crate) type Ordinary; }",
+            "unsafe extern \"C\" { pub(crate) type Ordinary; }",
+        ];
+        let sibling = [
+            "unsafe extern \"C\" { #[reader::inspect] pub(in crate) type Opaque; pub(in crate) type Ordinary; }",
+            "unsafe extern \"C\" { #[reader::inspect] pub(in crate) type Opaque; pub(crate) type Ordinary; }",
+        ];
+        for normalize in [canon, super::canonicalize_failing] {
+            assert_ne!(
+                normalize(parse(held[0])).to_string(),
+                normalize(parse(held[1])).to_string()
+            );
+            assert_eq!(
+                normalize(parse(plain[0])).to_string(),
+                normalize(parse(plain[1])).to_string()
+            );
+            assert_eq!(
+                normalize(parse(sibling[0])).to_string(),
+                normalize(parse(sibling[1])).to_string()
+            );
+        }
+    }
+
+    fn attributed_expression_input(source: &str) -> syn::File {
+        let mut expr: syn::Expr = syn::parse_str(source).unwrap();
+        let attrs = match &mut expr {
+            syn::Expr::Array(node) => &mut node.attrs,
+            syn::Expr::Assign(node) => &mut node.attrs,
+            syn::Expr::Async(node) => &mut node.attrs,
+            syn::Expr::Binary(node) => &mut node.attrs,
+            syn::Expr::Break(node) => &mut node.attrs,
+            syn::Expr::Cast(node) => &mut node.attrs,
+            syn::Expr::Closure(node) => &mut node.attrs,
+            syn::Expr::Field(node) => &mut node.attrs,
+            syn::Expr::ForLoop(node) => &mut node.attrs,
+            syn::Expr::If(node) => &mut node.attrs,
+            syn::Expr::Index(node) => &mut node.attrs,
+            syn::Expr::Loop(node) => &mut node.attrs,
+            syn::Expr::Match(node) => &mut node.attrs,
+            syn::Expr::MethodCall(node) => &mut node.attrs,
+            syn::Expr::Paren(node) => &mut node.attrs,
+            syn::Expr::Path(node) => &mut node.attrs,
+            syn::Expr::Range(node) => &mut node.attrs,
+            syn::Expr::Reference(node) => &mut node.attrs,
+            syn::Expr::Return(node) => &mut node.attrs,
+            syn::Expr::Struct(node) => &mut node.attrs,
+            syn::Expr::Try(node) => &mut node.attrs,
+            syn::Expr::Tuple(node) => &mut node.attrs,
+            syn::Expr::Unary(node) => &mut node.attrs,
+            syn::Expr::Unsafe(node) => &mut node.attrs,
+            syn::Expr::While(node) => &mut node.attrs,
+            _ => unreachable!(),
+        };
+        attrs.push(syn::parse_quote!(#[inspect]));
+        match expr {
+            syn::Expr::Break(value) => {
+                let mut loop_expr: syn::ExprLoop = syn::parse_quote!(loop {});
+                loop_expr.body.stmts.push(syn::Stmt::Expr(
+                    syn::Expr::Break(value),
+                    Some(syn::token::Semi::default()),
+                ));
+                expression_input(syn::Expr::Loop(loop_expr))
+            }
+            syn::Expr::Try(value) => {
+                let mut function: syn::ItemFn = syn::parse_quote!(
+                    fn main() -> Result<(), ()> {
+                        Ok(())
+                    }
+                );
+                function.block.stmts.insert(
+                    0,
+                    syn::Stmt::Expr(syn::Expr::Try(value), Some(syn::token::Semi::default())),
+                );
+                syn::File {
+                    shebang: None,
+                    frontmatter: None,
+                    attrs: Vec::new(),
+                    items: alloc::vec![syn::Item::Fn(function)],
+                }
+            }
+            expr => expression_input(expr),
+        }
+    }
+
+    fn assert_expression_attribute_split(pairs: &[(&str, &str)], failing: bool) {
+        for &(a, b) in pairs {
+            assert_ne!(
+                canon(attributed_expression_input(a)).to_string(),
+                canon(attributed_expression_input(b)).to_string(),
+                "{a} vs {b}",
+            );
+            if failing {
+                assert_ne!(
+                    super::canonicalize_failing(attributed_expression_input(a)).to_string(),
+                    super::canonicalize_failing(attributed_expression_input(b)).to_string(),
+                    "{a} vs {b}",
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_signed_zero_descendants() {
+        assert_expression_attribute_split(
+            &[
+                ("a = -0i8", "a = 0i8"),
+                ("async { -0i8 }", "async { 0i8 }"),
+                ("a + -0i8", "a + 0i8"),
+                ("break -0i8", "break 0i8"),
+                ("(-0i8,).0", "(0i8,).0"),
+                ("for _ in seq { -0i8; }", "for _ in seq { 0i8; }"),
+                ("[-0i8][0]", "[0i8][0]"),
+                ("loop { -0i8; }", "loop { 0i8; }"),
+                ("match y { _ => -0i8 }", "match y { _ => 0i8 }"),
+                ("(-0i8)", "(0i8)"),
+                ("-0i8..10", "0i8..10"),
+                ("&-0i8", "&0i8"),
+                ("S { v: -0i8 }", "S { v: 0i8 }"),
+                ("(Ok::<i8, ()>(-0i8))?", "(Ok::<i8, ()>(0i8))?"),
+                ("(-0i8, 1u8)", "(0i8, 1u8)"),
+                ("!(-0i8)", "!(0i8)"),
+                ("unsafe { -0i8; }", "unsafe { 0i8; }"),
+                ("while b { -0i8; }", "while b { 0i8; }"),
+            ],
+            true,
+        );
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_const_blocks() {
+        assert_expression_attribute_split(&[("[const { 7u8 }]", "[7u8]")], false);
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_empty_else() {
+        assert_expression_attribute_split(
+            &[("if b { work(); } else {}", "if b { work(); }")],
+            false,
+        );
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_closure_signatures() {
+        assert_expression_attribute_split(&[("|| -> () {}", "|| {}"), ("|a,| a", "|a| a")], true);
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_unit_returns() {
+        assert_expression_attribute_split(&[("return ()", "return")], false);
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_method_turbofish() {
+        assert_expression_attribute_split(&[("a.m::<>()", "a.m()")], true);
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_path_argument_commas() {
+        assert_expression_attribute_split(&[("g::<u8,>", "g::<u8>")], true);
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_cast_abi() {
+        assert_expression_attribute_split(&[("v as extern fn()", "v as extern \"C\" fn()")], false);
+    }
+
+    fn if_let_condition_input(expr: syn::Expr) -> syn::File {
+        let mut conditional: syn::ExprIf = syn::parse_quote!(if x {});
+        let mut condition: syn::ExprLet = syn::parse_quote!(let _ = g());
+        condition.attrs.push(syn::parse_quote!(#[inspect]));
+        *condition.expr = expr;
+        *conditional.cond = syn::Expr::Let(condition);
+        expression_input(syn::Expr::If(conditional))
+    }
+
+    #[test]
+    fn main44_expr_attributes_preserve_let_conditions() {
+        for normalize in [canon, super::canonicalize_failing] {
+            assert_ne!(
+                normalize(if_let_condition_input(syn::parse_quote!(g(-0i8)))).to_string(),
+                normalize(if_let_condition_input(syn::parse_quote!(g(0i8)))).to_string(),
+            );
+        }
+    }
+
+    fn block_input(block: syn::Block) -> syn::File {
+        let mut function: syn::ItemFn = syn::parse_quote!(
+            fn main() {}
+        );
+        *function.block = block;
+        syn::File {
+            shebang: None,
+            frontmatter: None,
+            attrs: Vec::new(),
+            items: alloc::vec![syn::Item::Fn(function)],
+        }
+    }
+
+    fn opaque_local() -> syn::Local {
+        syn::Local {
+            attrs: Vec::new(),
+            let_token: syn::token::Let::default(),
+            modifiers: syn::LocalModifiers::default(),
+            pat: syn::Pat::Verbatim(quote::quote!(value)),
+            init: Some(syn::LocalInit {
+                eq_token: syn::token::Eq::default(),
+                expr: alloc::boxed::Box::new(syn::parse_quote!(0)),
+                diverge: None,
+            }),
+            semi_token: syn::token::Semi::default(),
+        }
+    }
+
     fn pointer_with_element(element: syn::Type, explicit: bool) -> syn::File {
-        let source = if explicit {
-            "for<'a> fn(&'a u8)"
-        } else {
-            "fn(&u8)"
-        };
-        let mut ty: syn::Type = syn::parse_str(source).unwrap();
-        let syn::Type::FnPtr(pointer) = &mut ty else {
-            unreachable!();
-        };
-        let syn::Type::Reference(reference) = &mut pointer.inputs[0].ty else {
-            unreachable!();
-        };
-        *reference.elem = element;
-        type_input(ty)
+        let mut pointer: syn::TypeFnPtr = syn::parse_quote!(fn());
+        pointer.lifetimes = explicit.then(|| syn::parse_quote!(for<'a>));
+        pointer.inputs.push(syn::NamedArg {
+            attrs: Vec::new(),
+            name: None,
+            ty: syn::Type::Reference(syn::TypeReference {
+                attrs: Vec::new(),
+                and_token: syn::token::And::default(),
+                lifetime: explicit.then(|| syn::parse_quote!('a)),
+                mutability: None,
+                elem: alloc::boxed::Box::new(element),
+            }),
+        });
+        type_input(syn::Type::FnPtr(pointer))
     }
 
     #[test]
@@ -205,10 +545,6 @@ mod tests {
             type Alias = u8;
         );
         *alias.ty = syn::Type::Verbatim(quote::quote!(u8));
-        let syn::Stmt::Local(mut local) = syn::parse_quote!(let value = 0;) else {
-            unreachable!();
-        };
-        local.pat = syn::Pat::Verbatim(quote::quote!(value));
         let mut foreign: syn::ItemForeignMod = syn::parse_quote!(
             unsafe extern "C" {}
         );
@@ -232,22 +568,21 @@ mod tests {
         let mut bounded: syn::ItemType = syn::parse_quote!(
             type Bounded = dyn core::fmt::Debug;
         );
-        let syn::Type::TraitObject(object) = bounded.ty.as_mut() else {
-            unreachable!();
-        };
-        object.bounds.clear();
-        object
-            .bounds
-            .push(syn::TypeParamBound::Verbatim(quote::quote!(
+        *bounded.ty = syn::Type::TraitObject(syn::TypeTraitObject {
+            attrs: Vec::new(),
+            dyn_token: Some(syn::token::Dyn::default()),
+            bounds: core::iter::once(syn::TypeParamBound::Verbatim(quote::quote!(
                 core::fmt::Debug
-            )));
+            )))
+            .collect(),
+        });
         for extra in [
             syn::Stmt::Expr(
                 syn::Expr::Verbatim(quote::quote!(0)),
                 Some(syn::token::Semi::default()),
             ),
             syn::Stmt::Item(syn::Item::Type(alias)),
-            syn::Stmt::Local(local),
+            syn::Stmt::Local(opaque_local()),
             syn::Stmt::Expr(
                 syn::Expr::Lit(syn::ExprLit {
                     attrs: Vec::new(),
@@ -265,12 +600,9 @@ mod tests {
                 "struct Target; let a: [u8; 4] = [0; 4];",
             ]
             .map(|source| {
-                let mut file = parse(source);
-                let syn::Item::Fn(main) = &mut file.items[0] else {
-                    unreachable!();
-                };
-                main.block.stmts.push(extra.clone());
-                canon(file).to_string()
+                let mut block: syn::Block = syn::parse_str(&format!("{{ {source} }}")).unwrap();
+                block.stmts.push(extra.clone());
+                canon(block_input(block)).to_string()
             });
             assert_ne!(texts[0], texts[1]);
         }
@@ -295,24 +627,15 @@ mod tests {
 
     #[test]
     fn mutation85_pointer_lifetime_preserves_opaque_array_patterns() {
-        let mut element: syn::Type = syn::parse_quote!(
-            [u8; {
-                let value = 0;
-                4
-            }]
-        );
-        let syn::Type::Array(array) = &mut element else {
-            unreachable!();
-        };
-        let syn::Expr::Block(block) = &mut array.len else {
-            unreachable!();
-        };
-        let syn::Stmt::Local(local) = &mut block.block.stmts[0] else {
-            unreachable!();
-        };
-        local.pat = syn::Pat::Verbatim(quote::quote!(value));
-        let explicit = pointer_with_element(element.clone(), true);
-        let elided = pointer_with_element(element, false);
+        let mut array: syn::TypeArray = syn::parse_quote!([u8; 4]);
+        let mut length: syn::ExprBlock = syn::parse_quote!({ 4 });
+        length
+            .block
+            .stmts
+            .insert(0, syn::Stmt::Local(opaque_local()));
+        array.len = syn::Expr::Block(length);
+        let explicit = pointer_with_element(syn::Type::Array(array.clone()), true);
+        let elided = pointer_with_element(syn::Type::Array(array), false);
         assert_ne!(canon(explicit).to_string(), canon(elided).to_string());
     }
 
@@ -323,14 +646,11 @@ mod tests {
             "let a: [u8; 4] = [0; 4];",
         ]
         .map(|source| {
-            let mut file = parse(source);
-            let syn::Item::Fn(main) = &mut file.items[0] else {
-                unreachable!();
-            };
-            main.block.stmts.push(syn::Stmt::Item(syn::Item::Macro(
+            let mut block: syn::Block = syn::parse_str(&format!("{{ {source} }}")).unwrap();
+            block.stmts.push(syn::Stmt::Item(syn::Item::Macro(
                 syn::parse_quote!(assert_eq!(1, 1);),
             )));
-            canon(file).to_string()
+            canon(block_input(block)).to_string()
         });
         assert_eq!(texts[0], texts[1]);
     }
@@ -347,15 +667,13 @@ mod tests {
         let mut constrained = original.clone();
         constrained.generics.where_clause = Some(syn::parse_quote!(where usize: Copy));
         let mut attributed_type = original.clone();
-        let syn::Type::Path(path) = attributed_type.ty.as_mut() else {
-            unreachable!();
-        };
+        let mut path: syn::TypePath = syn::parse_quote!(usize);
         path.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        *attributed_type.ty = syn::Type::Path(path);
         let mut attributed_literal = original;
-        let syn::Expr::Lit(literal) = attributed_literal.expr.as_mut() else {
-            unreachable!();
-        };
+        let mut literal: syn::ExprLit = syn::parse_quote!(4);
         literal.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        *attributed_literal.expr = syn::Expr::Lit(literal);
         for item in [
             specialized,
             generic,
@@ -363,13 +681,13 @@ mod tests {
             attributed_type,
             attributed_literal,
         ] {
-            let mut file = parse("const N: usize = 4; let a: [u8; N];");
-            let syn::Item::Fn(main) = &mut file.items[0] else {
-                unreachable!();
-            };
-            main.block.stmts[0] = syn::Stmt::Item(syn::Item::Const(item));
+            let mut block: syn::Block = syn::parse_quote!({
+                const N: usize = 4;
+                let a: [u8; N];
+            });
+            block.stmts[0] = syn::Stmt::Item(syn::Item::Const(item));
             assert_ne!(
-                canon(file).to_string(),
+                canon(block_input(block)).to_string(),
                 canonicalize("let a: [u8; 4];").text
             );
         }
@@ -392,25 +710,29 @@ mod tests {
 
     #[test]
     fn mutation85_const_items_preserve_attributed_length_paths() {
-        let mut file = parse("const N: usize = 4; let a: [u8; N];");
-        let syn::Item::Fn(main) = &mut file.items[0] else {
-            unreachable!();
-        };
-        let syn::Stmt::Local(local) = &mut main.block.stmts[1] else {
-            unreachable!();
-        };
-        let syn::Pat::Type(typed) = &mut local.pat else {
-            unreachable!();
-        };
-        let syn::Type::Array(array) = typed.ty.as_mut() else {
-            unreachable!();
-        };
-        let syn::Expr::Path(path) = &mut array.len else {
-            unreachable!();
-        };
+        let mut array: syn::TypeArray = syn::parse_quote!([u8; N]);
+        let mut path: syn::ExprPath = syn::parse_quote!(N);
         path.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        array.len = syn::Expr::Path(path);
+        let local = syn::Local {
+            attrs: Vec::new(),
+            let_token: syn::token::Let::default(),
+            modifiers: syn::LocalModifiers::default(),
+            pat: syn::Pat::Type(syn::PatType {
+                attrs: Vec::new(),
+                pat: alloc::boxed::Box::new(syn::parse_quote!(a)),
+                colon_token: syn::token::Colon::default(),
+                ty: alloc::boxed::Box::new(syn::Type::Array(array)),
+            }),
+            init: None,
+            semi_token: syn::token::Semi::default(),
+        };
+        let mut block: syn::Block = syn::parse_quote!({
+            const N: usize = 4;
+        });
+        block.stmts.push(syn::Stmt::Local(local));
         assert_ne!(
-            canon(file).to_string(),
+            canon(block_input(block)).to_string(),
             canonicalize("let a: [u8; 4];").text
         );
     }
@@ -441,18 +763,12 @@ mod tests {
 
     #[test]
     fn six_fold_pointer_lifetime_preserves_opaque_type_elements() {
-        let mut bounded: syn::Type = syn::parse_quote!(dyn core::fmt::Debug);
-        let syn::Type::TraitObject(object) = &mut bounded else {
-            unreachable!();
-        };
-        object
+        let mut bounded: syn::TypeTraitObject = syn::parse_quote!(dyn core::fmt::Debug);
+        bounded
             .bounds
             .push(syn::TypeParamBound::Verbatim(quote::quote!(Send)));
-        let mut attributed: syn::Type = syn::parse_quote!(u8);
-        let syn::Type::Path(path) = &mut attributed else {
-            unreachable!();
-        };
-        path.attrs.push(syn::parse_quote!(#[cfg(all())]));
+        let mut attributed: syn::TypePath = syn::parse_quote!(u8);
+        attributed.attrs.push(syn::parse_quote!(#[cfg(all())]));
         for element in [
             syn::Type::Group(syn::TypeGroup {
                 attrs: Vec::new(),
@@ -460,8 +776,8 @@ mod tests {
                 elem: alloc::boxed::Box::new(syn::parse_quote!(u8)),
             }),
             syn::Type::Verbatim(quote::quote!(u8)),
-            bounded,
-            attributed,
+            syn::Type::TraitObject(bounded),
+            syn::Type::Path(attributed),
         ] {
             let explicit = pointer_with_element(element.clone(), true);
             let elided = pointer_with_element(element, false);
@@ -483,13 +799,10 @@ mod tests {
                 lit: syn::Lit::Verbatim(proc_macro2::Literal::usize_unsuffixed(4)),
             }),
         ] {
-            let mut element: syn::Type = syn::parse_quote!([u8; 4]);
-            let syn::Type::Array(array) = &mut element else {
-                unreachable!();
-            };
+            let mut array: syn::TypeArray = syn::parse_quote!([u8; 4]);
             array.len = length;
-            let explicit = pointer_with_element(element.clone(), true);
-            let elided = pointer_with_element(element, false);
+            let explicit = pointer_with_element(syn::Type::Array(array.clone()), true);
+            let elided = pointer_with_element(syn::Type::Array(array), false);
             assert_ne!(canon(explicit).to_string(), canon(elided).to_string());
         }
     }
@@ -514,11 +827,8 @@ mod tests {
             "const N: usize = 4; #[cfg(all())] const M: usize = 2; const F: f32 = 1.0; let a: [u8; N] = [0; N]; let b: [u8; M] = [0; M]; let c: [u8; 2] = [0; 2]; assert_eq!(F, 1.0);",
             "#[cfg(all())] const M: usize = 2; const F: f32 = 1.0; let a: [u8; 4] = [0; 4]; let b: [u8; M] = [0; M]; let c: [u8; 2] = [0; 2]; assert_eq!(F, 1.0);",
         ].map(|source| {
-            let mut file = parse(source);
-            let syn::Item::Fn(main) = &mut file.items[0] else {
-                unreachable!();
-            };
-            for stmt in &mut main.block.stmts {
+            let mut block: syn::Block = syn::parse_str(&format!("{{ {source} }}")).unwrap();
+            for stmt in &mut block.stmts {
                 if let syn::Stmt::Local(local) = stmt {
                     if let syn::Pat::Type(typed) = &mut local.pat
                         && let syn::Type::Array(array) = typed.ty.as_mut()
@@ -532,7 +842,7 @@ mod tests {
                     }
                 }
             }
-            canon(file).to_string()
+            canon(block_input(block)).to_string()
         });
         assert_eq!(canonical[0], canonical[1]);
     }
@@ -2427,7 +2737,7 @@ mod tests {
         let mut alias: syn::ItemType = syn::parse_quote!(
             type Alias = ();
         );
-        alias.ty = alloc::boxed::Box::new(ty);
+        *alias.ty = ty;
         syn::File {
             shebang: None,
             frontmatter: None,

@@ -355,11 +355,8 @@ impl VisitMut for Drift {
         }
     }
 
-    fn visit_attribute_mut(&mut self, node: &mut syn::Attribute) {
-        let outer = core::mem::replace(&mut self.in_macro_input, true);
-        syn::visit_mut::visit_attribute_mut(self, node);
-        self.in_macro_input = outer;
-    }
+    // `syn::Attribute` payloads are opaque macro input.
+    fn visit_attribute_mut(&mut self, _node: &mut syn::Attribute) {}
 
     fn visit_angle_bracketed_generic_arguments_mut(
         &mut self,
