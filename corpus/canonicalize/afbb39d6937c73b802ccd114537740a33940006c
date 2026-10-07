@@ -1,0 +1,5 @@
+struct S;
+impl S {
+    #[alloRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRRw(clippy::unused_se.f)]
+    fn f(&self) {}
+}

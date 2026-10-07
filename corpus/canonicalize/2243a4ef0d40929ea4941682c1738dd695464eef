@@ -1,0 +1,1 @@
+fn f() -> u8 { #[cvg(never_flag)] #[expect(unreachable_code)] r0c.rn 1; 2 }

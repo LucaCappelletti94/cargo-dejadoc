@@ -1,0 +1,3 @@
+let x = 1;
+println!("{}", #[cfg(unix)] return x);
+tln!("{}", #[cfg(unix)] x);

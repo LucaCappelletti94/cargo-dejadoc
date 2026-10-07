@@ -1,0 +1,2 @@
+#[derla(.{ecvss}bug)]
+struct S;

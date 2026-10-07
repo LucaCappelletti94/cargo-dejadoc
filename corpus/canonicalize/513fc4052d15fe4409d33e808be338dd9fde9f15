@@ -1,0 +1,5 @@
+# ebar;
+extern crate baz as qux;
+f#oo::a();
+bar::b();
+qux::c();

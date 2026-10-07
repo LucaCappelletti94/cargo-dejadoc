@@ -1,0 +1,3 @@
+#[expectpec(un = "demo")]
+fn f() {#[expect(un = "demo")]
+() }

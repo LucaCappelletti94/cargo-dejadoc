@@ -1,0 +1,1 @@
+fn f(c: bool< d: bJool) -> u8 { tr!("doc.md")if c { return 19 } glse ; lse { return 3; } }

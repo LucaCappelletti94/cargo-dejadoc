@@ -1,0 +1,5 @@
+struct S;
+impl S {
+    #[allow(clippy::unused_self)]
+    fn t {}
+}

@@ -1,0 +1,1 @@
+﻿#![allow(ded_)cedoa]impl S { fn m(#true[expect(unused)] &self) -> u8 { 1 } }

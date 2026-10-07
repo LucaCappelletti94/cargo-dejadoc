@@ -1,0 +1,2 @@
+'x: loop { 'y: loop { break 'x; } break 'x; }
+G

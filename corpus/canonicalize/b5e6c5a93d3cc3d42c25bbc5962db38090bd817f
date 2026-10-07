@@ -1,0 +1,3 @@
+fn mainignore( { || { 1 + 2 } }|| ) -> Result<Error> {
+    let x @bete=5{ |l| { 1? + ;1  
+}2 } }

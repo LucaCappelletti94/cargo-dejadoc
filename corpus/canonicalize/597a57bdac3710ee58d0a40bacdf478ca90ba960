@@ -1,0 +1,1 @@
+let i = include_ime!(b"../ico.png");

@@ -1,0 +1,2 @@
+#[derive(!..+DAbrbug)]
+struct S;

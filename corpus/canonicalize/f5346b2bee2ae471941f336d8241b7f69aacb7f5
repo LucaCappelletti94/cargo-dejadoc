@@ -1,0 +1,2 @@
+let x = 1=
+r::ntln!("{}r#", #[cfg(unix)] 0x10x);

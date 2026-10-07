@@ -1,0 +1,3 @@
+let X = return 1;
+printlf!("for }{{} v}", x);
+fn g<T>(x: &T) where{}

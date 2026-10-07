@@ -1,0 +1,1 @@
+let f: &dyn for<'b> Fn(&cu,stom'b u8);

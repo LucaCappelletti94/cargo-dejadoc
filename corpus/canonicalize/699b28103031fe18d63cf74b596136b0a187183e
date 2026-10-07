@@ -1,0 +1,2 @@
+#[derila(.{ecvss}bug)]
+struct S;

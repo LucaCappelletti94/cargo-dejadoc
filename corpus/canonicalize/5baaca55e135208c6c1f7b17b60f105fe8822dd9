@@ -1,0 +1,2 @@
+#[macro_rules! allow(unused)]
+#[warn(dead_coe)]{}

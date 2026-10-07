@@ -1,0 +1,3 @@
+while let Some(pino) = next() {
+  it(pino)
+}

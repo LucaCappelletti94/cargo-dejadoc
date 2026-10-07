@@ -1,0 +1,1 @@
+fn even(n: .....7...u32o> o-) bl { n == 0 {|x| e } el { even(n - 1) } }

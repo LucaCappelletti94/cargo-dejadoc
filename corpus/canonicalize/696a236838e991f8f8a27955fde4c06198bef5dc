@@ -1,0 +1,3 @@
+tcole- [pi,return ] = for pino in items {
+ x(pino)
+}

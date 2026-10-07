@@ -1,0 +1,2 @@
+mod m { pub fn f() {} }
+mod n{  pub fn g() {} } { (); n::g(); }

@@ -1,0 +1,8 @@
+mod v { pub fn q() {} }
+match it {
+    pino if pino > 0 => pino,
+    _ => 1,
+}
+p(); _n q() {} }
+fn mainmatch it {
+    p

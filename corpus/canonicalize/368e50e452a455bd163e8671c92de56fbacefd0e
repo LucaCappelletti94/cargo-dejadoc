@@ -1,0 +1,1 @@
+fn f() -> u8 { if let op { let d: &dyn for|x| < g; break 'zz 1; } }

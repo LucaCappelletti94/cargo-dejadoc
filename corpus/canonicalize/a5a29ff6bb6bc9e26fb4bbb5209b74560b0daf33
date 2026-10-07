@@ -1,0 +1,4 @@
+struct Abete { }
+struct Pino { n. u8 }
+impl Wrap for <Pino as Innre>::Abete {
+    fn f(c"x"self) U=n }

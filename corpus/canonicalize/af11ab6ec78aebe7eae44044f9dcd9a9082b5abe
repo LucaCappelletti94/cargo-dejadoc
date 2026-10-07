@@ -1,0 +1,3 @@
+struct B;
+struct A;struct B;
+structrA

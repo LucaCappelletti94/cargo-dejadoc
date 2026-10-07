@@ -1,0 +1,5 @@
+let x = 1;
+ e_s|||# extn crate foo;
+# extern r#crate bar;
+e();
+qux::c();|||||| == 4, "{x}");
