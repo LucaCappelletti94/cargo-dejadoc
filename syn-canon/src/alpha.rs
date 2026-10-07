@@ -196,6 +196,18 @@ pub(crate) fn resolve_target_path<'a>(
     rooted: bool,
     path: &[String],
 ) -> (bool, Vec<TargetSeg>) {
+    if rooted {
+        return (
+            path.first()
+                .is_some_and(|first| !matches!(resolve(first), FirstSeg::Free)),
+            path.iter()
+                .map(|name| TargetSeg {
+                    name: name.clone(),
+                    origin: None,
+                })
+                .collect(),
+        );
+    }
     let Some((leaf, prefix)) = path.split_last() else {
         return (rooted, Vec::new());
     };
@@ -693,18 +705,13 @@ impl<'env> Renamer<'env> {
                 path.tree = Box::new(self.bind_use_tree(rooted, &prefix, *path.tree));
                 syn::UseTree::Path(path)
             }
-            syn::UseTree::Name(name) if name.ident == "self" => {
+            syn::UseTree::Name(name) if self.context && name.ident == "self" => {
                 // `a::{self}` imports the module itself under its own name.
                 if let Some(alias) = prefix.last() {
-                    let target = self.context.then(|| {
-                        let (rooted, segments) = resolve_target_path(
-                            &|name| self.resolve_first_seg(name),
-                            rooted,
-                            prefix,
-                        );
-                        self.store_target(rooted, segments)
-                    });
-                    self.bind_value_and_type(alias, target);
+                    let (rooted, segments) =
+                        resolve_target_path(&|name| self.resolve_first_seg(name), rooted, prefix);
+                    let target = self.store_target(rooted, segments);
+                    self.bind_value_and_type(alias, Some(target));
                 }
                 syn::UseTree::Name(name)
             }

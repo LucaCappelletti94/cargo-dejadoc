@@ -58,7 +58,7 @@ Style folds, each applied only where it keeps the meaning:
 
 ## Context blocks
 
-`contexts` emits independently normalized function bodies, explicit blocks, complete match arms and complete closures with original spans and containing items. Methods, trait defaults and nested functions are included, and arm patterns/guards and closure inputs remain in the form. Numbering is independent of unused preceding declarations.
+`contexts` emits independently normalized function bodies, explicit blocks, complete match arms and complete closures with original spans and containing items. Methods, trait defaults and nested functions are included, and explicit blocks in required trait and foreign signatures retain their function names. Arm patterns/guards and closure inputs remain in the form, and unused preceding declarations do not affect numbering.
 
 ```rust
 let forms = |src: &str| {
@@ -79,7 +79,7 @@ The `ContextKind` names the boundary. Candidate-local binders receive fresh decl
 
 Namespaces remain distinct, while a declaration shared by value and type positions retains one origin number. Inherited nominal trait-bound paths retain their available spelling or import association, preserving inference-sensitive bound order.
 
-Raw imported segments retain their spelling. An absolute path keeps `::` when a candidate-local or inherited type binding shadows its root.
+Raw imported segments retain their spelling. An absolute path keeps `::` when a candidate-local or inherited type binding shadows its root, and absolute import targets bypass lexical aliases.
 
 Equal canonical forms are approximate duplication. The normalization cannot see what the compiler resolves, so two equal forms may still differ in a receiver type, an inferred type or lifetime, an unresolved import, a macro's generated code, an enclosing `cfg`, or the target of a `return`, `break` or `continue`. A context form claims no extraction and no deletion.
 

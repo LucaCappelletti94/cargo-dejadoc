@@ -55,7 +55,6 @@ pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, TokenStream)
         targets: Vec::new(),
         item_path: Vec::new(),
         origin: 0,
-        uses_prebound: false,
         work: ContextWork::default(),
         emit,
     };
@@ -126,6 +125,7 @@ fn pat_names(pat: &syn::Pat, out: &mut Vec<String>) {
         }
         syn::Pat::Reference(syn::PatReference { pat, .. })
         | syn::Pat::Type(syn::PatType { pat, .. })
+        | syn::Pat::Paren(syn::PatParen { pat, .. })
         | syn::Pat::Guard(syn::PatGuard { pat, .. }) => pat_names(pat, out),
         _ => {}
     }
@@ -194,8 +194,6 @@ struct Walker<'w> {
     item_path: Vec<String>,
     /// The next origin identity.
     origin: usize,
-    /// Scope-level `use` leaves are bound before the scope is walked.
-    uses_prebound: bool,
     /// The measured work.
     work: ContextWork,
     /// The candidate emitter.
@@ -264,15 +262,7 @@ impl Walker<'_> {
 
     /// Bind one scope-level `use` item, block-wide.
     fn bind_use_item(&mut self, item: &syn::ItemUse) {
-        let first = match &item.tree {
-            syn::UseTree::Path(path) => Some(&path.ident),
-            syn::UseTree::Name(name) => Some(&name.ident),
-            syn::UseTree::Rename(rename) => Some(&rename.ident),
-            syn::UseTree::Glob(_) | syn::UseTree::Group(_) => None,
-        };
-        let rooted = item.leading_colon.is_some()
-            && first.is_some_and(|first| self.lookup(&[Ns::Type], &first.to_string()).is_some());
-        self.bind_use_tree(rooted, &[], &item.tree);
+        self.bind_use_tree(item.leading_colon.is_some(), &[], &item.tree);
     }
 
     /// Bind the block-wide `use` leaves of a scope.
@@ -475,28 +465,21 @@ impl Walker<'_> {
 
 impl Visit<'_> for Walker<'_> {
     fn visit_file(&mut self, file: &syn::File) {
-        self.bind_scope_uses(file.items.iter().filter_map(|item| match item {
-            syn::Item::Use(u) => Some(u),
-            _ => None,
-        }));
         prebind_items(
             &mut self.frames,
             &mut self.mod_frames,
             &mut self.origin,
             file.items.iter(),
         );
-        let outer = self.uses_prebound;
-        self.uses_prebound = true;
+        self.bind_scope_uses(file.items.iter().filter_map(|item| match item {
+            syn::Item::Use(u) => Some(u),
+            _ => None,
+        }));
         syn::visit::visit_file(self, file);
-        self.uses_prebound = outer;
     }
 
     fn visit_block(&mut self, block: &syn::Block) {
         self.frames.push(Frame::default());
-        self.bind_scope_uses(block.stmts.iter().filter_map(|stmt| match stmt {
-            syn::Stmt::Item(syn::Item::Use(u)) => Some(u),
-            _ => None,
-        }));
         prebind_items(
             &mut self.frames,
             &mut self.mod_frames,
@@ -506,10 +489,11 @@ impl Visit<'_> for Walker<'_> {
                 _ => None,
             }),
         );
-        let outer = self.uses_prebound;
-        self.uses_prebound = true;
+        self.bind_scope_uses(block.stmts.iter().filter_map(|stmt| match stmt {
+            syn::Stmt::Item(syn::Item::Use(u)) => Some(u),
+            _ => None,
+        }));
         syn::visit::visit_block(self, block);
-        self.uses_prebound = outer;
         self.frames.pop();
     }
 
@@ -529,12 +513,8 @@ impl Visit<'_> for Walker<'_> {
         syn::visit::visit_pat(self, &local.pat);
     }
 
-    fn visit_item_use(&mut self, item: &syn::ItemUse) {
-        // Scope-level imports bind block-wide.
-        if !self.uses_prebound {
-            self.bind_use_item(item);
-        }
-    }
+    // Imports are bound by their enclosing scope.
+    fn visit_item_use(&mut self, _: &syn::ItemUse) {}
 
     fn visit_item_fn(&mut self, item: &syn::ItemFn) {
         self.push_item_path(&item.sig.ident);
@@ -555,12 +535,9 @@ impl Visit<'_> for Walker<'_> {
                 syn::Item::Use(u) => Some(u),
                 _ => None,
             }));
-            let outer = self.uses_prebound;
-            self.uses_prebound = true;
             for item in items {
                 syn::visit::visit_item(self, item);
             }
-            self.uses_prebound = outer;
             let frame = self.frames.pop().expect("a scope frame");
             self.mod_frames.insert(origin, frame);
         }
@@ -672,6 +649,14 @@ impl Visit<'_> for Walker<'_> {
         syn::visit::visit_item_macro(self, item);
     }
 
+    fn visit_foreign_item_fn(&mut self, item: &syn::ForeignItemFn) {
+        self.push_item_path(&item.sig.ident);
+        self.begin_generics(&item.sig.generics);
+        syn::visit::visit_foreign_item_fn(self, item);
+        self.frames.pop();
+        self.pop_item_path();
+    }
+
     fn visit_impl_item(&mut self, item: &syn::ImplItem) {
         match item {
             syn::ImplItem::Fn(f) => {
@@ -699,11 +684,15 @@ impl Visit<'_> for Walker<'_> {
     fn visit_trait_item(&mut self, item: &syn::TraitItem) {
         match item {
             syn::TraitItem::Fn(f) => {
+                self.push_item_path(&f.sig.ident);
                 if let Some(body) = &f.default {
-                    self.push_item_path(&f.sig.ident);
                     self.visit_fn(&f.sig, body);
-                    self.pop_item_path();
+                } else {
+                    self.begin_generics(&f.sig.generics);
+                    syn::visit::visit_signature(self, &f.sig);
+                    self.frames.pop();
                 }
+                self.pop_item_path();
             }
             syn::TraitItem::Const(c) => {
                 self.push_item_path(&c.ident);

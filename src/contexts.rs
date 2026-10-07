@@ -137,7 +137,7 @@ fn contains(outer: &ContextSite, inner: &ContextSite) -> bool {
     outer.file == inner.file
         && start <= inner_start
         && inner_end <= end
-        && (start != inner_start || end != inner_end)
+        && (start, end) != (inner_start, inner_end)
 }
 
 #[expect(
@@ -320,6 +320,104 @@ mod tests {
                 line.get(site.column - 1..site.end_column - 1),
                 Some(expected)
             );
+        }
+    }
+
+    #[test]
+    fn each_block_range_is_reported_once() {
+        let code = "fn a(x: u32) -> u32 { let y = if x > 1 { x + x } else { x - x }; y }";
+        let report = scan(code, 0);
+        assert_eq!(report.context_blocks, 3);
+        assert_eq!(report.unique_context_blocks, 3);
+        assert_eq!(report.context_groups.len(), 0);
+    }
+
+    #[test]
+    fn contained_group_suppression_keeps_the_outer_sites() {
+        let code = "fn a(x: u32) -> u32 { { x + x } } fn b(y: u32) -> u32 { { y + y } }";
+        let report = scan(code, 0);
+        assert_eq!(report.context_blocks, 4);
+        assert_eq!(report.unique_context_blocks, 2);
+        assert_eq!(report.context_groups.len(), 1);
+        let group = &report.context_groups[0];
+        assert_eq!(group.sites.len(), 2);
+        assert!(
+            group
+                .sites
+                .iter()
+                .map(|s| s.item.as_str())
+                .eq(["fixture::a", "fixture::b"])
+        );
+        for (site, expected) in group.sites.iter().zip(["{ { x + x } }", "{ { y + y } }"]) {
+            assert_eq!(site.kind, ContextKind::FunctionBody);
+            assert_eq!(&code[site.column - 1..site.end_column - 1], expected);
+        }
+    }
+
+    #[test]
+    fn match_arms_contain_their_body_blocks_to_the_same_end() {
+        let code =
+            "fn f(a: u8) -> (u8, u8) { (match a { _ => { a + a } }, match a { _ => { a + a } }) }";
+        let report = scan(code, 0);
+        assert_eq!(report.context_blocks, 5);
+        assert_eq!(report.unique_context_blocks, 3);
+        assert_eq!(report.context_groups.len(), 1);
+        let group = &report.context_groups[0];
+        assert_eq!(group.sites.len(), 2);
+        let serialized = serde_json::to_value(&report).unwrap();
+        let serialized_sites = serialized["context_groups"][0]["sites"].as_array().unwrap();
+        assert_eq!(serialized_sites.len(), 2);
+        assert!(serialized_sites.iter().all(|site| site["kind"] == "arm"));
+        for site in &group.sites {
+            assert_eq!(site.kind, ContextKind::Arm);
+            assert_eq!(site.item, "fixture::f");
+            assert_eq!(site.line, site.end);
+            assert_eq!(
+                &code[site.column - 1..site.end_column - 1],
+                "_ => { a + a }"
+            );
+        }
+    }
+
+    #[test]
+    fn repeated_ast_nodes_keep_one_source_context() {
+        let code = "fn first(value: u32) -> u32 { value + value }";
+        let mut parsed = syn::parse_file(code).unwrap();
+        parsed.items.push(parsed.items[0].clone());
+        let target = TargetScan {
+            name: "fixture".into(),
+            library: true,
+            files: vec![SourceFile {
+                path: "src/lib.rs".into(),
+                segments: vec![],
+                parsed,
+                text: code.into(),
+                rustdoc: true,
+            }],
+        };
+        let report = Dejadoc::default()
+            .context_blocks()
+            .context_min_tokens(0)
+            .run_targets("", &[target], &|_, _| None);
+        assert_eq!(report.context_blocks, 1);
+        assert_eq!(report.unique_context_blocks, 1);
+        assert_eq!(report.context_groups.len(), 0);
+    }
+
+    #[test]
+    fn foreign_static_type_blocks_report_the_crate_location() {
+        let report = scan(
+            "unsafe extern \"C\" {
+                 static FIRST: [u8; { 1 + 1 }];
+                 static SECOND: [u8; { 1 + 1 }];
+             }",
+            0,
+        );
+        assert_eq!(report.context_groups.len(), 1);
+        assert_eq!(report.context_groups[0].sites.len(), 2);
+        for site in &report.context_groups[0].sites {
+            assert_eq!(site.item, "fixture");
+            assert_eq!(site.kind, ContextKind::Block);
         }
     }
 }

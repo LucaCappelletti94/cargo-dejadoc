@@ -507,3 +507,700 @@ fn context_unshadowed_absolute_roots_merge_with_relative_paths() {
         forms_of(&second, ContextKind::FunctionBody)
     );
 }
+
+fn body_of<'a>(found: &'a [Site], item: &str) -> &'a str {
+    &found
+        .iter()
+        .find(|site| site.kind == ContextKind::FunctionBody && site.item == item)
+        .unwrap()
+        .form
+}
+
+#[test]
+fn imported_absolute_roots_preserve_file_scope_shadowing() {
+    for imports in [
+        "use ::std::mem::drop as external; use std::mem::drop as local;",
+        "use ::{std::mem::drop as external}; use std::mem::drop as local;",
+    ] {
+        let source = format!(
+            "mod std {{ pub mod mem {{ pub fn drop(_: String) {{}} }} }}
+             {imports}
+             fn first(value: String) {{ external(value); }}
+             fn second(other: String) {{ local(other); }}"
+        );
+        let (found, _) = sites(&source);
+        assert_ne!(body_of(&found, "first"), body_of(&found, "second"));
+    }
+}
+
+#[test]
+fn imported_absolute_roots_preserve_block_scope_shadowing() {
+    let (found, _) = sites(
+        "fn first(value: String, other: String) {
+             mod std { pub mod mem { pub fn drop(_: String) {} } }
+             use ::std::mem::drop as external;
+             use std::mem::drop as local;
+             { external(value); }
+             { local(other); }
+         }",
+    );
+    let blocks = forms_of(&found, ContextKind::Block);
+    assert_eq!(blocks.len(), 2);
+    assert_ne!(blocks[0], blocks[1]);
+}
+
+#[test]
+fn imported_absolute_roots_bypass_lexical_aliases() {
+    let (found, _) = sites(
+        "mod local_module { pub mod mem { pub fn drop(_: String) {} } }
+         use local_module as std;
+         use ::std::mem::drop as external;
+         use std::mem::drop as local;
+         fn first(value: String) { external(value); }
+         fn second(other: String) { local(other); }",
+    );
+    assert_ne!(body_of(&found, "first"), body_of(&found, "second"));
+}
+
+#[test]
+fn imported_unshadowed_absolute_and_relative_roots_merge() {
+    for imports in [
+        "use ::std::mem::drop as external; use std::mem::drop as local;",
+        "use ::{std::mem::drop as external}; use std::mem::drop as local;",
+    ] {
+        let source = format!(
+            "{imports}
+             fn first(value: String) {{ external(value); }}
+             fn second(other: String) {{ local(other); }}"
+        );
+        let (found, _) = sites(&source);
+        assert_eq!(body_of(&found, "first"), body_of(&found, "second"));
+    }
+}
+
+#[test]
+fn required_trait_signatures_discover_blocks_with_method_paths() {
+    let (found, _) = sites(
+        "pub trait T {
+             fn first<'a>(_: &'a [u8; { 1 + 1 }]);
+             fn second<'b>(_: &'b [u8; { 1 + 1 }]);
+         }",
+    );
+    assert_eq!(found.len(), 2);
+    for (site, item) in found.iter().zip(["T::first", "T::second"]) {
+        assert_eq!(site.kind, ContextKind::Block);
+        assert_eq!(site.item, item);
+    }
+    assert_eq!(found[0].form, found[1].form);
+}
+
+#[test]
+fn default_trait_signatures_keep_bodies_and_signature_blocks() {
+    let (found, _) = sites(
+        "pub trait T {
+             fn first(_: [u8; { 1 + 1 }]) {}
+             fn second(_: [u8; { 1 + 1 }]) {}
+         }",
+    );
+    assert_eq!(found.len(), 4);
+    assert_eq!(forms_of(&found, ContextKind::Block).len(), 2);
+    assert_eq!(forms_of(&found, ContextKind::FunctionBody).len(), 2);
+    assert!(
+        found
+            .iter()
+            .all(|site| ["T::first", "T::second"].contains(&site.item.as_str()))
+    );
+}
+
+#[test]
+fn foreign_signatures_discover_blocks_with_function_paths() {
+    let (found, _) = sites(
+        "unsafe extern \"C\" {
+             fn first(_: [u8; { 1 + 1 }]);
+             fn second(_: [u8; { 1 + 1 }]);
+         }",
+    );
+    assert_eq!(found.len(), 2);
+    for (site, item) in found.iter().zip(["first", "second"]) {
+        assert_eq!(site.kind, ContextKind::Block);
+        assert_eq!(site.item, item);
+    }
+    assert_eq!(found[0].form, found[1].form);
+}
+
+#[test]
+fn contextual_self_imports_preserve_module_targets() {
+    let (found, _) = sites(
+        "use std::mem::{self};
+         fn first(value: String) { mem::drop(value); }
+         fn second(other: String) { std::mem::drop(other); }",
+    );
+    assert_eq!(body_of(&found, "first"), body_of(&found, "second"));
+}
+
+#[test]
+fn whole_file_self_imports_preserve_module_member_references() {
+    for canonicalize in [syn_canon::canonicalize, syn_canon::canonicalize_failing] {
+        let input = syn::parse_str(
+            "mod local { pub fn f() {} }
+             mod caller {
+                 use super::local::{self};
+                 pub fn g() { local::f(); }
+             }",
+        )
+        .unwrap();
+        let file: syn::File = syn::parse2(canonicalize(input)).unwrap();
+        let modules: Vec<_> = file
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Mod(module) => module.content.as_ref().map(|(_, items)| items),
+                _ => None,
+            })
+            .collect();
+        let member = modules[0]
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) => Some(&function.sig.ident),
+                _ => None,
+            })
+            .unwrap();
+        let caller = modules[1]
+            .iter()
+            .find_map(|item| match item {
+                syn::Item::Fn(function) => Some(&function.block),
+                _ => None,
+            })
+            .unwrap();
+        let syn::Stmt::Expr(syn::Expr::Call(call), _) = &caller.stmts[0] else {
+            panic!("expected a module member call");
+        };
+        let syn::Expr::Path(path) = &*call.func else {
+            panic!("expected a module path");
+        };
+        assert_eq!(path.path.segments.last().unwrap().ident, *member);
+    }
+}
+
+#[test]
+fn pattern_shapes_bind_captures_for_nested_blocks() {
+    let (a, _) = sites(
+        "struct Point { x: i32, y: i32 }
+         struct Wrap(i32);
+         fn first(cell: &i32) -> i32 {
+             let (a, b) = (1, 2);
+             let Point { x, y } = Point { x: a, y: b };
+             let (c | c) = a;
+             let &e = cell;
+             let f: i32 = e + x + y + c;
+             let h @ Wrap(w) = Wrap(f);
+             { a + b + c + e + f + h.0 + w + x };
+             { a + b }
+         }",
+    );
+    let (b, _) = sites(
+        "struct Point { x: i32, y: i32 }
+         struct Wrap(i32);
+         fn second(cell: &i32) -> i32 {
+             let (p, q) = (1, 2);
+             let Point { x: r, y: s } = Point { x: p, y: q };
+             let (t | t) = p;
+             let &v = cell;
+             let m: i32 = v + r + s + t;
+             let n @ Wrap(o) = Wrap(m);
+             { p + q + t + v + m + n.0 + o + r };
+             { p + q }
+         }",
+    );
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+    let blocks_a = forms_of(&a, ContextKind::Block);
+    let blocks_b = forms_of(&b, ContextKind::Block);
+    assert_eq!(blocks_a.len(), 2);
+    assert_eq!(blocks_a, blocks_b);
+    assert_ne!(blocks_a[0], blocks_a[1]);
+}
+
+#[test]
+fn let_else_and_loop_conditions_scope_their_bindings() {
+    let (a, _) = sites(
+        "fn first(v: i32) -> i32 {
+             let Some(x) = Some(v) else { panic!() };
+             if let Some(y) = Some(v + 1) {
+                 x + y
+             }
+             while let Some(w) = Some(v + 2) {
+                 break w;
+             }
+             for (p, q) in [(1, 2), (3, 4)] {
+                 p + q + x
+             }
+             0
+         }",
+    );
+    let (b, _) = sites(
+        "fn second(v: i32) -> i32 {
+             let Some(m) = Some(v) else { panic!() };
+             if let Some(n) = Some(v + 1) {
+                 m + n
+             }
+             while let Some(t) = Some(v + 2) {
+                 break t;
+             }
+             for (u, z) in [(1, 2), (3, 4)] {
+                 u + z + m
+             }
+             0
+         }",
+    );
+    assert_eq!(a.len(), 5);
+    assert_eq!(forms_of(&a, ContextKind::FunctionBody).len(), 1);
+    let blocks_a = forms_of(&a, ContextKind::Block);
+    let blocks_b = forms_of(&b, ContextKind::Block);
+    assert_eq!(blocks_a.len(), 4);
+    assert_eq!(blocks_a, blocks_b);
+    assert_ne!(blocks_a[0], blocks_a[1]);
+    assert_ne!(blocks_a[1], blocks_a[3]);
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+}
+
+#[test]
+fn special_block_expressions_emit_their_own_candidates() {
+    let (a, _) = sites(
+        "fn first(v: i32) -> i32 {
+             let r = unsafe { v + 1 };
+             let _ = async { v + 1 };
+             let _ = try { v + 1 };
+             let _ = const { v + 1 };
+             'mark: { let _ = v + 5; }
+             { let _ = v + 5; }
+             r
+         }",
+    );
+    let (b, _) = sites(
+        "fn second(v: i32) -> i32 {
+             let s = unsafe { v + 1 };
+             let _ = async { v + 1 };
+             let _ = try { v + 1 };
+             let _ = const { v + 1 };
+             'note: { let _ = v + 5; }
+             { let _ = v + 5; }
+             s
+         }",
+    );
+    assert_eq!(a.len(), 7);
+    let blocks_a = forms_of(&a, ContextKind::Block);
+    let blocks_b = forms_of(&b, ContextKind::Block);
+    assert_eq!(blocks_a.len(), 6);
+    assert_eq!(blocks_a, blocks_b);
+    assert_ne!(blocks_a[0], blocks_a[1]);
+    assert_ne!(blocks_a[2], blocks_a[3]);
+    assert_ne!(blocks_a[4], blocks_a[5]);
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+}
+
+#[test]
+fn inline_module_imports_and_item_kinds_discover_const_blocks() {
+    let (a, _) = sites(
+        "mod alpha {
+             pub mod std { pub mod mem { pub fn drop(_: i32) {} } }
+             use ::{std::mem::drop as taken};
+             pub struct Rows([u8; { 1 + 1 }]);
+             pub enum Kind { Small([u8; { 1 + 1 }]) }
+             pub union Mix { a: [u8; { 1 + 1 }] }
+             pub type Alias = [u8; { 1 + 1 }];
+             pub trait Aliased = Iterator<Item = [u8; { 1 + 1 }]>;
+             pub const COUNT: i32 = { 1 + 1 };
+             pub static SLOT: i32 = { 1 + 1 };
+             pub fn run() { taken(1); }
+         }
+         mod beta {
+             pub mod std { pub mod mem { pub fn drop(_: i32) {} } }
+             use {std::mem::drop as taken};
+             pub fn run() { taken(1); }
+         }",
+    );
+    let items: Vec<&str> = a
+        .iter()
+        .filter(|site| site.kind == ContextKind::Block)
+        .map(|site| site.item.as_str())
+        .collect();
+    assert_eq!(
+        items,
+        vec![
+            "alpha::Rows",
+            "alpha::Kind",
+            "alpha::Mix",
+            "alpha::Alias",
+            "alpha::Aliased",
+            "alpha::COUNT",
+            "alpha::SLOT"
+        ]
+    );
+    let blocks = forms_of(&a, ContextKind::Block);
+    assert!(blocks.iter().all(|form| *form == blocks[0]));
+    assert_ne!(body_of(&a, "alpha::run"), body_of(&a, "beta::run"));
+}
+
+#[test]
+fn impl_and_trait_associated_items_discover_their_blocks() {
+    let (a, _) = sites(
+        "struct S;
+         struct Box2<T>(T);
+         impl S {
+             const C: i32 = { 1 + 1 };
+             type X = [u8; { 1 + 1 }];
+             m!();
+             fn f(&self) -> i32 { self.g() }
+             fn g(&self) -> i32 { 1 }
+         }
+         impl<T: Clone> Box2<T> {
+             fn take(&self) -> T { self.0.clone() }
+         }
+         impl Vec<u8> {
+             fn h(&self) -> usize { self.len() }
+         }
+         trait T {
+             const C: i32;
+             type X = [u8; { 1 + 1 }];
+             m!();
+         }",
+    );
+    let items: Vec<&str> = a
+        .iter()
+        .filter(|site| site.kind == ContextKind::Block)
+        .map(|site| site.item.as_str())
+        .collect();
+    assert_eq!(items, vec!["S::C", "S::X", "T::X"]);
+    let blocks = forms_of(&a, ContextKind::Block);
+    assert!(blocks.iter().all(|form| *form == blocks[0]));
+    assert_eq!(a.len(), 7);
+    assert!(
+        a.iter()
+            .any(|site| site.kind == ContextKind::FunctionBody && site.item == "Box2 < T >::take")
+    );
+    assert!(
+        a.iter()
+            .any(|site| site.kind == ContextKind::FunctionBody && site.item == "Vec < u8 >::h")
+    );
+    let (b, _) = sites(
+        "struct U;
+         struct Pair<P>(P);
+         impl U {
+             const D: i32 = { 1 + 1 };
+             type Y = [u8; { 1 + 1 }];
+             n!();
+             fn f(&self) -> i32 { self.g() }
+             fn g(&self) -> i32 { 1 }
+         }
+         impl<P: Clone> Pair<P> {
+             fn grab(&self) -> P { self.0.clone() }
+         }
+         impl Option<u8> {
+             fn t(&self) -> bool { self.is_some() }
+         }
+         trait V {
+             const D: i32;
+             type Y = [u8; { 1 + 1 }];
+             n!();
+         }",
+    );
+    assert_eq!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&b, ContextKind::Block)
+    );
+    assert_eq!(body_of(&a, "S::f"), body_of(&b, "U::f"));
+    assert_eq!(body_of(&a, "S::g"), body_of(&b, "U::g"));
+}
+
+#[test]
+fn higher_ranked_binds_and_fn_pointers_frame_their_lifetimes() {
+    let (a, _) = sites(
+        "fn first<'a>(x: &'a i32, g: impl for<'b> Fn(&'b i32) -> i32) -> i32 {
+             let f: for<'a> fn(&'a i32) -> &'a i32;
+             let h = for<'c> |y: &'c i32| y + 1;
+             { g(x) + h(&x) + 0 }
+         }",
+    );
+    let (b, _) = sites(
+        "fn second<'a>(x: &'a i32, k: impl for<'b> Fn(&'b i32) -> i32) -> i32 {
+             let q: for<'a> fn(&'a i32) -> &'a i32;
+             let j = for<'c> |y: &'c i32| y + 1;
+             { k(x) + j(&x) + 0 }
+         }",
+    );
+    assert_eq!(a.len(), 3);
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+    assert_eq!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&b, ContextKind::Block)
+    );
+    assert_eq!(
+        forms_of(&a, ContextKind::Closure),
+        forms_of(&b, ContextKind::Closure)
+    );
+}
+
+#[test]
+fn plain_and_glob_imports_resolve_nested_candidates() {
+    let (a, _) = sites(
+        "mod plain {
+             pub fn f() -> i32 { 1 }
+             pub mod sub {
+                 pub fn g() -> i32 { 2 }
+             }
+         }
+         use plain::f;
+         use plain::sub::*;
+         fn first() -> i32 {
+             { f() + g() }
+         }",
+    );
+    let (b, _) = sites(
+        "mod simple {
+             pub fn k() -> i32 { 1 }
+             pub mod extra {
+                 pub fn j() -> i32 { 2 }
+             }
+         }
+         use simple::k;
+         use simple::extra::*;
+         fn second() -> i32 {
+             { k() + j() }
+         }",
+    );
+    assert_eq!(a.len(), 4);
+    assert_ne!(body_of(&a, "first"), body_of(&b, "second"));
+    assert_ne!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&b, ContextKind::Block)
+    );
+    let (same_targets, _) = sites(
+        "use plain::f;
+         use plain::sub::*;
+         fn renamed() -> i32 { { f() + g() } }",
+    );
+    assert_eq!(body_of(&a, "first"), body_of(&same_targets, "renamed"));
+}
+
+#[test]
+fn opaque_macro_inputs_keep_unresolved_spellings() {
+    let (a, _) = sites("fn a(x: i32) -> i32 { emit!(w + x); x + 1 }");
+    let (b, _) = sites("fn b(y: i32) -> i32 { emit!(w + y); y + 1 }");
+    assert_eq!(body_of(&a, "a"), body_of(&b, "b"));
+    let (c, _) = sites("fn c(x: i32) -> i32 { emit!(u + x); x + 1 }");
+    assert_ne!(body_of(&a, "a"), body_of(&c, "c"));
+}
+
+#[test]
+fn work_reports_candidate_and_token_totals() {
+    let (found, work) = sites("fn a(x: i32) -> i32 { x + 1 }");
+    assert_eq!(work.contexts, found.len());
+    assert_eq!(work.input_tokens, 3);
+    let (_, nested_work) = sites("fn b(x: i32) -> i32 { { x + 1 } }");
+    assert_eq!(nested_work.contexts, 2);
+    assert_eq!(nested_work.input_tokens, 6);
+    let (_, blank_work) = sites("fn empty() {}");
+    assert_eq!(blank_work.contexts, 1);
+    assert_eq!(blank_work.input_tokens, 0);
+}
+
+#[test]
+fn labeled_loop_scopes_preserve_break_targets() {
+    let (a, _) = sites(
+        "fn first() {
+             'again: for value in [1] { if value > 0 { continue 'again; } }
+             'repeat: while ready() { break 'repeat; }
+             'forever: loop { break 'forever; }
+         }",
+    );
+    let (b, _) = sites(
+        "fn second() {
+             'next: for item in [1] { if item > 0 { continue 'next; } }
+             'retry: while ready() { break 'retry; }
+             'stop: loop { break 'stop; }
+         }",
+    );
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+    assert_eq!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&b, ContextKind::Block)
+    );
+    assert_eq!(forms_of(&a, ContextKind::Block).len(), 4);
+    let (different, _) = sites(
+        "fn third() {
+             'next: for item in [1] { if item > 0 { break 'next; } }
+             'retry: while ready() { break 'retry; }
+             'stop: loop { break 'stop; }
+         }",
+    );
+    assert_ne!(body_of(&a, "first"), body_of(&different, "third"));
+}
+
+#[test]
+fn scoped_macro_declarations_bind_nested_references() {
+    let (a, _) = sites("fn first() { macro_rules! local { () => { 1 } } { local!() } }");
+    let (b, _) = sites("fn second() { macro_rules! renamed { () => { 1 } } { renamed!() } }");
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+    assert_eq!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&b, ContextKind::Block)
+    );
+    let (different, _) = sites("fn third() { { external!() } }");
+    assert_ne!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&different, ContextKind::Block)
+    );
+}
+
+#[test]
+fn candidate_inline_self_imports_keep_the_written_module_target() {
+    let (a, _) = sites(
+        "fn first() {
+             mod caller {
+                 use std::mem::{self};
+                 pub fn run(value: String) { mem::drop(value) }
+             }
+             caller::run(String::new());
+         }",
+    );
+    let (b, _) = sites(
+        "fn second() {
+             mod caller {
+                 use std::mem::{self};
+                 pub fn run(other: String) { mem::drop(other) }
+             }
+             caller::run(String::new());
+         }",
+    );
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+    let (different, _) = sites(
+        "fn third() {
+             mod caller {
+                 use other::mem::{self};
+                 pub fn run(value: String) { mem::drop(value) }
+             }
+             caller::run(String::new());
+         }",
+    );
+    assert_ne!(body_of(&a, "first"), body_of(&different, "third"));
+}
+
+#[test]
+fn independent_arms_normalize_literal_and_parenthesis_spelling() {
+    let (a, _) = sites(
+        "fn first(value: Option<u32>) -> u32 {
+             match value { Some(x) => ((0x10_u32 + x)), None => 0 }
+         }",
+    );
+    let (b, _) = sites(
+        "fn second(value: Option<u32>) -> u32 {
+             match value { Some(y) => 16_u32 + y, None => 0 }
+         }",
+    );
+    assert_eq!(
+        forms_of(&a, ContextKind::Arm),
+        forms_of(&b, ContextKind::Arm)
+    );
+    let (different, _) = sites(
+        "fn third(value: Option<u32>) -> u32 {
+             match value { Some(x) => 17_u32 + x, None => 0 }
+         }",
+    );
+    assert_ne!(
+        forms_of(&a, ContextKind::Arm),
+        forms_of(&different, ContextKind::Arm)
+    );
+}
+
+#[test]
+fn independent_closures_normalize_literal_and_parenthesis_spelling() {
+    let (a, _) = sites("fn first() { let f = |x: u32| ((0x10_u32 + x)); consume(f); }");
+    let (b, _) = sites("fn second() { let g = |y: u32| 16_u32 + y; consume(g); }");
+    assert_eq!(
+        forms_of(&a, ContextKind::Closure),
+        forms_of(&b, ContextKind::Closure)
+    );
+    let (different, _) = sites("fn third() { let h = |x: u32| 17_u32 + x; consume(h); }");
+    assert_ne!(
+        forms_of(&a, ContextKind::Closure),
+        forms_of(&different, ContextKind::Closure)
+    );
+}
+
+#[test]
+fn independent_function_bodies_fold_their_own_tail_return() {
+    let (a, _) = sites("fn first(x: u32) -> u32 { return x + x; }");
+    let (b, _) = sites("fn second(y: u32) -> u32 { y + y }");
+    assert_eq!(body_of(&a, "first"), body_of(&b, "second"));
+    let (different, _) = sites("fn third(x: u32) -> u32 { if ready() { return x + x; } x - x }");
+    assert_ne!(body_of(&a, "first"), body_of(&different, "third"));
+}
+
+#[test]
+fn imported_values_do_not_collapse_trait_and_generic_origins() {
+    let (found, _) = sites(
+        "use std::mem::drop as TraitName;
+         trait TraitName<T>: Sized {
+             fn distinct() -> usize {
+                 std::mem::size_of::<Self>() + std::mem::size_of::<T>()
+             }
+             fn repeated() -> usize {
+                 std::mem::size_of::<Self>() + std::mem::size_of::<Self>()
+             }
+         }",
+    );
+    assert_ne!(
+        body_of(&found, "TraitName::distinct"),
+        body_of(&found, "TraitName::repeated")
+    );
+}
+
+#[test]
+fn higher_ranked_parameter_attributes_discover_their_blocks() {
+    let (found, _) = sites("fn first(value: for<#[inspect = { 1 + 1 }] 'a> fn(&'a u8)) {}");
+    assert_eq!(found.len(), 2);
+    assert_eq!(forms_of(&found, ContextKind::Block).len(), 1);
+    assert!(found.iter().all(|site| site.item == "first"));
+    let (renamed, _) = sites("fn second(other: for<#[inspect = { 1 + 1 }] 'b> fn(&'b u8)) {}");
+    assert_eq!(
+        forms_of(&found, ContextKind::Block),
+        forms_of(&renamed, ContextKind::Block)
+    );
+}
+
+#[test]
+fn guarded_pattern_conditions_discover_their_nested_blocks() {
+    let (a, _) = sites(
+        "fn first(value: Option<u32>) -> u32 {
+             match value {
+                 _ if let Some(x) = value && accept({ x + x }) => 0,
+                 _ => 1,
+             }
+         }",
+    );
+    let (b, _) = sites(
+        "fn second(other: Option<u32>) -> u32 {
+             match other {
+                 _ if let Some(y) = other && accept({ y + y }) => 0,
+                 _ => 1,
+             }
+         }",
+    );
+    assert_eq!(forms_of(&a, ContextKind::Block).len(), 1);
+    assert_eq!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&b, ContextKind::Block)
+    );
+    let (different, _) = sites(
+        "fn third(value: Option<u32>) -> u32 {
+             match value {
+                 _ if let Some(x) = value && accept({ x + value.unwrap() }) => 0,
+                 _ => 1,
+             }
+         }",
+    );
+    assert_ne!(
+        forms_of(&a, ContextKind::Block),
+        forms_of(&different, ContextKind::Block)
+    );
+}
