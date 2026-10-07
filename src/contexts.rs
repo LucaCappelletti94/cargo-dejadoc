@@ -35,6 +35,8 @@ impl<'a> Forms<'a> {
             alloc::collections::btree_map::Entry::Vacant(entry) => entry.insert(BTreeSet::new()),
         };
         let ascii = file.text.is_ascii();
+        let source_offset = file.parsed.shebang.as_ref().map_or(0, String::len)
+            + usize::from(file.text.starts_with('\u{feff}')) * '\u{feff}'.len_utf8();
         syn_canon::contexts(&file.parsed, &mut |context, canonical| {
             let (start, end) = (context.span.start(), context.span.end());
             let range = ((start.line, start.column), (end.line, end.column));
@@ -50,8 +52,8 @@ impl<'a> Forms<'a> {
             } else {
                 let bytes = context.span.byte_range();
                 (
-                    byte_column(&file.text, bytes.start),
-                    byte_column(&file.text, bytes.end),
+                    byte_column(&file.text, bytes.start + source_offset),
+                    byte_column(&file.text, bytes.end + source_offset),
                 )
             };
             let form = canonical.to_string();
@@ -182,6 +184,27 @@ mod tests {
             .context_blocks()
             .context_min_tokens(floor)
             .run_targets("", &[target], &|_, _| None)
+    }
+
+    fn assert_bodies(code: &str, lines: [u32; 2], names: [&str; 2]) {
+        let report = scan(code, 0);
+        assert_eq!(report.context_blocks, 2);
+        assert_eq!(report.unique_context_blocks, 1);
+        assert_eq!(report.context_groups.len(), 1);
+        let sites = &report.context_groups[0].sites;
+        assert_eq!(sites.len(), 2);
+        let pairs = lines.into_iter().zip(names);
+        for (site, (line, name)) in sites.iter().zip(pairs) {
+            assert_eq!(site.kind, ContextKind::FunctionBody);
+            assert_eq!(site.item, name);
+            assert_eq!(site.line, line);
+            assert_eq!(site.end, line);
+            let row = code
+                .lines()
+                .nth(usize::try_from(line - 1).unwrap())
+                .unwrap();
+            assert_eq!(row.get(site.column - 1..site.end_column - 1), Some("{}"));
+        }
     }
 
     #[test]
@@ -321,6 +344,53 @@ mod tests {
                 Some(expected)
             );
         }
+    }
+
+    #[test]
+    fn bom_prefix_columns_slice_original_source_bytes() {
+        assert_bodies(
+            "\u{feff}fn é(){}\nfn ø(){}\n",
+            [1, 2],
+            ["fixture::é", "fixture::ø"],
+        );
+        assert_bodies(
+            "\u{feff}fn a(){}\nfn b(){}\n",
+            [1, 2],
+            ["fixture::a", "fixture::b"],
+        );
+    }
+
+    #[test]
+    fn shebang_prefix_columns_slice_original_source_bytes() {
+        assert_bodies(
+            "#!/usr/bin/env rustx\nfn é(){}\nfn ø(){}\n",
+            [2, 3],
+            ["fixture::é", "fixture::ø"],
+        );
+        assert_bodies(
+            "#!/usr/bin/env rustx\nfn a(){}\nfn b(){}\n",
+            [2, 3],
+            ["fixture::a", "fixture::b"],
+        );
+        assert_bodies(
+            "#!/tmp/é\nfn a(){}\nfn b(){}\n",
+            [2, 3],
+            ["fixture::a", "fixture::b"],
+        );
+    }
+
+    #[test]
+    fn bom_and_shebang_prefix_columns_slice_original_source_bytes() {
+        assert_bodies(
+            "\u{feff}#!/usr/bin/env rustx\nfn é(){}\nfn ø(){}\n",
+            [2, 3],
+            ["fixture::é", "fixture::ø"],
+        );
+        assert_bodies(
+            "\u{feff}#!/usr/bin/env rustx\nfn a(){}\nfn b(){}\n",
+            [2, 3],
+            ["fixture::a", "fixture::b"],
+        );
     }
 
     #[test]

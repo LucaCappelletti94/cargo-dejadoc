@@ -58,7 +58,9 @@ Style folds, each applied only where it keeps the meaning:
 
 ## Context blocks
 
-`contexts` emits independently normalized function bodies, explicit blocks, complete match arms and complete closures with original spans and containing items. Methods, trait defaults and nested functions are included, and explicit blocks in required trait and foreign signatures retain their function names. Arm patterns/guards and closure inputs remain in the form, and unused preceding declarations do not affect numbering.
+`contexts` emits independently normalized function bodies, explicit blocks, complete match arms and complete closures with syntax-tree spans and containing items. Methods, trait defaults and nested functions are included, and explicit blocks in required trait and foreign signatures retain their function names. Arm patterns/guards and closure inputs remain in the form, and unused preceding declarations do not affect numbering.
+
+`Context::span` retains the supplied syntax tree's coordinates, so `syn::parse_file` callers must account for removed BOM and shebang bytes when indexing their original text.
 
 ```rust
 let forms = |src: &str| {
@@ -77,7 +79,7 @@ assert_eq!(
 
 The `ContextKind` names the boundary. Candidate-local binders receive fresh declaration-order numbers from `0`, with namespace tags, and inherited captures receive first-reference numbers from `0`. Unused inherited declarations stay outside the form, and explicit import aliases retain their available target associations.
 
-Namespaces remain distinct, while a declaration shared by value and type positions retains one origin number. Inherited nominal trait-bound paths retain their available spelling or import association, preserving inference-sensitive bound order.
+Namespaces remain distinct, while a declaration shared by value and type positions retains one origin number. Inherited nominal trait-bound paths retain their available spelling or import association, preserving inference-sensitive bound order. Trait `Self` bindings end at the trait boundary.
 
 Raw imported segments retain their spelling. An absolute path keeps `::` when a candidate-local or inherited type binding shadows its root, and absolute import targets bypass lexical aliases.
 

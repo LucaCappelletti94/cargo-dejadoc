@@ -32,7 +32,7 @@ pub enum ContextKind {
 pub struct Context<'a> {
     /// The kind of lexical scope covered.
     pub kind: ContextKind,
-    /// The span of the candidate in the original source, the outer group's delimiters included.
+    /// The candidate span from the supplied syntax tree, outer delimiters included.
     pub span: Span,
     /// The item containing the candidate, relative to the caller's module prefix.
     pub item: &'a str,
@@ -567,6 +567,7 @@ impl Visit<'_> for Walker<'_> {
     fn visit_item_trait(&mut self, item: &syn::ItemTrait) {
         self.push_item_path(&item.ident);
         let origin = self.bind_item_name(Ns::Type, &item.ident);
+        self.begin_generics(&item.generics);
         self.top_bind(
             Ns::Type,
             "Self",
@@ -576,7 +577,6 @@ impl Visit<'_> for Walker<'_> {
                 raw: false,
             },
         );
-        self.begin_generics(&item.generics);
         syn::visit::visit_item_trait(self, item);
         self.frames.pop();
         self.pop_item_path();

@@ -1316,8 +1316,6 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_macro_mut(&mut self, item: &mut syn::ItemMacro) {
-        // `macro_rules! n {}` carries the name in `ident`; a call at item
-        // level is visited like any other.
         if let Some(ident) = item.ident.as_mut() {
             self.bind_ident(Ns::Macro, ident);
             self.visit_attrs(&mut item.attrs);

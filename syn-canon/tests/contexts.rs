@@ -1204,3 +1204,78 @@ fn guarded_pattern_conditions_discover_their_nested_blocks() {
         forms_of(&different, ContextKind::Block)
     );
 }
+
+#[test]
+fn trait_self_does_not_leak_into_impl_bodies() {
+    let (found, _) = sites(
+        "trait Foo {
+             fn new() -> Self;
+             fn first() -> Self;
+             fn second() -> Self;
+         }
+         mod owner {
+             pub struct Wrap(pub u8);
+             impl Wrap { pub fn new() -> Self { Self(1) } }
+         }
+         impl Foo for owner::Wrap {
+             fn new() -> Self { Self(2) }
+             fn first() -> Self { Self::new() }
+             fn second() -> Self { Foo::new() }
+         }",
+    );
+    assert_ne!(
+        body_of(&found, "owner :: Wrap::first"),
+        body_of(&found, "owner :: Wrap::second")
+    );
+}
+
+#[test]
+fn unrelated_preceding_traits_do_not_change_impl_body_forms() {
+    let declaration = "trait Foo: Sized { fn new() -> Self; fn f() -> Self; }";
+    for (item, implementation) in [
+        (
+            "owner :: Wrap::f",
+            "mod owner {
+                 pub struct Wrap(pub u8);
+                 impl Wrap { pub fn new() -> Self { Self(1) } }
+             }
+             impl Foo for owner::Wrap {
+                 fn new() -> Self { Self(2) }
+                 fn f() -> Self { let a = Self::new(); let b = Foo::new(); b }
+             }",
+        ),
+        (
+            "T::f",
+            "impl<T: Clone + Default> Foo for T {
+                 fn new() -> Self { Default::default() }
+                 fn f() -> Self { let a = Self::new(); let b = Foo::new(); b }
+             }",
+        ),
+    ] {
+        let (without, _) = sites(&format!("{declaration} {implementation}"));
+        let (with, _) = sites(&format!(
+            "{declaration} trait Unrelated {{}} {implementation}"
+        ));
+        assert_eq!(body_of(&with, item), body_of(&without, item), "{item}");
+    }
+}
+
+#[test]
+fn trait_default_bodies_keep_their_own_self_association() {
+    let (self_ref, _) = sites(
+        "trait Foo: Sized {
+             fn make() -> Self { Self::seed() }
+             fn seed() -> Self;
+         }",
+    );
+    let (name_ref, _) = sites(
+        "trait Foo: Sized {
+             fn make() -> Self { Foo::seed() }
+             fn seed() -> Self;
+         }",
+    );
+    assert_eq!(
+        body_of(&self_ref, "Foo::make"),
+        body_of(&name_ref, "Foo::make")
+    );
+}

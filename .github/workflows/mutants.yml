@@ -21,7 +21,7 @@ jobs:
   shard:
     name: Mutation testing ${{ matrix.label }}/4
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
@@ -40,9 +40,11 @@ jobs:
       github.event.pull_request.user.login != 'dependabot[bot]')
     steps:
       - uses: actions/checkout@v4
+        timeout-minutes: 3
 
       - name: Cache cargo downloads
         uses: actions/cache@v6
+        timeout-minutes: 3
         with:
           path: |
             ~/.cargo/registry/index
@@ -53,8 +55,10 @@ jobs:
             dl-${{ runner.os }}-
 
       - uses: dtolnay/rust-toolchain@stable
+        timeout-minutes: 5
 
       - name: Install cargo-mutants
+        timeout-minutes: 10
         run: cargo install cargo-mutants --locked
 
       # --no-shuffle plus slice sharding keeps the four shard ranges a fixed disjoint partition.
@@ -81,10 +85,11 @@ jobs:
           -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Expr::(Continue|Lit|Macro)\(expr\) in expr_attrs$'
           -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::ForeignItem::Macro\(v\) in <impl VisitMut for Drift>::visit_foreign_item_mut$'
 
-      # The step bound stays inside the job deadline so the outcome upload still runs on a timeout.
+      # Step budgets leave four minutes for job overhead.
       - name: Upload mutation outcome
         if: always()
         uses: actions/upload-artifact@v4
+        timeout-minutes: 3
         with:
           name: mutants-shard-${{ matrix.label }}-of-4
           path: mutants.out
