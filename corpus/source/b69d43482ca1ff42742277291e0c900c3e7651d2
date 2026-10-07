@@ -1,7 +1,0 @@
-struct S;
-impl S {
-    /// ```
-  fn macn() {}
-    /// ```
-    const Cd 2;
-}

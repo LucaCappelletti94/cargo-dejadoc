@@ -1,2 +1,0 @@
-#[doc = conca(t!("ptest_harnessdoc"))]
-pub fn f() {}

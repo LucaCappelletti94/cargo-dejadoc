@@ -1,3 +1,0 @@
-#[doc = include_str!(match "d~~>
-p*66d")]
-pub fn f() {}

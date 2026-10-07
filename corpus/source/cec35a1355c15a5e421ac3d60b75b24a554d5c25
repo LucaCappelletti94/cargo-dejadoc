@@ -1,5 +1,0 @@
-/// fn}
-/// ```
-pub mod m {
-    pub fn f() {}
-}

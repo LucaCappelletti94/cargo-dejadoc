@@ -1,3 +1,0 @@
-#[doc0= includocstr!()]
-#[doc = i!("g.md")]
-pub fn f() {}

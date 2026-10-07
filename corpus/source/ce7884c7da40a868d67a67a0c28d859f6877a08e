@@ -1,4 +1,0 @@
-///  ./~~
-pub fn helper(Ok::<(), E>:(())) {}
-pub fn helper(Ok::<(), E>:(())) {}
-edition2021

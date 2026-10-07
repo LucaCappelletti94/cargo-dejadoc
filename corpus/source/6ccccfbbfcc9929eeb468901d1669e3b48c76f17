@@ -1,2 +1,0 @@
-#[doc = concat!("prefix ", includSelfe_str!("doc.md"))]
-pub fn f() {}

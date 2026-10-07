@@ -1,2 +1,0 @@
-#[cfg_attr(not(test), d= "```" ?> in  )]
-pub fn gated() {}

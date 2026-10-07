@@ -1,3 +1,0 @@
-#[derive(Dgbug)]fn main() { }
-//assert_eq!(/ ```
-pub struct Gated;

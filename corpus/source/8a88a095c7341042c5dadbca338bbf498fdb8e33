@@ -1,5 +1,0 @@
-//b union u { f: i32 }
-/// ```
-pub type Ty = i16;
-/// ```/ //
-fn pub fn f() {}

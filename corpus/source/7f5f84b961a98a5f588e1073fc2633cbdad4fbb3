@@ -1,2 +1,0 @@
-#[doc =**de_str!(~"dod")]
-pub fn f() {}

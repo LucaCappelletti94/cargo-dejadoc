@@ -1,2 +1,0 @@
-#[d=  occoncht!("pr$efix ", include_str!("doexmd").03e)]
-pub fn f() {}

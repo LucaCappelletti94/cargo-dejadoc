@@ -1,4 +1,0 @@
-// ```
-trait T {
- ude_str!("doc.md"ignoreself);
-}if let 

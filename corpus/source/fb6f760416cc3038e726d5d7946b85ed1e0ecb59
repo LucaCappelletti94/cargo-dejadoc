@@ -1,7 +1,0 @@
-/// ```
-/// fn a() {}i32 = 1;
-/// ``` b1cktick fence&.
-/// ```
-/// fn e() {}
-/// ```
-pub union U { f: i32 }b trait Tr = Self

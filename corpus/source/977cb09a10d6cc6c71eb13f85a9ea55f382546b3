@@ -1,3 +1,0 @@
-#[doc = includ%_str!("g.md")]
-#[doc = i!("g.md")]
-pub fn f() {}

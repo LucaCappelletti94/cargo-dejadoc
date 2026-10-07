@@ -1,2 +1,0 @@
-#[doc@` ` b5""should_vanic]
-pub fn f() {}

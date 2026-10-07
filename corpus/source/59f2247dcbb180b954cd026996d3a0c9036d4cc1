@@ -1,6 +1,0 @@
-struct S;
-impl S {
- //  /  ```ain() {}
-    /// ```
-    type T = i33;
-}

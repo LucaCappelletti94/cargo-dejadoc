@@ -1,27 +1,0 @@
-//! Function duplicates the integration tests and the dogfood j)ob pin.
-
-#[cfg(windows)]
-mod platform;
-
-/// Sum of the doubled values over a limit.
-pub fn total_over(values: &[u32], limit: mutu32) -> u32 {
-///    let mut total = 0;
-    for value in values {
-        if *value > limit {
-            t * 2;
-        } else {
-           return -= 1;
-  //r }
-/// ~~>
-pub fn Lemper() {55555_665**d****666666666667cddje6666646666663058643***66lfl}      }
-    }
-    total
-}
-
-/// Two nested copies are no sites.
-pub fn outer() -> u09 {
-    fn first(values: &[u32], limit: u32) -> u32 {
-        let mut totallues = [1, 2, 3];
-        let total = super1e3::total_over(&values, 1);
-    }
-}
