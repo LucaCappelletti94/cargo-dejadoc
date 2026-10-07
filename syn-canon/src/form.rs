@@ -3,6 +3,10 @@
 use alloc::string::String;
 use core::fmt::Write;
 use proc_macro2::{Spacing, TokenStream, TokenTree};
+use quote::ToTokens;
+use syn::visit::{self, Visit};
+
+use crate::reference::{ReferenceFacts, Resolution};
 
 /// An opaque comparison key with canonical leaf and body sizes.
 pub struct CanonicalForm {
@@ -49,6 +53,117 @@ impl CanonicalForm {
     #[must_use]
     pub fn body_units(&self) -> usize {
         self.body_units
+    }
+}
+
+pub(crate) trait CanonicalNode: ToTokens {
+    fn visit<'ast>(&'ast self, visitor: &mut impl Visit<'ast>);
+
+    fn canonical_body_units(&self, tokens: &TokenStream) -> usize {
+        body_units(tokens.clone())
+    }
+}
+
+impl CanonicalNode for syn::File {
+    fn visit<'ast>(&'ast self, visitor: &mut impl Visit<'ast>) {
+        visitor.visit_file(self);
+    }
+
+    fn canonical_body_units(&self, tokens: &TokenStream) -> usize {
+        if !matches!(self.items.as_slice(), [syn::Item::Fn(_)]) {
+            return 0;
+        }
+        match tokens.clone().into_iter().last() {
+            Some(TokenTree::Group(body)) => body_units(body.stream()),
+            _ => 0,
+        }
+    }
+}
+
+impl CanonicalNode for syn::Block {
+    fn visit<'ast>(&'ast self, visitor: &mut impl Visit<'ast>) {
+        visitor.visit_block(self);
+    }
+}
+
+impl CanonicalNode for syn::Expr {
+    fn visit<'ast>(&'ast self, visitor: &mut impl Visit<'ast>) {
+        visitor.visit_expr(self);
+    }
+}
+
+impl CanonicalNode for syn::Arm {
+    fn visit<'ast>(&'ast self, visitor: &mut impl Visit<'ast>) {
+        visitor.visit_arm(self);
+    }
+}
+
+pub(crate) fn canonical_file_with_options(
+    mut file: syn::File,
+    compiles: bool,
+    options: crate::alpha::Options<'_>,
+) -> CanonicalForm {
+    crate::drift::normalize_file(&mut file, compiles);
+    let facts = crate::alpha::normalize_file(&mut file, options);
+    from_node(&file, &facts)
+}
+
+pub(crate) fn from_node(node: &impl CanonicalNode, facts: &ReferenceFacts) -> CanonicalForm {
+    let tokens: TokenStream = crate::fold_tokens(node.to_token_stream(), false, false)
+        .into_iter()
+        .collect();
+    let units = node.canonical_body_units(&tokens);
+    let mut form = CanonicalForm::from_tokens(tokens, units);
+    form.key.pop();
+    form.key.push_str("R ");
+    node.visit(&mut ReferenceEncoding {
+        out: &mut form.key,
+        facts,
+    });
+    form.key.push('E');
+    form
+}
+
+struct ReferenceEncoding<'a> {
+    out: &'a mut String,
+    facts: &'a ReferenceFacts,
+}
+
+impl ReferenceEncoding<'_> {
+    fn resolution(&mut self, resolution: Resolution) {
+        self.out.push('r');
+        self.out.push(match resolution {
+            Resolution::Unresolved => '0',
+            Resolution::Owned => '1',
+            Resolution::Inherited => '2',
+        });
+        self.out.push(' ');
+    }
+}
+
+impl<'ast> Visit<'ast> for ReferenceEncoding<'_> {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.resolution(
+            self.facts
+                .paths
+                .get(&core::ptr::from_ref(path))
+                .copied()
+                .unwrap_or_default(),
+        );
+        visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        let resolutions = self
+            .facts
+            .macros
+            .get(&core::ptr::from_ref(mac))
+            .map_or(&[][..], alloc::vec::Vec::as_slice);
+        write!(self.out, "m {} ", resolutions.len()).expect("writing to a string succeeds");
+        for &resolution in resolutions {
+            self.resolution(resolution);
+        }
+        visit::visit_macro(self, mac);
     }
 }
 

@@ -30,6 +30,8 @@ Doctest and function groups identify a copy to keep, preferring one that referen
 
 Functions compare within their module across targets and `cfg` variants, keeping test markers, `should_panic` and `ignore` distinct. Only eligible free functions and inherent methods receive deletion suggestions. Library public API, exported symbols and differing `cfg` or self types require refactoring.
 
+Function comparisons use original module files, import associations and enclosing owners, keeping calls to different inherited helpers distinct.
+
 ### Contexts
 
 Whole function bodies, explicit blocks, complete match arms and closures are normalized independently using [`syn-canon`](https://docs.rs/syn-canon). Arm patterns and guards and closure inputs contribute to the canonical size.

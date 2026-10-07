@@ -245,6 +245,12 @@ impl Dejadoc {
                         .strip_prefix(root)
                         .map_or(f.path.as_str(), |p| p.trim_start_matches('/'))
                 });
+                let context = syn_canon::SourceContext::new(
+                    target
+                        .files
+                        .iter()
+                        .map(|file| (file.segments.as_slice(), &file.parsed)),
+                );
                 target
                     .files
                     .iter()
@@ -256,6 +262,7 @@ impl Dejadoc {
                             root,
                             crate_root,
                             target.library,
+                            &context,
                         )
                     })
             });
@@ -661,20 +668,13 @@ fn group_functions(
         .inspect(|_| total += 1)
         .filter(|f| !f.site.allow)
         .map(|f| {
-            let file = syn::File {
-                shebang: None,
-                frontmatter: None,
-                attrs: Vec::new(),
-                items: alloc::vec![syn::Item::Fn(f.func)],
-            };
-            let canonical = syn_canon::canonicalize(file);
-            let tokens = canonical.body_units();
+            let tokens = f.form.body_units();
             let mut hasher = blake3::Hasher::new();
             hasher.update(&[FUNCTION_DOMAIN]);
             let length = u64::try_from(f.scope.len()).expect("the scope length fits u64");
             hasher.update(&length.to_be_bytes());
             hasher.update(f.scope.as_bytes());
-            hasher.update(canonical.key().as_bytes());
+            hasher.update(f.form.key().as_bytes());
             let hash = hasher.finalize().to_hex().to_string();
             (hash, false, tokens, (f.site, f.context))
         });

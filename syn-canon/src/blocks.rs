@@ -5,15 +5,17 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 
-use proc_macro2::{Ident, Span, TokenStream, TokenTree};
+use proc_macro2::{Ident, Span, TokenTree};
 use quote::ToTokens;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
-use crate::CanonicalForm;
 use crate::alpha::{
-    Bind, Domain, FirstSeg, Frame, Inherited, Ns, Renamer, Target, TargetSeg, is_unit_path,
-    item_binding, resolve_target_path, single_segment_type_name,
+    Renamer, is_unit_path, item_binding, resolve_target_path, single_segment_type_name,
+};
+use crate::form::CanonicalForm;
+use crate::scope::{
+    Binding, BindingId, Domain, FirstSeg, Frame, Inherited, Ns, Origin, Target, TargetSeg,
 };
 
 /// The kind of lexical scope a context candidate covers.
@@ -55,7 +57,7 @@ pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, CanonicalFor
         mod_frames: BTreeMap::new(),
         targets: Vec::new(),
         item_path: Vec::new(),
-        origin: 0,
+        id: 0,
         work: ContextWork::default(),
         emit,
     };
@@ -146,21 +148,24 @@ fn fn_input_names<'a>(inputs: impl Iterator<Item = &'a syn::FnArg>) -> Vec<Strin
 /// Prebind items and module frames so references may precede declarations.
 fn prebind_items<'a>(
     frames: &mut Vec<Frame>,
-    mod_frames: &mut BTreeMap<usize, Frame>,
-    origin: &mut usize,
+    mod_frames: &mut BTreeMap<BindingId, Frame>,
+    id: &mut usize,
     items: impl Iterator<Item = &'a syn::Item>,
 ) {
     for item in items {
         let Some((ns, ident)) = item_binding(item) else {
             continue;
         };
-        let o = *origin;
-        *origin += 1;
+        let binding_id = BindingId(*id);
+        *id += 1;
+        let name = ident.to_string();
         frames.last_mut().expect("a scope frame").bind(
             ns,
-            ident.to_string(),
-            Bind {
-                origin: o,
+            &name,
+            Binding {
+                id: binding_id,
+                canon: String::new(),
+                origin: Origin::Item,
                 target: None,
                 raw: false,
             },
@@ -171,9 +176,9 @@ fn prebind_items<'a>(
         }) = item
         {
             frames.push(Frame::default());
-            prebind_items(frames, mod_frames, origin, sub_items.iter());
+            prebind_items(frames, mod_frames, id, sub_items.iter());
             let frame = frames.pop().expect("a scope frame");
-            mod_frames.insert(o, frame);
+            mod_frames.insert(binding_id, frame);
         }
     }
 }
@@ -187,14 +192,14 @@ fn self_type_string(self_ty: &syn::Type) -> String {
 struct Walker<'w> {
     /// The scope stack, the file frame first.
     frames: Vec<Frame>,
-    /// The item frames of local modules, by module origin.
-    mod_frames: BTreeMap<usize, Frame>,
+    /// The item frames of local modules, by module binding id.
+    mod_frames: BTreeMap<BindingId, Frame>,
     /// The interned alias targets.
     targets: Vec<Target>,
     /// The item path segments, outermost first.
     item_path: Vec<String>,
-    /// The next origin identity.
-    origin: usize,
+    /// The next binding id.
+    id: usize,
     /// The measured work.
     work: ContextWork,
     /// The candidate emitter.
@@ -202,62 +207,71 @@ struct Walker<'w> {
 }
 
 impl Walker<'_> {
-    /// Bind `name` in the current frame and return its origin.
-    fn bind(&mut self, ns: Ns, name: &str) -> usize {
-        let origin = self.origin;
-        self.origin += 1;
+    /// Bind `name` in the current frame and return its binding id.
+    fn bind(&mut self, ns: Ns, name: &str, origin: Origin) -> BindingId {
+        let binding_id = BindingId(self.id);
+        self.id += 1;
         self.top_bind(
             ns,
             name,
-            Bind {
+            Binding {
+                id: binding_id,
+                canon: String::new(),
                 origin,
                 target: None,
                 raw: false,
             },
         );
-        origin
+        binding_id
     }
 
-    /// Bind `name` to `bind` in the current frame.
-    fn top_bind(&mut self, ns: Ns, name: &str, bind: Bind) {
+    /// Bind `name` to `binding` in the current frame.
+    fn top_bind(&mut self, ns: Ns, name: &str, binding: Binding) {
         self.frames
             .last_mut()
             .expect("a scope frame")
-            .bind(ns, name.to_string(), bind);
+            .bind(ns, name, binding);
     }
 
-    /// Bind `name` in the value and type namespaces to one origin, a `use` alias form.
-    fn bind_value_and_type(&mut self, name: &str, target: Option<usize>) -> usize {
-        let origin = self.origin;
-        self.origin += 1;
-        let bind = Bind {
+    /// Bind `name` in the value and type namespaces to one binding id, a `use` alias form.
+    fn bind_value_and_type(
+        &mut self,
+        name: &str,
+        target: Option<usize>,
+        origin: Origin,
+    ) -> BindingId {
+        let binding_id = BindingId(self.id);
+        self.id += 1;
+        let binding = Binding {
+            id: binding_id,
+            canon: String::new(),
             origin,
             target,
             raw: false,
         };
-        self.top_bind(Ns::Value, name, bind);
-        self.top_bind(Ns::Type, name, bind);
-        origin
+        self.top_bind(Ns::Value, name, binding.clone());
+        self.top_bind(Ns::Type, name, binding);
+        binding_id
     }
 
     /// Nearest-binding lookup, namespace priority first.
-    fn lookup(&self, ns: &[Ns], name: &str) -> Option<Bind> {
+    fn lookup(&self, ns: &[Ns], name: &str) -> Option<&Binding> {
         for ns in ns {
             for frame in self.frames.iter().rev() {
-                if let Some(bind) = frame.lookup(*ns, name) {
-                    return Some(*bind);
+                if let Some(binding) = frame.lookup(*ns, name) {
+                    return Some(binding);
                 }
             }
         }
         None
     }
 
-    /// Reuse a prebound item's origin when its declaration is visited.
-    fn bind_item_name(&mut self, ns: Ns, ident: &Ident) -> usize {
+    /// Reuse a prebound item's binding id when its declaration is visited.
+    fn bind_item_name(&mut self, ns: Ns, ident: &Ident) -> BindingId {
         let name = ident.to_string();
         match self.frames.last().and_then(|frame| frame.lookup(ns, &name)) {
-            Some(bind) => bind.origin,
-            None => self.bind(ns, &name),
+            Some(binding) => binding.id,
+            None => self.bind(ns, &name, Origin::Item),
         }
     }
 
@@ -308,7 +322,7 @@ impl Walker<'_> {
     fn bind_alias_target(&mut self, rooted: bool, segments: Vec<TargetSeg>, alias: &str) {
         let index = self.targets.len();
         self.targets.push(Target { rooted, segments });
-        self.bind_value_and_type(alias, Some(index));
+        self.bind_value_and_type(alias, Some(index), Origin::Use);
     }
 
     /// Bind one `use` leaf that imports `ident` under `alias`.
@@ -319,17 +333,17 @@ impl Walker<'_> {
             resolve_target_path(&|name| self.resolve_first_seg(name), rooted, &path);
         let index = self.targets.len();
         self.targets.push(Target { rooted, segments });
-        self.bind_value_and_type(&alias.to_string(), Some(index));
+        self.bind_value_and_type(&alias.to_string(), Some(index), Origin::Use);
     }
 
     /// Resolve the first-segment question of a written `use` prefix.
     fn resolve_first_seg(&self, name: &str) -> FirstSeg<'_> {
         match self.lookup(&[Ns::Type], name) {
-            Some(bind) if bind.target.is_some() => {
-                let index = bind.target.expect("a target index");
+            Some(binding) if binding.target.is_some() => {
+                let index = binding.target.expect("a target index");
                 FirstSeg::Alias(self.targets.get(index).expect("a target index"))
             }
-            Some(bind) => FirstSeg::Module(Domain::Inherited, bind.origin),
+            Some(binding) => FirstSeg::Module(Domain::Inherited, binding.id),
             None => FirstSeg::Free,
         }
     }
@@ -340,24 +354,18 @@ impl Walker<'_> {
         for param in &generics.params {
             match param {
                 syn::GenericParam::Lifetime(lifetime) => {
-                    self.bind(Ns::Lifetime, &lifetime.lifetime.ident.to_string());
+                    self.bind(
+                        Ns::Lifetime,
+                        &lifetime.lifetime.ident.to_string(),
+                        Origin::Lifetime,
+                    );
                 }
                 syn::GenericParam::Type(ty_param) => {
-                    self.bind(Ns::Type, &ty_param.ident.to_string());
+                    self.bind(Ns::Type, &ty_param.ident.to_string(), Origin::Generic);
                 }
                 syn::GenericParam::Const(r#const) => {
                     // A bare reference in `Foo<N>` reads as a type argument.
-                    let name = r#const.ident.to_string();
-                    let origin = self.bind(Ns::Value, &name);
-                    self.top_bind(
-                        Ns::Type,
-                        &name,
-                        Bind {
-                            origin,
-                            target: None,
-                            raw: false,
-                        },
-                    );
+                    self.bind_value_and_type(&r#const.ident.to_string(), None, Origin::Generic);
                 }
             }
         }
@@ -368,7 +376,7 @@ impl Walker<'_> {
         self.begin_generics(&sig.generics);
         self.frames.push(Frame::default());
         for name in fn_input_names(sig.inputs.iter()) {
-            self.bind(Ns::Value, &name);
+            self.bind(Ns::Value, &name, Origin::Parameter);
         }
         syn::visit::visit_signature(self, sig);
         let (span, input_tokens) = source_span_and_leaf_tokens(body);
@@ -396,7 +404,7 @@ impl Walker<'_> {
                 let mut names = Vec::new();
                 pat_names(&let_expr.pat, &mut names);
                 for name in &names {
-                    self.bind(Ns::Value, name);
+                    self.bind(Ns::Value, name, Origin::Let);
                 }
             }
             other => syn::visit::visit_expr(self, other),
@@ -469,7 +477,7 @@ impl Visit<'_> for Walker<'_> {
         prebind_items(
             &mut self.frames,
             &mut self.mod_frames,
-            &mut self.origin,
+            &mut self.id,
             file.items.iter(),
         );
         self.bind_scope_uses(file.items.iter().filter_map(|item| match item {
@@ -484,7 +492,7 @@ impl Visit<'_> for Walker<'_> {
         prebind_items(
             &mut self.frames,
             &mut self.mod_frames,
-            &mut self.origin,
+            &mut self.id,
             block.stmts.iter().filter_map(|stmt| match stmt {
                 syn::Stmt::Item(item) => Some(item),
                 _ => None,
@@ -509,7 +517,7 @@ impl Visit<'_> for Walker<'_> {
         let mut names = Vec::new();
         pat_names(&local.pat, &mut names);
         for name in &names {
-            self.bind(Ns::Value, name);
+            self.bind(Ns::Value, name, Origin::Let);
         }
         syn::visit::visit_pat(self, &local.pat);
     }
@@ -526,11 +534,11 @@ impl Visit<'_> for Walker<'_> {
     fn visit_item_mod(&mut self, item: &syn::ItemMod) {
         self.push_item_path(&item.ident);
         if let Some((_, items)) = &item.content {
-            let origin = self
+            let id = self
                 .lookup(&[Ns::Type], &item.ident.to_string())
                 .expect("a module is prebound")
-                .origin;
-            let frame = self.mod_frames.remove(&origin).unwrap_or_default();
+                .id;
+            let frame = self.mod_frames.remove(&id).unwrap_or_default();
             self.frames.push(frame);
             self.bind_scope_uses(items.iter().filter_map(|item| match item {
                 syn::Item::Use(u) => Some(u),
@@ -540,7 +548,7 @@ impl Visit<'_> for Walker<'_> {
                 syn::visit::visit_item(self, item);
             }
             let frame = self.frames.pop().expect("a scope frame");
-            self.mod_frames.insert(origin, frame);
+            self.mod_frames.insert(id, frame);
         }
         self.pop_item_path();
     }
@@ -548,9 +556,9 @@ impl Visit<'_> for Walker<'_> {
     fn visit_item_impl(&mut self, item: &syn::ItemImpl) {
         self.frames.push(Frame::default());
         if let Some(name) = single_segment_type_name(&item.self_ty)
-            && let Some(bind) = self.lookup(&[Ns::Type], &name)
+            && let Some(binding) = self.lookup(&[Ns::Type], &name)
         {
-            self.top_bind(Ns::Type, "Self", bind);
+            self.top_bind(Ns::Type, "Self", binding.clone());
         }
         self.push_item_path_str(self_type_string(&item.self_ty));
         let has_generics = item.generics.lt_token.is_some();
@@ -567,13 +575,15 @@ impl Visit<'_> for Walker<'_> {
 
     fn visit_item_trait(&mut self, item: &syn::ItemTrait) {
         self.push_item_path(&item.ident);
-        let origin = self.bind_item_name(Ns::Type, &item.ident);
+        let id = self.bind_item_name(Ns::Type, &item.ident);
         self.begin_generics(&item.generics);
         self.top_bind(
             Ns::Type,
             "Self",
-            Bind {
-                origin,
+            Binding {
+                id,
+                canon: String::new(),
+                origin: Origin::SelfTy,
                 target: None,
                 raw: false,
             },
@@ -645,7 +655,15 @@ impl Visit<'_> for Walker<'_> {
     fn visit_item_macro(&mut self, item: &syn::ItemMacro) {
         // `macro_rules!` binds from its declaration onward.
         if let Some(ident) = &item.ident {
-            self.bind_item_name(Ns::Macro, ident);
+            let name = ident.to_string();
+            if self
+                .frames
+                .last()
+                .and_then(|frame| frame.lookup(Ns::Macro, &name))
+                .is_none()
+            {
+                self.bind(Ns::Macro, &name, Origin::MacroRule);
+            }
         }
         syn::visit::visit_item_macro(self, item);
     }
@@ -730,7 +748,7 @@ impl Visit<'_> for Walker<'_> {
             pat_names(input, &mut names);
         }
         for name in &names {
-            self.bind(Ns::Value, name);
+            self.bind(Ns::Value, name, Origin::Closure);
         }
         for input in &closure.inputs {
             syn::visit::visit_pat(self, input);
@@ -743,7 +761,7 @@ impl Visit<'_> for Walker<'_> {
     fn visit_expr_block(&mut self, expr: &syn::ExprBlock) {
         self.emit_block_expr(syn::Expr::Block(expr.clone()));
         if let Some(label) = &expr.label {
-            self.bind(Ns::Label, &label.name.ident.to_string());
+            self.bind(Ns::Label, &label.name.ident.to_string(), Origin::Label);
         }
         self.visit_block(&expr.block);
     }
@@ -785,12 +803,12 @@ impl Visit<'_> for Walker<'_> {
         syn::visit::visit_expr(self, &for_loop.expr);
         self.frames.push(Frame::default());
         if let Some(label) = &for_loop.label {
-            self.bind(Ns::Label, &label.name.ident.to_string());
+            self.bind(Ns::Label, &label.name.ident.to_string(), Origin::Label);
         }
         let mut names = Vec::new();
         pat_names(&for_loop.pat, &mut names);
         for name in &names {
-            self.bind(Ns::Value, name);
+            self.bind(Ns::Value, name, Origin::Let);
         }
         self.emit_block_slot(&for_loop.body);
         self.visit_block(&for_loop.body);
@@ -800,7 +818,7 @@ impl Visit<'_> for Walker<'_> {
     fn visit_expr_while(&mut self, expr: &syn::ExprWhile) {
         self.frames.push(Frame::default());
         if let Some(label) = &expr.label {
-            self.bind(Ns::Label, &label.name.ident.to_string());
+            self.bind(Ns::Label, &label.name.ident.to_string(), Origin::Label);
         }
         self.walk_let_cond(&expr.cond);
         self.emit_block_slot(&expr.body);
@@ -811,7 +829,7 @@ impl Visit<'_> for Walker<'_> {
     fn visit_expr_loop(&mut self, expr: &syn::ExprLoop) {
         self.frames.push(Frame::default());
         if let Some(label) = &expr.label {
-            self.bind(Ns::Label, &label.name.ident.to_string());
+            self.bind(Ns::Label, &label.name.ident.to_string(), Origin::Label);
         }
         self.emit_block_slot(&expr.body);
         self.visit_block(&expr.body);
@@ -831,7 +849,7 @@ impl Visit<'_> for Walker<'_> {
         let mut names = Vec::new();
         pat_names(&arm.pat, &mut names);
         for name in &names {
-            self.bind(Ns::Value, name);
+            self.bind(Ns::Value, name, Origin::Let);
         }
         syn::visit::visit_arm(self, arm);
         self.frames.pop();
@@ -845,7 +863,11 @@ impl Visit<'_> for Walker<'_> {
     fn visit_bound_lifetimes(&mut self, node: &syn::BoundLifetimes) {
         for param in &node.lifetimes {
             if let syn::GenericParam::Lifetime(lifetime) = param {
-                self.bind(Ns::Lifetime, &lifetime.lifetime.ident.to_string());
+                self.bind(
+                    Ns::Lifetime,
+                    &lifetime.lifetime.ident.to_string(),
+                    Origin::Lifetime,
+                );
             }
         }
         syn::visit::visit_bound_lifetimes(self, node);
@@ -873,7 +895,8 @@ fn build_function_body_form(inherited: Inherited<'_>, body: &syn::Block) -> Cano
     crate::drift::fold_fn_body(&mut block);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_block_mut(&mut block);
-    fold_form(block)
+    let facts = renamer.into_reference_facts();
+    crate::form::from_node(&block, &facts)
 }
 
 /// Normalize one cloned block slot, a loop body or an `if` branch.
@@ -882,7 +905,8 @@ fn build_block_slot_form(inherited: Inherited<'_>, block: &syn::Block) -> Canoni
     crate::drift::normalize_block(&mut block);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_block_mut(&mut block);
-    fold_form(block)
+    let facts = renamer.into_reference_facts();
+    crate::form::from_node(&block, &facts)
 }
 
 /// Normalize one cloned block expression, the label and block included.
@@ -891,7 +915,8 @@ fn build_block_expr_form(inherited: Inherited<'_>, expr: syn::Expr) -> Canonical
     crate::drift::normalize_expr(&mut expr);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_expr_mut(&mut expr);
-    fold_form(expr)
+    let facts = renamer.into_reference_facts();
+    crate::form::from_node(&expr, &facts)
 }
 
 /// Normalize one cloned match arm.
@@ -900,7 +925,8 @@ fn build_arm_form(inherited: Inherited<'_>, arm: &syn::Arm) -> CanonicalForm {
     crate::drift::normalize_arm(&mut arm);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_arm_mut(&mut arm);
-    fold_form(arm)
+    let facts = renamer.into_reference_facts();
+    crate::form::from_node(&arm, &facts)
 }
 
 /// Normalize one cloned closure, inputs and body included.
@@ -909,14 +935,6 @@ fn build_closure_form(inherited: Inherited<'_>, closure: &syn::ExprClosure) -> C
     crate::drift::normalize_expr(&mut expr);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_expr_mut(&mut expr);
-    fold_form(expr)
-}
-
-/// Fold the normalized candidate's tokens the way the file pipeline folds its own.
-fn fold_form(node: impl ToTokens) -> CanonicalForm {
-    let tokens: TokenStream = crate::fold_tokens(node.to_token_stream(), false, false)
-        .into_iter()
-        .collect();
-    let units = crate::form::body_units(tokens.clone());
-    CanonicalForm::from_tokens(tokens, units)
+    let facts = renamer.into_reference_facts();
+    crate::form::from_node(&expr, &facts)
 }

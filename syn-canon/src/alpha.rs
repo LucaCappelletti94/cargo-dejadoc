@@ -1,4 +1,4 @@
-//! Shared alpha-renaming for whole files and lexical contexts.
+//! Shared alpha-renaming for whole files, lexical contexts, and seeded views.
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -11,120 +11,33 @@ use alloc::vec::Vec;
 use proc_macro2::{Ident, Span};
 use quote::ToTokens;
 use syn::parse::discouraged::Speculative as _;
+use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
-/// An identifier namespace.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Ns {
-    /// Variables, function names, const items.
-    Value,
-    /// Types, traits, and the `Self` alias of an impl or trait.
-    Type,
-    /// Lifetimes.
-    Lifetime,
-    /// Loop and block labels, a namespace rustc keeps distinct from lifetimes.
-    Label,
-    /// Local macro names.
-    Macro,
+use crate::reference::{ReferenceFacts, Resolution};
+use crate::scope::{
+    Binding, BindingId, Domain, FirstSeg, Frame, Inherited, Ns, Origin, Target, TargetSeg,
+    new_ident,
+};
+
+/// The normalization options of a file pass.
+pub(crate) struct Options<'a> {
+    /// The seed frame of the view's module, when one is indexed.
+    pub(crate) seed: Option<&'a Frame>,
+    /// The frame of the enclosing impl or trait's generics, above the seed
+    /// and below the function's own binders.
+    pub(crate) generics: Option<&'a Frame>,
+    /// The canon the view's `Self` names, for a method or trait view.
+    pub(crate) self_canon: Option<String>,
 }
 
-impl Ns {
-    fn key(self, name: &str) -> &str {
-        match self {
-            Self::Value | Self::Type | Self::Macro => name.strip_prefix("r#").unwrap_or(name),
-            Self::Lifetime | Self::Label => name,
-        }
-    }
-}
-
-/// The numbering domain of a binding.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Domain {
-    /// Declared inside the candidate, numbered in declaration order.
-    Local,
-    /// Declared outside, numbered in first-reference order.
-    Inherited,
-}
-
-/// One lexical origin and its optional imported target.
+/// A resolved name reference, its identity only, the canon resolves on render.
 #[derive(Clone, Copy)]
-pub(crate) struct Bind {
-    /// The origin identity, allocation order.
-    pub(crate) origin: usize,
-    /// The index of the written target a `use` alias imports.
-    pub(crate) target: Option<usize>,
-    /// Whether the stored name uses raw identifier spelling.
-    pub(crate) raw: bool,
-}
-
-/// A scope frame, one map per namespace.
-#[derive(Default)]
-pub(crate) struct Frame([BTreeMap<String, Bind>; 5]);
-
-impl Frame {
-    /// Bind `name` in `ns` to `value`, replacing any earlier entry.
-    pub(crate) fn bind(&mut self, ns: Ns, mut name: String, mut value: Bind) {
-        value.raw = name.starts_with("r#");
-        let prefix = name.len() - ns.key(&name).len();
-        if prefix != 0 {
-            name.drain(..prefix);
-        }
-        // A fieldless enum's discriminant, 0 to 4.
-        self.0[ns as usize].insert(name, value);
-    }
-
-    /// The binding of `name` in `ns`, if any.
-    pub(crate) fn lookup(&self, ns: Ns, name: &str) -> Option<&Bind> {
-        // A fieldless enum's discriminant, 0 to 4.
-        self.0[ns as usize].get(ns.key(name))
-    }
-}
-
-/// A resolved name reference.
-#[derive(Clone, Copy)]
-pub(crate) struct Resolved {
+struct Resolved {
     domain: Domain,
     ns: Ns,
-    origin: usize,
+    id: BindingId,
     target: Option<usize>,
-}
-
-/// One segment of an alias target.
-#[derive(Clone, Debug)]
-pub(crate) struct TargetSeg {
-    /// The written segment spelling.
-    pub(crate) name: String,
-    /// The domain, origin and namespace of a module the segment names.
-    pub(crate) origin: Option<(Domain, usize, Ns)>,
-}
-
-/// The written target of a `use` alias, alias steps resolved.
-#[derive(Clone, Debug)]
-pub(crate) struct Target {
-    /// A leading `::` that survived unrooting.
-    pub(crate) rooted: bool,
-    /// The target path.
-    pub(crate) segments: Vec<TargetSeg>,
-}
-
-/// One resolution of a written `use` path segment.
-pub(crate) enum FirstSeg<'a> {
-    /// A stored alias target.
-    Alias(&'a Target),
-    /// A lexical module identity.
-    Module(Domain, usize),
-    /// An opaque unresolved path.
-    Free,
-}
-
-/// The lexical environment a candidate normalizes against, borrowed.
-pub(crate) struct Inherited<'env> {
-    /// The scope stack of the enclosing syntax, outermost first.
-    pub(crate) frames: &'env [Frame],
-    /// The item frames of enclosing local modules, by module origin.
-    pub(crate) mod_frames: &'env BTreeMap<usize, Frame>,
-    /// The written targets of enclosing `use` aliases.
-    pub(crate) targets: &'env [Target],
 }
 
 /// The namespace letter of a canonical name.
@@ -138,19 +51,19 @@ const fn ns_letter(ns: Ns) -> char {
     }
 }
 
-/// A block-local binder's canonical name.
+/// A block-local binder's canonical name in a context pass.
 fn local_name(ns: Ns, number: usize) -> String {
     format!("_l{}{}", ns_letter(ns), number)
 }
 
-/// An inherited reference's canonical name.
+/// An inherited reference's first-reference canonical name.
 fn inherited_name(ns: Ns, number: usize) -> String {
     format!("_i{}{}", ns_letter(ns), number)
 }
 
 /// Point `ident` at `canon`, keeping its span.
 fn rename(ident: &mut Ident, canon: &str) {
-    *ident = Ident::new(canon, ident.span());
+    *ident = new_ident(canon, ident.span());
 }
 
 /// Walk a written `use` prefix, resolving its first segment and copying the rest.
@@ -167,10 +80,10 @@ fn resolve_prefix<'a>(
                 rooted = target.rooted;
                 segments.extend(target.segments.iter().cloned());
             }
-            FirstSeg::Module(domain, origin) => {
+            FirstSeg::Module(domain, id) => {
                 segments.push(TargetSeg {
                     name: first.clone(),
-                    origin: Some((domain, origin, Ns::Type)),
+                    origin: Some((domain, id, Ns::Type)),
                 });
             }
             FirstSeg::Free => {
@@ -214,11 +127,11 @@ pub(crate) fn resolve_target_path<'a>(
     if prefix.is_empty() {
         return match resolve(leaf.as_str()) {
             FirstSeg::Alias(target) => (target.rooted, target.segments.clone()),
-            FirstSeg::Module(domain, origin) => (
+            FirstSeg::Module(domain, id) => (
                 rooted,
                 vec![TargetSeg {
                     name: leaf.clone(),
-                    origin: Some((domain, origin, Ns::Type)),
+                    origin: Some((domain, id, Ns::Type)),
                 }],
             ),
             FirstSeg::Free => (
@@ -239,7 +152,7 @@ pub(crate) fn resolve_target_path<'a>(
 }
 
 /// The empty module-frame table of a whole-file pass.
-static EMPTY_MOD_FRAMES: BTreeMap<usize, Frame> = BTreeMap::new();
+static EMPTY_MOD_FRAMES: BTreeMap<BindingId, Frame> = BTreeMap::new();
 
 /// The canonicalizer, one mutable traversal per pass.
 #[expect(
@@ -249,26 +162,42 @@ static EMPTY_MOD_FRAMES: BTreeMap<usize, Frame> = BTreeMap::new();
 pub(crate) struct Renamer<'env> {
     /// The scope stack of the pass, the base frame first.
     frames: Vec<Frame>,
-    /// The item frames of local modules, by module origin.
-    mod_frames: BTreeMap<usize, Frame>,
+    /// The item frames of local modules, keyed by the module's binding id.
+    mod_frames: BTreeMap<BindingId, Frame>,
     /// The written targets of the pass's own `use` aliases.
     targets: Vec<Target>,
-    /// The next origin identity.
-    origin: usize,
+    /// The next binding id to hand out, above any inherited id.
+    next_id: usize,
+    /// The positional counter for local canonical names.
+    counter: usize,
     /// True when normalizing one candidate against an inherited environment.
     context: bool,
     /// The inherited environment of a candidate pass.
     inherited: Inherited<'env>,
-    /// First-reference numbers of inherited origins.
-    inherited_numbers: BTreeMap<usize, usize>,
+    /// The seed frame of a seeded view, outermost inherited.
+    seed: Option<&'env Frame>,
+    /// The enclosing generics frame of a seeded view.
+    generics: Option<&'env Frame>,
+    /// The `Self` frame of a seeded method or trait view.
+    self_frame: Option<Frame>,
+    /// First-reference numbers of inherited binding ids.
+    inherited_numbers: BTreeMap<BindingId, usize>,
+    /// The local canon of every local binding id.
+    local_canons: BTreeMap<BindingId, String>,
     /// The self type of the enclosing impl, expanded in type position.
     self_ty: Option<syn::Type>,
+    /// The resolutions of the impl self type, restored onto its clones.
+    self_ty_resolutions: Vec<TypeResolution>,
     /// A type position, where a path reads the type namespace only.
     in_type: bool,
     /// A bare `<T>` was just visited, so the next path names associated items of `T`.
     after_bare_qself: bool,
     /// Raw-involved identifiers in macro input keep their token spelling.
     opaque_tokens: bool,
+    /// The resolutions collected for the macro arguments being rewritten.
+    macro_origins: Option<Vec<Resolution>>,
+    /// The reference provenance the pass recorded.
+    facts: ReferenceFacts,
 }
 
 impl<'env> Renamer<'env> {
@@ -277,18 +206,26 @@ impl<'env> Renamer<'env> {
             frames: vec![Frame::default()],
             mod_frames: BTreeMap::new(),
             targets: Vec::new(),
-            origin: 0,
+            next_id: 0,
+            counter: 0,
             context,
             inherited,
+            seed: None,
+            generics: None,
+            self_frame: None,
             inherited_numbers: BTreeMap::new(),
+            local_canons: BTreeMap::new(),
             self_ty: None,
+            self_ty_resolutions: Vec::new(),
             in_type: false,
             after_bare_qself: false,
             opaque_tokens: false,
+            macro_origins: None,
+            facts: ReferenceFacts::default(),
         }
     }
 
-    /// The whole-file pass.
+    /// The whole-file pass, no inherited environment.
     fn new() -> Self {
         Self::base(
             false,
@@ -302,7 +239,45 @@ impl<'env> Renamer<'env> {
 
     /// One candidate pass against the inherited environment.
     pub(crate) fn contextual(inherited: Inherited<'env>) -> Self {
-        Self::base(true, inherited)
+        let next_id = inherited_max_id(&inherited);
+        let mut renamer = Self::base(true, inherited);
+        renamer.next_id = next_id;
+        renamer
+    }
+
+    /// A file pass with the optional seeded environment of a function view.
+    fn seeded(
+        seed: Option<&'env Frame>,
+        generics: Option<&'env Frame>,
+        self_canon: Option<String>,
+    ) -> Self {
+        let mut renamer = Self::new();
+        if let Some(frame) = seed {
+            renamer.seed = Some(frame);
+            renamer.next_id = renamer.next_id.max(frame.next_id());
+        }
+        if let Some(frame) = generics {
+            renamer.generics = Some(frame);
+            renamer.next_id = renamer.next_id.max(frame.next_id());
+        }
+        if let Some(canon) = self_canon {
+            let id = BindingId(renamer.next_id);
+            renamer.next_id += 1;
+            let mut frame = Frame::default();
+            frame.bind(
+                Ns::Type,
+                "Self",
+                Binding {
+                    id,
+                    canon,
+                    origin: Origin::SelfTy,
+                    target: None,
+                    raw: false,
+                },
+            );
+            renamer.self_frame = Some(frame);
+        }
+        renamer
     }
 
     /// Push a scope frame.
@@ -315,139 +290,240 @@ impl<'env> Renamer<'env> {
         self.frames.pop();
     }
 
-    /// Bind `name` to `bind` in the current frame.
-    fn top_bind(&mut self, ns: Ns, name: &str, bind: Bind) {
+    /// Bind `name` to `binding` in the current frame.
+    fn top_bind(&mut self, ns: Ns, name: &str, binding: Binding) {
         self.frames
             .last_mut()
             .expect("a scope frame")
-            .bind(ns, name.to_string(), bind);
+            .bind(ns, name, binding);
     }
 
-    /// Allocate the next binding origin.
-    fn new_bind(&mut self) -> Bind {
-        let origin = self.origin;
-        self.origin += 1;
-        Bind {
+    /// Allocate the next binding id.
+    fn alloc_id(&mut self) -> BindingId {
+        let id = BindingId(self.next_id);
+        self.next_id += 1;
+        id
+    }
+
+    /// The next local canonical name, positional in the traversal.
+    fn local_canon(&mut self, ns: Ns) -> String {
+        let canon = if self.context {
+            local_name(ns, self.counter)
+        } else {
+            format!("_canon_{}", self.counter)
+        };
+        self.counter += 1;
+        canon
+    }
+
+    /// Bind `name` in the current frame and return the new binding.
+    fn bind(&mut self, ns: Ns, name: &str, origin: Origin) -> Binding {
+        let id = self.alloc_id();
+        let canon = self.local_canon(ns);
+        let binding = Binding {
+            id,
+            canon: canon.clone(),
             origin,
             target: None,
             raw: false,
-        }
+        };
+        self.local_canons.insert(id, canon);
+        self.top_bind(ns, name, binding.clone());
+        binding
     }
 
-    /// Allocate one origin shared by a value-and-type binding.
-    fn new_bind_value_and_type(&mut self, target: Option<usize>) -> Bind {
-        let origin = self.origin;
-        self.origin += 1;
-        Bind {
+    /// Share one id and canon across the value and type namespaces.
+    fn bind_value_and_type(
+        &mut self,
+        name: &str,
+        target: Option<usize>,
+        origin: Origin,
+    ) -> Binding {
+        let id = self.alloc_id();
+        let canon = self.local_canon(Ns::Value);
+        let binding = Binding {
+            id,
+            canon: canon.clone(),
             origin,
             target,
             raw: false,
-        }
-    }
-
-    /// Bind `name` in the current frame.
-    fn bind(&mut self, ns: Ns, name: &str) -> Bind {
-        let bind = self.new_bind();
-        self.top_bind(ns, name, bind);
-        bind
-    }
-
-    /// Share one origin across the value and type namespaces.
-    fn bind_value_and_type(&mut self, name: &str, target: Option<usize>) -> Bind {
-        let bind = self.new_bind_value_and_type(target);
-        self.top_bind(Ns::Value, name, bind);
-        self.top_bind(Ns::Type, name, bind);
-        bind
+        };
+        self.local_canons.insert(id, canon);
+        self.top_bind(Ns::Value, name, binding.clone());
+        self.top_bind(Ns::Type, name, binding.clone());
+        binding
     }
 
     /// Bind `ident` in the current frame and rename it.
-    fn bind_ident(&mut self, ns: Ns, ident: &mut Ident) {
-        let bind = self.bind(ns, &ident.to_string());
-        rename(ident, &self.identity_name(Domain::Local, ns, bind.origin));
+    fn bind_ident(&mut self, ns: Ns, origin: Origin, ident: &mut Ident) {
+        let name = ident.to_string();
+        let binding = self.bind(ns, &name, origin);
+        rename(ident, &binding.canon);
     }
 
     /// Rename `ident` to the canon it already holds in the current frame,
     /// else bind a new one.
-    fn rename_binder(&mut self, ns: Ns, ident: &mut Ident) -> usize {
+    fn rename_binder(&mut self, ns: Ns, origin: Origin, ident: &mut Ident) -> BindingId {
         let name = ident.to_string();
-        let origin = match self.frames.last().and_then(|frame| frame.lookup(ns, &name)) {
-            Some(bind) => bind.origin,
-            None => self.bind(ns, &name).origin,
-        };
-        rename(ident, &self.identity_name(Domain::Local, ns, origin));
-        origin
-    }
-
-    /// The canonical name of a binding reference, numbering first references.
-    fn identity_name(&mut self, domain: Domain, ns: Ns, origin: usize) -> String {
-        match domain {
-            Domain::Local => self.local_identity_name(ns, origin),
-            Domain::Inherited => inherited_name(ns, self.inherited_number(origin)),
-        }
-    }
-
-    fn local_identity_name(&self, ns: Ns, origin: usize) -> String {
-        if self.context {
-            local_name(ns, origin)
+        if let Some(binding) = self.frames.last().and_then(|frame| frame.lookup(ns, &name)) {
+            rename(ident, &binding.canon);
+            binding.id
         } else {
-            format!("_canon_{origin}")
+            let binding = self.bind(ns, &name, origin);
+            rename(ident, &binding.canon);
+            binding.id
         }
     }
 
-    /// The first-reference number of an inherited origin.
-    fn inherited_number(&mut self, origin: usize) -> usize {
+    /// The canonical name a resolved reference renders.
+    fn render(&mut self, resolved: &Resolved) -> String {
+        match resolved.domain {
+            Domain::Local => self
+                .local_canons
+                .get(&resolved.id)
+                .expect("a local binding")
+                .clone(),
+            Domain::Inherited => {
+                if self.context {
+                    inherited_name(resolved.ns, self.inherited_number(resolved.id))
+                } else {
+                    self.inherited_canon(resolved.id)
+                }
+            }
+        }
+    }
+
+    /// The seed canonical name of an inherited binding id, scanned across
+    /// the inherited frames.
+    fn inherited_canon(&self, id: BindingId) -> String {
+        for frame in self
+            .self_frame
+            .iter()
+            .chain(self.generics)
+            .chain(self.seed)
+            .chain(self.inherited.frames.iter())
+        {
+            for ns in [Ns::Value, Ns::Type, Ns::Lifetime, Ns::Label, Ns::Macro] {
+                if let Some(binding) = frame.bindings(ns).values().find(|binding| binding.id == id)
+                {
+                    return binding.canon.clone();
+                }
+            }
+        }
+        unreachable!("an inherited binding resolved by lookup")
+    }
+
+    /// The first-reference number of an inherited binding id.
+    fn inherited_number(&mut self, id: BindingId) -> usize {
         let table = &mut self.inherited_numbers;
-        if let Some(number) = table.get(&origin) {
+        if let Some(number) = table.get(&id) {
             return *number;
         }
         let number = table.len();
-        table.insert(origin, number);
+        table.insert(id, number);
         number
     }
 
-    /// Nearest-binding lookup across the pass's frames and the inherited
-    /// frames, namespace priority first.
+    fn resolved(domain: Domain, ns: Ns, binding: &Binding) -> Resolved {
+        Resolved {
+            domain,
+            ns,
+            id: binding.id,
+            target: binding.target,
+        }
+    }
+
+    /// Nearest-binding lookup across the local and inherited frames,
+    /// namespace priority first.
     fn lookup(&self, ns: &[Ns], name: &str) -> Option<Resolved> {
         for ns in ns {
             for frame in self.frames.iter().rev() {
-                if let Some(bind) = frame.lookup(*ns, name) {
-                    if self.opaque_tokens && (bind.raw || name.starts_with("r#")) {
+                if let Some(binding) = frame.lookup(*ns, name) {
+                    if self.opaque_tokens && (binding.raw || name.starts_with("r#")) {
                         return None;
                     }
-                    return Some(Resolved {
-                        domain: Domain::Local,
-                        ns: *ns,
-                        origin: bind.origin,
-                        target: bind.target,
-                    });
+                    return Some(Self::resolved(Domain::Local, *ns, binding));
                 }
             }
-            for frame in self.inherited.frames.iter().rev() {
-                if let Some(bind) = frame.lookup(*ns, name) {
-                    if self.opaque_tokens && (bind.raw || name.starts_with("r#")) {
+            for frame in self
+                .self_frame
+                .iter()
+                .chain(self.generics)
+                .chain(self.seed)
+                .chain(self.inherited.frames.iter())
+            {
+                if let Some(binding) = frame.lookup(*ns, name) {
+                    if self.opaque_tokens && (binding.raw || name.starts_with("r#")) {
                         return None;
                     }
-                    return Some(Resolved {
-                        domain: Domain::Inherited,
-                        ns: *ns,
-                        origin: bind.origin,
-                        target: bind.target,
-                    });
+                    return Some(Self::resolved(Domain::Inherited, *ns, binding));
                 }
             }
         }
         None
     }
 
-    /// Resolve a bare reference without expanding imported paths.
+    /// The provenance of the reference retained by normalization.
+    fn resolution(&self, ns: &[Ns], name: &str) -> Resolution {
+        let Some(resolved) = self.lookup(ns, name) else {
+            return Resolution::Unresolved;
+        };
+        let domain = if let Some(index) = resolved.target {
+            let target = self.target_of(resolved.domain, index);
+            if target.rooted {
+                return Resolution::Unresolved;
+            }
+            let Some((domain, _, _)) = target.segments.first().and_then(|segment| segment.origin)
+            else {
+                return Resolution::Unresolved;
+            };
+            if domain == Domain::Inherited {
+                return Resolution::Unresolved;
+            }
+            domain
+        } else {
+            resolved.domain
+        };
+        match domain {
+            Domain::Local => Resolution::Owned,
+            Domain::Inherited => Resolution::Inherited,
+        }
+    }
+
+    /// Record one path's resolution, into the macro collector when nested.
+    fn record_path(&mut self, path: &syn::Path, ns: &[Ns]) {
+        let resolution = path
+            .segments
+            .first()
+            .filter(|_| path.leading_colon.is_none())
+            .map(|head| self.resolution(ns, &head.ident.to_string()))
+            .unwrap_or_default();
+        if let Some(origins) = &mut self.macro_origins {
+            origins.push(resolution);
+        } else {
+            self.facts
+                .paths
+                .insert(core::ptr::from_ref(path), resolution);
+        }
+    }
+
+    /// Record one token's resolution, into the macro collector only.
+    fn record_token(&mut self, ns: &[Ns], name: &str) {
+        if self.macro_origins.is_none() {
+            return;
+        }
+        let resolution = self.resolution(ns, name);
+        if let Some(origins) = &mut self.macro_origins {
+            origins.push(resolution);
+        }
+    }
+
+    /// Rename a bare reference through its nearest binder, if any.
     fn resolve(&mut self, ns: &[Ns], ident: &mut Ident) {
         if let Some(resolved) = self.lookup(ns, &ident.to_string())
             && resolved.target.is_none()
         {
-            rename(
-                ident,
-                &self.identity_name(resolved.domain, resolved.ns, resolved.origin),
-            );
+            rename(ident, &self.render(&resolved));
         }
     }
 
@@ -461,7 +537,7 @@ impl<'env> Renamer<'env> {
     /// Bind a loop or block label in the current frame.
     fn bind_label(&mut self, label: Option<&mut syn::Label>) {
         if let Some(label) = label {
-            self.bind_ident(Ns::Label, &mut label.name.ident);
+            self.bind_ident(Ns::Label, Origin::Label, &mut label.name.ident);
         }
     }
 
@@ -471,28 +547,45 @@ impl<'env> Renamer<'env> {
         self.resolve(&[Ns::Label], &mut lifetime.ident);
     }
 
-    /// Drop a leading `::` when no binding in the type namespace names
-    /// the path's first segment, `::std` and `std` then naming the same
-    /// crate.
+    /// Drop a leading `::` when no frame in the type namespace names the
+    /// path's first segment, `::std` and `std` then naming the same crate.
     fn unroot(&self, leading_colon: &mut Option<syn::Token![::]>, first: Option<&Ident>) {
-        if leading_colon.is_some()
-            && first.is_some_and(|first| {
-                let name = first.to_string();
-                self.frames
-                    .iter()
-                    .chain(self.inherited.frames)
-                    .all(|frame| frame.lookup(Ns::Type, &name).is_none())
-            })
-        {
+        if !leading_colon.is_some() {
+            return;
+        }
+        let Some(first) = first else {
+            return;
+        };
+        let name = first.to_string();
+        let bound = self
+            .frames
+            .iter()
+            .any(|frame| frame.lookup(Ns::Type, &name).is_some())
+            || self
+                .self_frame
+                .as_ref()
+                .is_some_and(|frame| frame.lookup(Ns::Type, &name).is_some())
+            || self
+                .generics
+                .is_some_and(|frame| frame.lookup(Ns::Type, &name).is_some())
+            || self
+                .seed
+                .is_some_and(|frame| frame.lookup(Ns::Type, &name).is_some())
+            || self
+                .inherited
+                .frames
+                .iter()
+                .any(|frame| frame.lookup(Ns::Type, &name).is_some());
+        if !bound {
             *leading_colon = None;
         }
     }
 
-    /// The module frame of `origin`, by domain.
-    fn module_frame(&self, domain: Domain, origin: usize) -> Option<&Frame> {
+    /// The module frame of `id`, by domain.
+    fn module_frame(&self, domain: Domain, id: BindingId) -> Option<&Frame> {
         match domain {
-            Domain::Local => self.mod_frames.get(&origin),
-            Domain::Inherited => self.inherited.mod_frames.get(&origin),
+            Domain::Local => self.mod_frames.get(&id),
+            Domain::Inherited => self.inherited.mod_frames.get(&id),
         }
     }
 
@@ -510,14 +603,15 @@ impl<'env> Renamer<'env> {
             &mut path.leading_colon,
             path.segments.first().map(|s| &s.ident),
         );
-        if path.leading_colon.is_some() {
-            return;
-        }
         let ns: &[Ns] = if self.in_type {
             &[Ns::Type]
         } else {
             &[Ns::Value, Ns::Type]
         };
+        self.record_path(path, ns);
+        if path.leading_colon.is_some() {
+            return;
+        }
         let Some(resolved) = path
             .segments
             .first()
@@ -533,7 +627,7 @@ impl<'env> Renamer<'env> {
                     target
                         .segments
                         .last()
-                        .and_then(|seg| seg.origin.map(|(domain, origin, _)| (domain, origin))),
+                        .and_then(|seg| seg.origin.map(|(domain, id, _)| (domain, id))),
                     self.render_target(target),
                 )
             };
@@ -550,13 +644,13 @@ impl<'env> Renamer<'env> {
             path.segments = rendered;
             path.leading_colon = rooted.then(Default::default);
         } else {
-            let name = self.identity_name(resolved.domain, resolved.ns, resolved.origin);
+            let name = self.render(&resolved);
             rename(
                 &mut path.segments.first_mut().expect("a first segment").ident,
                 &name,
             );
             self.chain_modules(
-                Some((resolved.domain, resolved.origin)),
+                Some((resolved.domain, resolved.id)),
                 ns,
                 path.segments.iter_mut().skip(1),
             );
@@ -572,8 +666,11 @@ impl<'env> Renamer<'env> {
             .segments
             .iter()
             .map(|seg| match seg.origin {
-                Some((Domain::Local, origin, seg_ns)) => syn::PathSegment {
-                    ident: Ident::new(&self.local_identity_name(seg_ns, origin), Span::call_site()),
+                Some((Domain::Local, id, _)) => syn::PathSegment {
+                    ident: Ident::new(
+                        self.local_canons.get(&id).expect("a local binding"),
+                        Span::call_site(),
+                    ),
                     arguments: syn::PathArguments::None,
                 },
                 // Inherited target spellings retain the imported association.
@@ -589,23 +686,23 @@ impl<'env> Renamer<'env> {
     /// Rename module members until the available module chain ends.
     fn chain_modules<'a>(
         &mut self,
-        mut current: Option<(Domain, usize)>,
+        mut current: Option<(Domain, BindingId)>,
         ns: &[Ns],
         segments: impl Iterator<Item = &'a mut syn::PathSegment>,
     ) {
         for segment in segments {
-            let hit = current.and_then(|(domain, origin)| {
-                self.module_frame(domain, origin)
+            let hit = current.and_then(|(domain, id)| {
+                self.module_frame(domain, id)
                     .and_then(|frame| {
                         module_member(frame, ns, &segment.ident.to_string(), self.opaque_tokens)
                     })
                     .map(|(member, member_ns)| ((domain, member), member_ns))
             });
             match hit {
-                Some(((Domain::Local, member), member_ns)) => {
+                Some(((Domain::Local, member), _)) => {
                     rename(
                         &mut segment.ident,
-                        &self.identity_name(Domain::Local, member_ns, member),
+                        self.local_canons.get(&member).expect("a local binding"),
                     );
                     current = self
                         .module_frame(Domain::Local, member)
@@ -636,6 +733,7 @@ impl<'env> Renamer<'env> {
                     } else {
                         &[Ns::Value, Ns::Type]
                     };
+                    self.record_token(ns, &ident.to_string());
                     self.resolve(ns, &mut ident);
                     proc_macro2::TokenTree::Ident(ident)
                 }
@@ -686,7 +784,7 @@ impl<'env> Renamer<'env> {
             Some(resolved) if resolved.target.is_some() => FirstSeg::Alias(
                 self.target_of(resolved.domain, resolved.target.expect("a target index")),
             ),
-            Some(resolved) => FirstSeg::Module(resolved.domain, resolved.origin),
+            Some(resolved) => FirstSeg::Module(resolved.domain, resolved.id),
             None => FirstSeg::Free,
         }
     }
@@ -711,7 +809,7 @@ impl<'env> Renamer<'env> {
                     let (rooted, segments) =
                         resolve_target_path(&|name| self.resolve_first_seg(name), rooted, prefix);
                     let target = self.store_target(rooted, segments);
-                    self.bind_value_and_type(alias, Some(target));
+                    self.bind_value_and_type(alias, Some(target), Origin::Use);
                 }
                 syn::UseTree::Name(name)
             }
@@ -751,12 +849,9 @@ impl<'env> Renamer<'env> {
                 resolve_target_path(&|name| self.resolve_first_seg(name), rooted, &path);
             self.store_target(rooted, segments)
         });
-        let bind = self.bind_value_and_type(&alias.to_string(), target);
+        let binding = self.bind_value_and_type(&alias.to_string(), target, Origin::Use);
         syn::UseTree::Rename(syn::UseRename {
-            rename: Ident::new(
-                &self.identity_name(Domain::Local, Ns::Value, bind.origin),
-                alias.span(),
-            ),
+            rename: Ident::new(&binding.canon, alias.span()),
             ident: ident.clone(),
             as_token: <syn::Token![as]>::default(),
         })
@@ -767,7 +862,7 @@ impl<'env> Renamer<'env> {
         let mut names = Vec::new();
         pattern_names(pat, &mut names);
         for name in &names {
-            self.bind(Ns::Value, name);
+            self.bind(Ns::Value, name, Origin::Let);
         }
         syn::visit_mut::visit_pat_mut(self, pat);
         rewrite_pat_bindings(self, pat);
@@ -785,7 +880,7 @@ impl<'env> Renamer<'env> {
         self.visit_attrs(attrs);
         self.push();
         for param in fn_param_names(sig.inputs.iter_mut()) {
-            self.bind(Ns::Value, &param);
+            self.bind(Ns::Value, &param, Origin::Parameter);
         }
         visit_fn_inputs(self, sig.inputs.iter_mut());
         syn::visit_mut::visit_return_type_mut(self, &mut sig.output);
@@ -804,7 +899,7 @@ impl<'env> Renamer<'env> {
         generics: &mut syn::Generics,
         attrs: &mut [syn::Attribute],
     ) {
-        self.rename_binder(Ns::Type, ident);
+        self.rename_binder(Ns::Type, Origin::Item, ident);
         begin_generics(self, generics);
         self.visit_attrs(attrs);
     }
@@ -833,6 +928,23 @@ impl<'env> Renamer<'env> {
             }
         }
     }
+
+    /// The reference provenance the pass recorded, consumed after the visit.
+    pub(crate) fn into_reference_facts(self) -> ReferenceFacts {
+        self.facts
+    }
+}
+
+/// The largest binding id across the inherited frames, the local ids start
+/// above it.
+fn inherited_max_id(inherited: &Inherited<'_>) -> usize {
+    inherited
+        .frames
+        .iter()
+        .chain(inherited.mod_frames.values())
+        .map(Frame::next_id)
+        .max()
+        .unwrap_or(0)
 }
 
 /// Macro arguments as a comma list or the `elem; count` of `vec!`.
@@ -881,9 +993,15 @@ impl quote::ToTokens for MacroArgs {
 fn push_format_name(renamer: &mut Renamer<'_>, name: &str, out: &mut String) {
     match renamer.lookup(&[Ns::Value], name) {
         Some(resolved) if resolved.target.is_none() => {
-            out.push_str(&renamer.identity_name(resolved.domain, resolved.ns, resolved.origin));
+            renamer.record_token(&[Ns::Value], name);
+            out.push_str(&renamer.render(&resolved));
         }
-        _ => out.push_str(name),
+        _ => {
+            if let Some(origins) = &mut renamer.macro_origins {
+                origins.push(Resolution::Unresolved);
+            }
+            out.push_str(name);
+        }
     }
 }
 
@@ -947,10 +1065,11 @@ fn rewrite_format_str(renamer: &mut Renamer<'_>, lit: &syn::LitStr) -> syn::LitS
     syn::LitStr::new(&out, lit.span())
 }
 
-/// Alpha-normalize a parsed file in place.
-pub(crate) fn normalize_file(file: &mut syn::File) {
-    let mut renamer = Renamer::new();
+/// Alpha-normalize a parsed file in place, returning the reference facts.
+pub(crate) fn normalize_file(file: &mut syn::File, options: Options<'_>) -> ReferenceFacts {
+    let mut renamer = Renamer::seeded(options.seed, options.generics, options.self_canon);
     renamer.visit_file_mut(file);
+    renamer.into_reference_facts()
 }
 
 /// True for an ident pattern that names a unit struct, variant, or
@@ -1048,6 +1167,14 @@ pub(crate) fn item_binding(item: &syn::Item) -> Option<(Ns, &Ident)> {
     })
 }
 
+/// The origin of an item the prebind recognizes.
+fn item_origin(item: &syn::Item) -> Origin {
+    match item {
+        syn::Item::Type(_) => Origin::TypeAlias,
+        _ => Origin::Item,
+    }
+}
+
 /// Pre-bind item names so a use may precede its definition, skipping
 /// `macro_rules!` and `use`, which are visible only after their line.
 fn prebind<'a>(renamer: &mut Renamer<'_>, items: impl Iterator<Item = &'a syn::Item>) {
@@ -1055,7 +1182,8 @@ fn prebind<'a>(renamer: &mut Renamer<'_>, items: impl Iterator<Item = &'a syn::I
         let Some((ns, ident)) = item_binding(item) else {
             continue;
         };
-        let bind = renamer.bind(ns, &ident.to_string());
+        let origin = item_origin(item);
+        let binding = renamer.bind(ns, &ident.to_string(), origin);
         if let syn::Item::Mod(syn::ItemMod {
             content: Some((_, items)),
             ..
@@ -1064,18 +1192,23 @@ fn prebind<'a>(renamer: &mut Renamer<'_>, items: impl Iterator<Item = &'a syn::I
             renamer.push();
             prebind(renamer, items.iter());
             let frame = renamer.frames.pop().expect("a scope frame");
-            renamer.mod_frames.insert(bind.origin, frame);
+            renamer.mod_frames.insert(binding.id, frame);
         }
     }
 }
 
 /// The member of a module frame that `name` names, in namespace priority
 /// order.
-fn module_member(frame: &Frame, ns: &[Ns], name: &str, opaque_tokens: bool) -> Option<(usize, Ns)> {
+fn module_member(
+    frame: &Frame,
+    ns: &[Ns],
+    name: &str,
+    opaque_tokens: bool,
+) -> Option<(BindingId, Ns)> {
     for ns in ns {
         if let Some(bind) = frame.lookup(*ns, name) {
             return (!opaque_tokens || (!bind.raw && !name.starts_with("r#")))
-                .then_some((bind.origin, *ns));
+                .then_some((bind.id, *ns));
         }
     }
     None
@@ -1121,18 +1254,16 @@ fn begin_generics(renamer: &mut Renamer<'_>, generics: &mut syn::Generics) {
     for param in &mut generics.params {
         match param {
             syn::GenericParam::Lifetime(lifetime) => {
-                renamer.bind_ident(Ns::Lifetime, &mut lifetime.lifetime.ident);
+                renamer.bind_ident(Ns::Lifetime, Origin::Lifetime, &mut lifetime.lifetime.ident);
             }
             syn::GenericParam::Type(ty_param) => {
-                renamer.bind_ident(Ns::Type, &mut ty_param.ident);
+                renamer.bind_ident(Ns::Type, Origin::Generic, &mut ty_param.ident);
             }
             syn::GenericParam::Const(r#const) => {
                 // A bare reference in `Foo<N>` reads as a type argument.
-                let bind = renamer.bind_value_and_type(&r#const.ident.to_string(), None);
-                rename(
-                    &mut r#const.ident,
-                    &renamer.identity_name(Domain::Local, Ns::Value, bind.origin),
-                );
+                let binding =
+                    renamer.bind_value_and_type(&r#const.ident.to_string(), None, Origin::Generic);
+                rename(&mut r#const.ident, &binding.canon);
             }
         }
     }
@@ -1162,6 +1293,80 @@ fn walk_let_cond(renamer: &mut Renamer<'_>, cond: &mut syn::Expr) {
 fn bind_let(renamer: &mut Renamer<'_>, let_expr: &mut syn::ExprLet) {
     syn::visit_mut::visit_expr_mut(renamer, &mut let_expr.expr);
     renamer.bind_pat(&mut let_expr.pat);
+}
+
+enum TypeResolution {
+    Path(Resolution),
+    Macro(Vec<Resolution>),
+}
+
+fn type_resolutions(facts: &ReferenceFacts, ty: &syn::Type) -> Vec<TypeResolution> {
+    struct Collect<'a> {
+        facts: &'a ReferenceFacts,
+        resolutions: Vec<TypeResolution>,
+    }
+    impl<'ast> Visit<'ast> for Collect<'_> {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            self.resolutions.push(TypeResolution::Path(
+                self.facts
+                    .paths
+                    .get(&core::ptr::from_ref(path))
+                    .copied()
+                    .unwrap_or_default(),
+            ));
+            syn::visit::visit_path(self, path);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            self.resolutions.push(TypeResolution::Macro(
+                self.facts
+                    .macros
+                    .get(&core::ptr::from_ref(mac))
+                    .cloned()
+                    .unwrap_or_default(),
+            ));
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+    let mut collect = Collect {
+        facts,
+        resolutions: Vec::new(),
+    };
+    collect.visit_type(ty);
+    collect.resolutions
+}
+
+fn restore_type(facts: &mut ReferenceFacts, ty: &syn::Type, resolutions: &[TypeResolution]) {
+    struct Restore<'a> {
+        facts: &'a mut ReferenceFacts,
+        resolutions: core::slice::Iter<'a, TypeResolution>,
+    }
+    impl<'ast> Visit<'ast> for Restore<'_> {
+        fn visit_path(&mut self, path: &'ast syn::Path) {
+            let Some(TypeResolution::Path(resolution)) = self.resolutions.next() else {
+                unreachable!("cloned types preserve path traversal");
+            };
+            self.facts
+                .paths
+                .insert(core::ptr::from_ref(path), *resolution);
+            syn::visit::visit_path(self, path);
+        }
+
+        fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+            let Some(TypeResolution::Macro(resolutions)) = self.resolutions.next() else {
+                unreachable!("cloned types preserve macro traversal");
+            };
+            self.facts
+                .macros
+                .insert(core::ptr::from_ref(mac), resolutions.clone());
+            syn::visit::visit_macro(self, mac);
+        }
+    }
+    let mut restore = Restore {
+        facts,
+        resolutions: resolutions.iter(),
+    };
+    restore.visit_type(ty);
 }
 
 impl VisitMut for Renamer<'_> {
@@ -1195,7 +1400,7 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_fn_mut(&mut self, item: &mut syn::ItemFn) {
-        self.rename_binder(Ns::Value, &mut item.sig.ident);
+        self.rename_binder(Ns::Value, Origin::Item, &mut item.sig.ident);
         self.visit_fn(&mut item.attrs, &mut item.sig, Some(&mut item.block));
     }
 
@@ -1234,12 +1439,21 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_trait_mut(&mut self, item: &mut syn::ItemTrait) {
-        let origin = self.rename_binder(Ns::Type, &mut item.ident);
+        let binding = self.rename_binder(Ns::Type, Origin::Item, &mut item.ident);
+        let id = self.alloc_id();
+        let canon = self
+            .local_canons
+            .get(&binding)
+            .cloned()
+            .expect("a local binding");
+        self.local_canons.insert(id, canon.clone());
         self.top_bind(
             Ns::Type,
             "Self",
-            Bind {
-                origin,
+            Binding {
+                id,
+                canon,
+                origin: Origin::SelfTy,
                 target: None,
                 raw: false,
             },
@@ -1265,11 +1479,16 @@ impl VisitMut for Renamer<'_> {
         if let Some(name) = single_segment_type_name(&item.self_ty)
             && let Some(resolved) = self.lookup(&[Ns::Type], &name)
         {
+            let id = self.alloc_id();
+            let canon = self.render(&resolved);
+            self.local_canons.insert(id, canon.clone());
             self.top_bind(
                 Ns::Type,
                 "Self",
-                Bind {
-                    origin: resolved.origin,
+                Binding {
+                    id,
+                    canon,
+                    origin: Origin::SelfTy,
                     target: None,
                     raw: false,
                 },
@@ -1287,6 +1506,8 @@ impl VisitMut for Renamer<'_> {
             self.in_type = outer;
         }
         syn::visit_mut::visit_type_mut(self, &mut item.self_ty);
+        let resolutions = type_resolutions(&self.facts, &item.self_ty);
+        let outer_resolutions = core::mem::replace(&mut self.self_ty_resolutions, resolutions);
         let outer = self.self_ty.take();
         if !self.context {
             self.self_ty = Some(item.self_ty.as_ref().clone());
@@ -1295,6 +1516,7 @@ impl VisitMut for Renamer<'_> {
             syn::visit_mut::visit_impl_item_mut(self, impl_item);
         }
         self.self_ty = outer;
+        self.self_ty_resolutions = outer_resolutions;
         if has_generics {
             self.pop();
         }
@@ -1302,14 +1524,14 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_const_mut(&mut self, item: &mut syn::ItemConst) {
-        self.rename_binder(Ns::Value, &mut item.ident);
+        self.rename_binder(Ns::Value, Origin::Item, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
     }
 
     fn visit_item_static_mut(&mut self, item: &mut syn::ItemStatic) {
-        self.rename_binder(Ns::Value, &mut item.ident);
+        self.rename_binder(Ns::Value, Origin::Item, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
@@ -1317,7 +1539,7 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_item_macro_mut(&mut self, item: &mut syn::ItemMacro) {
         if let Some(ident) = item.ident.as_mut() {
-            self.bind_ident(Ns::Macro, ident);
+            self.bind_ident(Ns::Macro, Origin::MacroRule, ident);
             self.visit_attrs(&mut item.attrs);
         } else {
             self.visit_attrs(&mut item.attrs);
@@ -1342,16 +1564,16 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
-        let origin = self.rename_binder(Ns::Type, &mut item.ident);
+        let id = self.rename_binder(Ns::Type, Origin::Item, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
-            let frame = self.mod_frames.remove(&origin).unwrap_or_default();
+            let frame = self.mod_frames.remove(&id).unwrap_or_default();
             self.frames.push(frame);
             for sub_item in items.iter_mut() {
                 syn::visit_mut::visit_item_mut(self, sub_item);
             }
             let frame = self.frames.pop().expect("a scope frame");
-            self.mod_frames.insert(origin, frame);
+            self.mod_frames.insert(id, frame);
         }
     }
 
@@ -1365,7 +1587,7 @@ impl VisitMut for Renamer<'_> {
             pattern_names(input, &mut names);
         }
         for name in &names {
-            self.bind(Ns::Value, name);
+            self.bind(Ns::Value, name, Origin::Closure);
         }
         for input in &mut closure.inputs {
             syn::visit_mut::visit_pat_mut(self, input);
@@ -1460,6 +1682,8 @@ impl VisitMut for Renamer<'_> {
             &mut mac.path.leading_colon,
             mac.path.segments.first().map(|s| &s.ident),
         );
+        self.record_path(&mac.path, &[Ns::Macro]);
+        let parent = self.macro_origins.replace(Vec::new());
         if let Some(first) = mac.path.segments.first_mut() {
             self.resolve(&[Ns::Macro], &mut first.ident);
         }
@@ -1467,6 +1691,13 @@ impl VisitMut for Renamer<'_> {
         let outer = core::mem::replace(&mut self.opaque_tokens, true);
         mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
         self.opaque_tokens = outer;
+        let origins = self.macro_origins.take().expect("a macro origin collector");
+        if let Some(mut parent) = parent {
+            parent.extend(origins);
+            self.macro_origins = Some(parent);
+        } else {
+            self.facts.macros.insert(core::ptr::from_ref(mac), origins);
+        }
     }
 
     fn visit_type_path_mut(&mut self, node: &mut syn::TypePath) {
@@ -1483,6 +1714,7 @@ impl VisitMut for Renamer<'_> {
             && path.path.is_ident("Self")
         {
             *ty = self_ty.clone();
+            restore_type(&mut self.facts, ty, &self.self_ty_resolutions);
             return;
         }
         syn::visit_mut::visit_type_mut(self, ty);
@@ -1517,7 +1749,7 @@ impl VisitMut for Renamer<'_> {
     fn visit_bound_lifetimes_mut(&mut self, node: &mut syn::BoundLifetimes) {
         for param in &mut node.lifetimes {
             if let syn::GenericParam::Lifetime(lifetime) = param {
-                self.bind_ident(Ns::Lifetime, &mut lifetime.lifetime.ident);
+                self.bind_ident(Ns::Lifetime, Origin::Lifetime, &mut lifetime.lifetime.ident);
             }
         }
         syn::visit_mut::visit_bound_lifetimes_mut(self, node);

@@ -23,6 +23,8 @@ assert_ne!(
 
 `canonicalize` and `canonicalize_failing` return `CanonicalForm`. Its key is opaque and cannot be parsed as Rust, with `Eq`, `Hash` and `Display` sharing that key. `leaf_tokens()` counts canonical leaves, while `body_units()` counts body paths, lifetimes and operators as one and excludes commas and delimiters.
 
+`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves qualified inherited references and owner generics while alpha-renaming declarations inside the view.
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.
