@@ -527,7 +527,7 @@ pub struct Report {
 
 #[cfg(feature = "std")]
 /// Exit status for a finished scan.
-#[must_use = "Use the scan result as the process exit status"]
+#[must_use = "return the status from `main`"]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     use std::process::ExitCode;
     if (report.groups.is_empty() && report.context_groups.is_empty()) || no_fail {
