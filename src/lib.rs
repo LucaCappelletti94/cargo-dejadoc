@@ -18,6 +18,7 @@ use std::path::{Path, PathBuf};
 mod cfg;
 #[cfg(feature = "std")]
 mod config;
+mod contexts;
 #[cfg(feature = "std")]
 mod discover;
 pub mod extract;
@@ -30,10 +31,12 @@ mod report;
 /// the path as written. Yields the resolved path and text.
 type IncludeRead<'a> = dyn Fn(&str, &str) -> Option<(String, String)> + 'a;
 pub use report::{annotations, human, json};
+pub use syn_canon::ContextKind;
 
 /// Scan parameters. In `run`, unset values fall back to `.dejadoc.toml`,
 /// then to defaults.
 #[derive(Debug, Clone, Default)]
+#[expect(clippy::struct_excessive_bools, reason = "independent scan switches")]
 pub struct Dejadoc {
     package: Option<String>,
     all_targets: bool,
@@ -41,6 +44,8 @@ pub struct Dejadoc {
     min_tokens: Option<usize>,
     functions: bool,
     fn_min_tokens: Option<usize>,
+    context_blocks: bool,
+    context_min_tokens: Option<usize>,
     scan_generated: bool,
     generated_markers: Vec<String>,
 }
@@ -89,6 +94,20 @@ impl Dejadoc {
         self
     }
 
+    /// Run approximate lexical context-block detection, off by default.
+    #[must_use]
+    pub fn context_blocks(mut self) -> Self {
+        self.context_blocks = true;
+        self
+    }
+
+    /// Ignore lexical contexts below this canonical weighted-token count.
+    #[must_use]
+    pub fn context_min_tokens(mut self, n: usize) -> Self {
+        self.context_min_tokens = Some(n);
+        self
+    }
+
     /// Scan files marked generated, which are skipped otherwise.
     #[must_use]
     pub fn scan_generated(mut self) -> Self {
@@ -121,6 +140,8 @@ impl Dejadoc {
             min_tokens: self.min_tokens.or(file.min_tokens),
             functions: self.functions || file.functions == Some(true),
             fn_min_tokens: self.fn_min_tokens.or(file.fn_min_tokens),
+            context_blocks: self.context_blocks || file.context_blocks == Some(true),
+            context_min_tokens: self.context_min_tokens.or(file.context_min_tokens),
             scan_generated: self.scan_generated || file.scan_generated == Some(true),
             generated_markers: self
                 .generated_markers
@@ -131,10 +152,7 @@ impl Dejadoc {
         }
     }
 
-    /// Scan `root` (any directory inside the workspace) and report
-    /// duplicated doctests. Discovery, parsing and extraction run on the
-    /// thread `group` would use, so a deeply nested source file does not
-    /// end the caller's stack.
+    /// Scan the workspace containing `root` on a large stack and report enabled duplicate categories.
     ///
     /// # Errors
     ///
@@ -188,14 +206,13 @@ impl Dejadoc {
     /// `read` resolves an `include_str!` doc splice, given the file that
     /// contains it and the path as written, to the resolved path and text.
     /// `package` filters the passed targets by name. Values loaded
-    /// through `config` apply here too. Functions canonicalize on the
-    /// calling thread, which parsed them.
+    /// through `config` apply here too. Functions and lexical contexts canonicalize on the calling thread.
     #[must_use]
     pub fn run_targets(self, root: &str, targets: &[TargetScan], read: &IncludeRead<'_>) -> Report {
         self.scan(root, targets, read, group)
     }
 
-    /// Doctests of `targets` grouped through `group_doctests`, then their functions.
+    /// Group doctests, then run enabled source-syntax checks.
     fn scan(
         self,
         root: &str,
@@ -251,6 +268,21 @@ impl Dejadoc {
             report.unique_functions = unique;
             report.groups.extend(groups);
         }
+        if self.context_blocks {
+            let mut forms = contexts::Forms::new(
+                self.context_min_tokens
+                    .unwrap_or(DEFAULT_CONTEXT_MIN_TOKENS),
+            );
+            for target in &targets {
+                for file in target.files.iter().filter(|file| scanned(file)) {
+                    forms.file(&module_prefix(target, file), file, root);
+                }
+            }
+            let (total, unique, groups) = forms.finish(threshold);
+            report.context_blocks = total;
+            report.unique_context_blocks = unique;
+            report.context_groups = groups;
+        }
         report
     }
 }
@@ -298,6 +330,9 @@ const DEFAULT_MIN_TOKENS: usize = 0;
 
 /// Body-token floor for functions when no `fn-min-tokens` is set.
 const DEFAULT_FN_MIN_TOKENS: usize = 30;
+
+/// Weighted-token floor for lexical contexts.
+const DEFAULT_CONTEXT_MIN_TOKENS: usize = 30;
 
 /// The module path of `file` in `target`.
 fn module_prefix(target: &TargetScan, file: &SourceFile) -> String {
@@ -435,6 +470,39 @@ pub struct Group {
     pub remedy: Option<Remedy>,
 }
 
+/// One approximate lexical context match at its original source range.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ContextSite {
+    /// Workspace-relative source file.
+    pub file: String,
+    /// First source line, 1-based.
+    pub line: u32,
+    /// First source byte column, 1-based.
+    pub column: usize,
+    /// Last source line, 1-based.
+    pub end: u32,
+    /// Exclusive ending source byte column, 1-based.
+    pub end_column: usize,
+    /// Containing item path.
+    pub item: String,
+    /// The lexical context boundary.
+    #[serde(serialize_with = "contexts::serialize_kind")]
+    pub kind: ContextKind,
+}
+
+/// Approximate lexical contexts sharing an exact canonical form.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+pub struct ContextGroup {
+    /// Stable short identifier.
+    pub id: String,
+    /// Full canonical-form blake3 hash.
+    pub hash: String,
+    /// Canonical weighted-token count.
+    pub tokens: usize,
+    /// Source occurrences, ordered by location without a designated keeper.
+    pub sites: Vec<ContextSite>,
+}
+
 /// Outcome of a scan.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Report {
@@ -449,14 +517,20 @@ pub struct Report {
     pub unique_functions: usize,
     /// Doctest groups, then function groups, each ordered by hash.
     pub groups: Vec<Group>,
+    /// Distinct lexical source contexts scanned.
+    pub context_blocks: usize,
+    /// Distinct qualifying lexical canonical forms.
+    pub unique_context_blocks: usize,
+    /// Approximate lexical duplicate groups after containment suppression.
+    pub context_groups: Vec<ContextGroup>,
 }
 
 #[cfg(feature = "std")]
 /// Exit status for a finished scan.
-#[must_use]
+#[must_use = "Use the scan result as the process exit status"]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     use std::process::ExitCode;
-    if report.groups.is_empty() || no_fail {
+    if (report.groups.is_empty() && report.context_groups.is_empty()) || no_fail {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -540,6 +614,9 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         functions: 0,
         unique_functions: 0,
         groups,
+        context_blocks: 0,
+        unique_context_blocks: 0,
+        context_groups: Vec::new(),
     }
 }
 

@@ -90,6 +90,26 @@ pub(crate) fn normalize_file(file: &mut syn::File, compiles: bool) {
     .visit_file_mut(file);
 }
 
+/// The parse-only drift of one block, for an independent context normalization.
+pub(crate) fn normalize_block(block: &mut syn::Block) {
+    Drift::default().visit_block_mut(block);
+}
+
+/// The parse-only drift of one match arm, for an independent context normalization.
+pub(crate) fn normalize_arm(arm: &mut syn::Arm) {
+    Drift::default().visit_arm_mut(arm);
+}
+
+/// The parse-only drift of one expression, for an independent context normalization.
+pub(crate) fn normalize_expr(expr: &mut syn::Expr) {
+    Drift::default().visit_expr_mut(expr);
+}
+
+/// The parse-only tail-return fold of a function body.
+pub(crate) fn fold_fn_body(block: &mut syn::Block) {
+    fold_tail_return(&mut block.stmts);
+}
+
 #[derive(Default)]
 struct Drift {
     /// The code compiles, so an unneeded `mut` and the semicolon of a `()` block fold.

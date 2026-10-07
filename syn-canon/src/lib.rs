@@ -6,12 +6,15 @@ extern crate alloc;
 extern crate std;
 
 mod alpha;
+mod blocks;
 mod const_items;
 mod drift;
 
 use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
+
+pub use blocks::{Context, ContextKind, ContextWork, contexts};
 
 /// The canonical tokens of a compiling `file`, equal across style and local binder names.
 #[must_use]
@@ -65,7 +68,7 @@ const COMMA_BLIND_ATTRIBUTES: [&str; 10] = [
 
 /// Drop each group's trailing comma unless `keep_commas`, set inside the tokens of a macro or an
 /// attribute that may match on it, and respell literals outside `opaque` macro and attribute tokens.
-fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
+pub(crate) fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
     let mut out: Vec<TokenTree> = Vec::new();
     // A proc macro derive was seen, then the `struct`, `enum` or `union` whose body it reads.
     let (mut derived, mut derived_item) = (false, false);
@@ -4820,5 +4823,194 @@ mod tests {
             "let alpha = 1; let s = <S>::new(alpha); f(<S as T>::g(alpha));",
             "let beta = 1; let s = <S>::new(beta); f(<S as T>::g(beta));",
         )]);
+    }
+
+    /// The canonical forms of every context candidate of `code` of `kind`, in emission order.
+    fn context_forms(code: &str, kind: super::ContextKind) -> Vec<String> {
+        let file: syn::File = syn::parse_str(code).unwrap_or_else(|e| panic!("{code}: {e}"));
+        let mut forms = Vec::new();
+        super::contexts(&file, &mut |ctx, tokens| {
+            if ctx.kind == kind {
+                forms.push(tokens.to_string());
+            }
+        });
+        forms
+    }
+
+    #[test]
+    fn contextual_inline_module_self_imports_preserve_module_targets() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let a = "fn f() { mod caller { use std::mem::{self}; pub fn g(value: u8) { mem::drop(value) } } caller::g(1u8); }";
+        let b = "fn f() { mod owner { use std::mem::{self}; pub fn h(value: u8) { std::mem::drop(value) } } owner::h(1u8); }";
+        assert_eq!(body(a)[0], body(b)[0]);
+        let c = "fn f() { mod caller { use std::mem::{self}; pub fn g(value: u8) { mem::forget(value) } } caller::g(1u8); }";
+        assert_ne!(body(a)[0], body(c)[0]);
+    }
+
+    #[test]
+    fn contextual_alias_chained_self_imports_resolve_to_the_target() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let a = "use pinco as p;\nfn f() { use p::mem::{self}; mem::drop(1u8); }";
+        let b = "use plato as p;\nfn f() { use p::mem::{self}; mem::drop(1u8); }";
+        assert_ne!(body(a)[0], body(b)[0]);
+    }
+
+    #[test]
+    fn context_local_bindings_keep_their_own_numbers() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let a = "fn f(x: i32) -> i32 { let p = x; let q = x; p + q }";
+        let b = "fn f(x: i32) -> i32 { let p = x; let q = x; q + p }";
+        let c = "fn g(m: i32) -> i32 { let r = m; let s = m; r + s }";
+        assert_ne!(body(a)[0], body(b)[0]);
+        assert_eq!(body(a)[0], body(c)[0]);
+    }
+
+    #[test]
+    fn contextual_local_lifetime_label_and_macro_binders_merge() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let lifetime_a = "fn f() -> i32 { fn inner<'a>(v: &'a i32) -> i32 { v } inner(0) }";
+        let lifetime_b = "fn f() -> i32 { fn inner<'b>(v: &'b i32) -> i32 { v } inner(0) }";
+        assert_eq!(body(lifetime_a)[0], body(lifetime_b)[0]);
+        let break_a = "fn f() { 'outer: loop { break 'outer; } }";
+        let break_b = "fn f() { 'inner: loop { break 'inner; } }";
+        assert_eq!(body(break_a)[0], body(break_b)[0]);
+        let continue_a = "fn f() { 'outer: loop { continue 'outer; } }";
+        let continue_b = "fn f() { 'inner: loop { continue 'inner; } }";
+        assert_eq!(body(continue_a)[0], body(continue_b)[0]);
+        let macro_a = "fn f() -> u8 { macro_rules! one { () => { 1u8 } } one!() }";
+        let macro_b = "fn f() -> u8 { macro_rules! two { () => { 1u8 } } two!() }";
+        assert_eq!(body(macro_a)[0], body(macro_b)[0]);
+    }
+
+    #[test]
+    fn contextual_dyn_bound_lifetimes_merge_and_imported_bounds_expand() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let a = "trait Tr<'a, 'b> {}\nfn f() -> u8 { let w: &dyn for<'c, 'd> Tr<'c, 'd> = q; w }";
+        let b = "trait Tr<'e, 'f> {}\nfn f() -> u8 { let w: &dyn for<'g, 'h> Tr<'g, 'h> = q; w }";
+        assert_eq!(body(a)[0], body(b)[0]);
+        let c = "use pin::Tr;\nfn f() -> u8 { let w: &dyn for<'c, 'd> Tr<'c, 'd> = q; w }";
+        assert_ne!(body(a)[0], body(c)[0]);
+    }
+
+    #[test]
+    fn inherited_raw_imports_stay_opaque_in_macro_inputs() {
+        let block = |code: &str| context_forms(code, super::ContextKind::Block);
+        let raw = "fn f() { use pin::r#bar; { m!(r#bar); } }";
+        let bare = "fn f() { { m!(r#bar); } }";
+        assert_eq!(block(raw)[0], block(bare)[0]);
+        let plain = "fn f() { use pin::bar; { m!(bar); } }";
+        let plain_bare = "fn f() { { m!(bar); } }";
+        assert_ne!(block(plain)[0], block(plain_bare)[0]);
+        let raw_bare_reference = "fn f() { use pin::r#bar; { m!(bar); } }";
+        assert_eq!(block(raw_bare_reference)[0], block(plain_bare)[0]);
+        let plain_raw_reference = "fn f() { use pin::bar; { m!(r#bar); } }";
+        assert_eq!(block(plain_raw_reference)[0], block(bare)[0]);
+    }
+
+    #[test]
+    fn local_raw_binders_rename_outside_macro_inputs_only() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let raw = "fn f() { let r#v = 1u8; let w = r#v + 1u8; m!(w); }";
+        let plain = "fn f() { let v = 1u8; let w = v + 1u8; m!(w); }";
+        assert_eq!(body(raw)[0], body(plain)[0]);
+        let raw_macro = "fn f() { let r#v = 1u8; m!(v); }";
+        let plain_macro = "fn f() { let u = 1u8; m!(v); }";
+        assert_eq!(body(raw_macro)[0], body(plain_macro)[0]);
+    }
+
+    #[test]
+    fn contextual_raw_module_members_stay_opaque_in_macro_inputs() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let raw_binder =
+            "fn f() -> u8 { mod caller { pub const r#x: u8 = 1; } let t = m!(caller::x); t }";
+        let plain_binder =
+            "fn f() -> u8 { mod caller { pub const x: u8 = 1; } let t = m!(caller::x); t }";
+        assert_ne!(body(raw_binder)[0], body(plain_binder)[0]);
+        let renamed_member =
+            "fn f() -> u8 { mod caller { pub const y: u8 = 1; } let t = m!(caller::y); t }";
+        assert_eq!(body(plain_binder)[0], body(renamed_member)[0]);
+        let raw_ref =
+            "fn f() -> u8 { mod caller { pub const r#x: u8 = 1; } let t = m!(caller::r#x); t }";
+        let plain_ref =
+            "fn f() -> u8 { mod caller { pub const x: u8 = 1; } let t = m!(caller::r#x); t }";
+        assert_eq!(body(raw_ref)[0], body(plain_ref)[0]);
+    }
+
+    #[test]
+    fn contextual_raw_module_roots_stay_opaque_in_macro_inputs() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let raw = "fn f() { mod r#caller { pub const x: u8 = 1; } m!(caller::x); }";
+        let plain = "fn f() { mod caller { pub const x: u8 = 1; } m!(caller::x); }";
+        assert_ne!(body(raw)[0], body(plain)[0]);
+        let raw_reference = "fn f() { mod r#caller { pub const x: u8 = 1; } m!(r#caller::x); }";
+        let plain_reference = "fn f() { mod caller { pub const x: u8 = 1; } m!(r#caller::x); }";
+        assert_eq!(body(raw_reference)[0], body(plain_reference)[0]);
+    }
+
+    #[test]
+    fn whole_file_use_aliases_keep_their_own_numbering() {
+        let a = "use pin;\nuse plat;\nfn main() { plat(); }";
+        let b = "use pin;\nuse plat;\nfn main() { pin(); }";
+        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn format_string_captures_follow_their_binding() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let aliased = "use pin as p;\nfn f() { println!(\"{p}\"); }";
+        let unbound = "fn f() { println!(\"{p}\"); }";
+        assert_eq!(body(aliased)[0], body(unbound)[0]);
+        let local_a = "fn f(x: i32) { println!(\"{x}\"); }";
+        let local_b = "fn g(y: i32) { println!(\"{y}\"); }";
+        assert_eq!(body(local_a)[0], body(local_b)[0]);
+        let free = "fn f(x: i32) { println!(\"{y}\"); }";
+        assert_ne!(body(local_a)[0], body(free)[0]);
+    }
+
+    #[test]
+    fn contextual_local_module_alias_targets_rename_the_module() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let local = "fn f() { mod caller { pub fn g() -> u8 { 1 } } use caller as c; c::g(); }";
+        let free = "fn f() { use caller as c; c::g(); }";
+        assert_ne!(body(local)[0], body(free)[0]);
+        let qualified =
+            "fn f() { mod caller { pub fn g() -> u8 { 1 } } use caller as c; caller::g(); }";
+        assert_eq!(body(local)[0], body(qualified)[0]);
+    }
+
+    #[test]
+    fn inherited_type_aliases_do_not_merge_with_value_captures() {
+        let block = |code: &str| context_forms(code, super::ContextKind::Block);
+        let aliased = "use pin as x;\nfn f() -> i32 { { let v: x = 1; v + v } }";
+        let captured = "fn f(x: i32) -> i32 { { let v: i32 = x; v + v } }";
+        assert_ne!(block(aliased)[0], block(captured)[0]);
+        let renamed = "use pin as y;\nfn f() -> i32 { { let v: y = 1; v + v } }";
+        assert_eq!(block(aliased)[0], block(renamed)[0]);
+    }
+
+    #[test]
+    fn nominal_trait_bounds_rename_local_and_unbound_traits() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let a = "fn f() { trait Ta { } let w: &dyn for<'a> Ta<'a> = q; }";
+        let b = "fn f() { trait Tb { } let w: &dyn for<'b> Tb<'b> = q; }";
+        assert_eq!(body(a)[0], body(b)[0]);
+        let whole_a = "trait Ta {}\nfn f() { let w: &dyn for<'a> Ta<'a> = q; }";
+        let whole_b = "trait Tb {}\nfn f() { let w: &dyn for<'b> Tb<'b> = q; }";
+        assert_eq!(canonicalize(whole_a).text, canonicalize(whole_b).text);
+    }
+
+    #[test]
+    fn whole_file_impl_self_aliases_resolve_to_the_self_type() {
+        let a = "struct S;\nimpl S { fn h() { let t: Self = S; t } }";
+        let b = "struct T;\nimpl T { fn h() { let t: Self = T; t } }";
+        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+    }
+
+    #[test]
+    fn contextual_grouped_imports_bind_each_leaf() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let grouped = "fn f() { use pin::{mem, io}; mem::drop(1u8); }";
+        let single = "fn f() { use pin::mem; mem::drop(1u8); }";
+        assert_ne!(body(grouped)[0], body(single)[0]);
     }
 }

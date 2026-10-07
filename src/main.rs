@@ -14,7 +14,7 @@ use std::process::ExitCode;
     name = "dejadoc",
     bin_name = "cargo dejadoc",
     version,
-    about = "Find duplicated Rust doctests and functions across a workspace"
+    about = "Find duplicated Rust doctests, functions and context blocks across a workspace"
 )]
 struct Args {
     /// Restrict to one workspace member by name.
@@ -38,16 +38,22 @@ struct Args {
     /// Skip functions whose body counts fewer tokens than this, a path or an operator counting as one (default 30).
     #[arg(long, value_name = "N")]
     fn_min_tokens: Option<usize>,
+    /// Also check for duplicated context blocks, off by default.
+    #[arg(long)]
+    context_blocks: bool,
+    /// Skip context blocks whose canonical form counts fewer tokens than this (default 30).
+    #[arg(long, value_name = "N")]
+    context_min_tokens: Option<usize>,
     /// Explicit `.dejadoc.toml` location.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
     /// Exit 0 even when duplicates are found.
     #[arg(long)]
     no_fail: bool,
-    /// Print each group's code.
+    /// Print code for doctest and function groups.
     #[arg(short, long)]
     verbose: bool,
-    /// Also print GitHub workflow annotations, one per copy to remove.
+    /// Also print GitHub workflow annotations for duplicate sites.
     #[arg(long)]
     github: bool,
 }
@@ -85,6 +91,12 @@ fn run(args: &Args) -> dejadoc::Result<ExitCode> {
     }
     if let Some(n) = args.fn_min_tokens {
         scan = scan.fn_min_tokens(n);
+    }
+    if args.context_blocks {
+        scan = scan.context_blocks();
+    }
+    if let Some(n) = args.context_min_tokens {
+        scan = scan.context_min_tokens(n);
     }
     if let Some(config) = &args.config {
         scan = scan.config(config)?;

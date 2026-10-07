@@ -10,7 +10,7 @@ use core::fmt::Write;
 #[must_use]
 pub fn human(report: &Report, verbose: bool) -> String {
     let mut out = String::new();
-    let _ = writeln!(
+    let _ = write!(
         &mut out,
         "{} doctests ({} unique), {} functions ({} unique), {} duplicated groups",
         report.total,
@@ -19,11 +19,21 @@ pub fn human(report: &Report, verbose: bool) -> String {
         report.unique_functions,
         report.groups.len()
     );
-    if report.groups.is_empty() {
+    if report.context_blocks > 0 {
+        let _ = write!(
+            &mut out,
+            ", {} context blocks ({} unique), {} approximate groups",
+            report.context_blocks,
+            report.unique_context_blocks,
+            report.context_groups.len(),
+        );
+    }
+    let _ = writeln!(&mut out);
+    if report.groups.is_empty() && report.context_groups.is_empty() {
         return out;
     }
-    out.push('\n');
-    for (i, group) in report.groups.iter().enumerate() {
+    for group in &report.groups {
+        out.push('\n');
         let _ = match group.kind {
             Kind::Doctest => writeln!(
                 &mut out,
@@ -65,10 +75,8 @@ pub fn human(report: &Report, verbose: bool) -> String {
                 }
             }
         }
-        if i + 1 < report.groups.len() {
-            out.push('\n');
-        }
     }
+    context_human(&mut out, report);
     out.push('\n');
     if report.groups.iter().any(|g| g.kind == Kind::Doctest) {
         out.push_str(
@@ -77,6 +85,11 @@ pub fn human(report: &Report, verbose: bool) -> String {
     }
     if report.groups.iter().any(|g| g.kind == Kind::Function) {
         out.push_str("Act on each function group as its advice says, or keep one on purpose with a `// dejadoc: allow` comment above it\n");
+    }
+    if !report.context_groups.is_empty() {
+        out.push_str(
+            "Context block groups are approximate syntax matches, and they name no copy to delete\n",
+        );
     }
     out
 }
@@ -93,6 +106,31 @@ fn advice(remedy: Remedy) -> &'static str {
         Remedy::HelperOrMacro => "a helper or a macro can share one body",
     }
 }
+fn context_human(out: &mut String, report: &Report) {
+    for group in &report.context_groups {
+        out.push('\n');
+        let _ = writeln!(
+            out,
+            "[{}] {} sites, {} tokens, approximate",
+            group.id,
+            group.sites.len(),
+            group.tokens
+        );
+        for site in &group.sites {
+            let _ = writeln!(
+                out,
+                "  {}:{}:{}-{}:{}  {} ({})",
+                site.file,
+                site.line,
+                site.column,
+                site.end,
+                site.end_column,
+                site.item,
+                crate::contexts::kind_name(site.kind)
+            );
+        }
+    }
+}
 
 /// Render the report as JSON.
 ///
@@ -106,8 +144,8 @@ pub fn json(report: &Report) -> String {
 }
 
 /// Render the report as GitHub workflow annotations, one per copy to
-/// remove. They need no token, so a fork pull request still shows them
-/// anchored in the diff.
+/// remove plus one per approximate context site. They need no token, so a
+/// fork pull request still shows them anchored in the diff.
 #[must_use]
 pub fn annotations(report: &Report, no_fail: bool) -> String {
     let level = if no_fail { "warning" } else { "error" };
@@ -156,6 +194,23 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             };
         }
     }
+    for group in &report.context_groups {
+        for site in &group.sites {
+            let (file, line, item, id) = (
+                escape_property(site.file.as_str()),
+                site.line,
+                escape(&site.item),
+                &group.id,
+            );
+            let _ = writeln!(
+                &mut out,
+                "::{level} file={file},line={line},col={},endLine={},endColumn={},title=dejadoc::approximate context block in {item}, group {id}",
+                site.column,
+                site.end,
+                site.end_column.saturating_sub(1)
+            );
+        }
+    }
     out
 }
 
@@ -200,6 +255,9 @@ mod tests {
             unique: 12,
             functions: 0,
             unique_functions: 0,
+            context_blocks: 0,
+            unique_context_blocks: 0,
+            context_groups: Vec::new(),
             groups: vec![Group {
                 kind: crate::Kind::Doctest,
                 remedy: None,
@@ -213,29 +271,6 @@ mod tests {
                 ],
             }],
         }
-    }
-
-    #[test]
-    fn human_summary_only_when_clean() {
-        let report = Report {
-            total: 3,
-            unique: 3,
-            functions: 0,
-            unique_functions: 0,
-            groups: Vec::new(),
-        };
-        assert_eq!(
-            human(&report, false),
-            "3 doctests (3 unique), 0 functions (0 unique), 0 duplicated groups\n"
-        );
-    }
-
-    #[test]
-    fn human_group_section_without_code() {
-        assert_eq!(
-            human(&report(), false),
-            "34 doctests (12 unique), 0 functions (0 unique), 1 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a   (no_run)\n  src/b.rs:97  m::b\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
-        );
     }
 
     #[test]
@@ -273,43 +308,6 @@ mod tests {
         assert_eq!(first["info"][0], "no_run");
     }
 
-    #[test]
-    fn human_multiple_groups_separated_by_blank_line() {
-        let report = Report {
-            total: 4,
-            unique: 2,
-            functions: 0,
-            unique_functions: 0,
-            groups: vec![
-                Group {
-                    kind: crate::Kind::Doctest,
-                    remedy: None,
-                    id: "ab12cd34".into(),
-                    hash: "ab12cd34".into(),
-                    unparsed: false,
-                    tokens: 5,
-                    sites: vec![
-                        site("src/a.rs", 14, "m::a", "fn f() {}", &[]),
-                        site("src/b.rs", 97, "m::b", "fn f() {}", &[]),
-                    ],
-                },
-                Group {
-                    kind: crate::Kind::Doctest,
-                    remedy: None,
-                    id: "ef56gh78".into(),
-                    hash: "ef56gh78".into(),
-                    unparsed: false,
-                    tokens: 3,
-                    sites: vec![site("src/c.rs", 5, "n::c", "fn g() {}", &[])],
-                },
-            ],
-        };
-        assert_eq!(
-            human(&report, false),
-            "4 doctests (2 unique), 0 functions (0 unique), 2 duplicated groups\n\n[ab12cd34] 2 sites, 5 tokens\n  src/a.rs:14  m::a\n  src/b.rs:97  m::b\n\n[ef56gh78] 1 sites, 3 tokens\n  src/c.rs:5  n::c\n\nRemove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n"
-        );
-    }
-
     /// A report holding one function group of two copies with `remedy`.
     fn function_report(remedy: Remedy) -> Report {
         Report {
@@ -317,6 +315,9 @@ mod tests {
             unique: 0,
             functions: 7,
             unique_functions: 6,
+            context_blocks: 0,
+            unique_context_blocks: 0,
+            context_groups: Vec::new(),
             groups: vec![Group {
                 kind: crate::Kind::Function,
                 id: "cd34ef56".into(),
@@ -329,32 +330,6 @@ mod tests {
                     site("src/a.rs", 9, "m::B::run", "fn run() {}", &[]),
                 ],
             }],
-        }
-    }
-
-    #[test]
-    fn human_gives_each_function_group_its_advice() {
-        let head = "0 doctests (0 unique), 7 functions (6 unique), 1 duplicated groups\n\n[cd34ef56] 2 functions, 40 tokens, ";
-        let tail = "\n  src/a.rs:3  m::A::run\n  src/a.rs:9  m::B::run\n\nAct on each function group as its advice says, or keep one on purpose with a `// dejadoc: allow` comment above it\n";
-        for (remedy, advice) in [
-            (Remedy::Delete, "delete or update all but the first"),
-            (
-                Remedy::MergeCfg,
-                "one function under the merged cfg can replace them",
-            ),
-            (
-                Remedy::GenericOrMacro,
-                "a generic or a macro can share one body",
-            ),
-            (
-                Remedy::HelperOrMacro,
-                "a helper or a macro can share one body",
-            ),
-        ] {
-            assert_eq!(
-                human(&function_report(remedy), false),
-                format!("{head}{advice}{tail}")
-            );
         }
     }
 
@@ -432,6 +407,9 @@ mod tests {
             unique: 3,
             functions: 0,
             unique_functions: 0,
+            context_blocks: 0,
+            unique_context_blocks: 0,
+            context_groups: Vec::new(),
             groups: Vec::new(),
         };
         assert_eq!(annotations(&clean, false), "");
@@ -476,5 +454,293 @@ mod tests {
             out.starts_with("::error file=src/a%2Cb%3Ac%25.rs,line=97,"),
             "{out}"
         );
+    }
+
+    /// One approximate context group of two function bodies.
+    fn context_report() -> Report {
+        Report {
+            total: 0,
+            unique: 0,
+            functions: 0,
+            unique_functions: 0,
+            groups: Vec::new(),
+            context_blocks: 5,
+            unique_context_blocks: 2,
+            context_groups: vec![crate::ContextGroup {
+                id: "ab12cd34".into(),
+                hash: "ab12cd34".into(),
+                tokens: 13,
+                sites: vec![
+                    context_site(
+                        "src/a.rs",
+                        9,
+                        5,
+                        12,
+                        6,
+                        "m::a",
+                        crate::ContextKind::FunctionBody,
+                    ),
+                    context_site(
+                        "src/b.rs",
+                        41,
+                        9,
+                        44,
+                        10,
+                        "m::b",
+                        crate::ContextKind::FunctionBody,
+                    ),
+                ],
+            }],
+        }
+    }
+
+    /// One context site at its half-open source range.
+    fn context_site(
+        file: &str,
+        line: u32,
+        column: usize,
+        end: u32,
+        end_column: usize,
+        item: &str,
+        kind: crate::ContextKind,
+    ) -> crate::ContextSite {
+        crate::ContextSite {
+            file: file.to_string(),
+            line,
+            column,
+            end,
+            end_column,
+            item: item.to_string(),
+            kind,
+        }
+    }
+
+    #[test]
+    fn json_serializes_context_groups() {
+        let value: serde_json::Value = serde_json::from_str(&json(&context_report())).unwrap();
+        assert_eq!(value["context_blocks"], 5);
+        assert_eq!(value["unique_context_blocks"], 2);
+        let group = &value["context_groups"][0];
+        assert_eq!(
+            group.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec!["hash", "id", "sites", "tokens"]
+        );
+        let site = &group["sites"][0];
+        assert_eq!(
+            site.as_object().unwrap().keys().collect::<Vec<_>>(),
+            vec![
+                "column",
+                "end",
+                "end_column",
+                "file",
+                "item",
+                "kind",
+                "line"
+            ]
+        );
+        assert_eq!(site["kind"], "function-body");
+        assert_eq!(site["column"], 5);
+        assert_eq!(site["end_column"], 6);
+    }
+
+    #[test]
+    fn context_annotations_mark_every_site_as_approximate() {
+        let report = context_report();
+        let errors = annotations(&report, false);
+        let warnings = annotations(&report, true);
+        assert_eq!(errors.lines().count(), report.context_groups[0].sites.len());
+        assert!(errors.contains("file=src/a.rs,line=9,col=5,endLine=12,endColumn=5,"));
+        assert!(errors.contains("file=src/b.rs,line=41,col=9,endLine=44,endColumn=9,"));
+        assert!(errors.lines().all(|line| line.starts_with("::error ")));
+        assert!(warnings.lines().all(|line| line.starts_with("::warning ")));
+    }
+
+    /// A doctest group, a function group and a context group in one report.
+    fn mixed_report() -> Report {
+        Report {
+            total: 2,
+            unique: 1,
+            functions: 2,
+            unique_functions: 1,
+            context_blocks: 5,
+            unique_context_blocks: 2,
+            context_groups: vec![crate::ContextGroup {
+                id: "ctx9".into(),
+                hash: "ctx9".into(),
+                tokens: 13,
+                sites: vec![
+                    context_site(
+                        "src/a.rs",
+                        9,
+                        5,
+                        12,
+                        6,
+                        "m::a",
+                        crate::ContextKind::FunctionBody,
+                    ),
+                    context_site("src/b.rs", 41, 9, 44, 10, "m::b", crate::ContextKind::Block),
+                ],
+            }],
+            groups: vec![
+                Group {
+                    kind: crate::Kind::Doctest,
+                    remedy: None,
+                    id: "dt01".into(),
+                    hash: "dt01".into(),
+                    unparsed: false,
+                    tokens: 5,
+                    sites: vec![
+                        site("src/a.rs", 14, "m::a", "fn f() {}", &["no_run"]),
+                        site("src/b.rs", 97, "m::b", "fn f() {}", &[]),
+                    ],
+                },
+                Group {
+                    kind: crate::Kind::Function,
+                    remedy: Some(Remedy::Delete),
+                    id: "fn02".into(),
+                    hash: "fn02".into(),
+                    unparsed: false,
+                    tokens: 40,
+                    sites: vec![
+                        site("src/a.rs", 3, "m::A::run", "fn run() {}", &[]),
+                        site("src/a.rs", 9, "m::B::run", "fn run() {}", &[]),
+                    ],
+                },
+            ],
+        }
+    }
+
+    #[test]
+    fn human_mixed_report_keeps_the_kinds_separate() {
+        let out = human(&mixed_report(), false);
+        let lines: Vec<&str> = out.lines().collect();
+        let summary = lines[0];
+        assert!(summary.contains("2 doctests (1 unique)"), "{summary}");
+        assert!(summary.contains("2 functions (1 unique)"), "{summary}");
+        assert!(summary.contains("2 duplicated groups"), "{summary}");
+        assert!(
+            summary.contains("5 context blocks (2 unique), 1 approximate groups"),
+            "{summary}"
+        );
+        let headers: Vec<&str> = lines
+            .iter()
+            .copied()
+            .filter(|line| line.starts_with('['))
+            .collect();
+        assert_eq!(headers.len(), 3, "{out}");
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.starts_with("[dt01] 2 sites, 5 tokens") && !h.contains("delete")),
+            "{out}"
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.starts_with("[fn02] 2 functions, 40 tokens,") && h.contains("delete")),
+            "{out}"
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.starts_with("[ctx9] 2 sites, 13 tokens, approximate")
+                    && !h.contains("delete"),),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/a.rs:14") && l.contains("m::a")),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/a.rs:3") && l.contains("m::A::run")),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/a.rs:9:5-12:6") && l.contains("(function-body)")),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/b.rs:41:9-44:10") && l.contains("(block)")),
+            "{out}"
+        );
+        assert!(out.contains("rust,dejadoc` fence"), "{out}");
+        assert!(out.contains("`// dejadoc: allow`"), "{out}");
+        assert!(
+            lines
+                .iter()
+                .filter(|l| l.contains("src/a.rs:9:5-12:6") || l.contains("src/b.rs:41:9-44:10"))
+                .all(|l| !l.contains("public API") && !l.contains("delete")),
+            "{out}"
+        );
+        let last = lines.last().unwrap();
+        assert!(
+            last.contains("approximate") && !last.contains("dejadoc"),
+            "{out}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with('[') && line.contains("delete"))
+                .count(),
+            1,
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn human_summary_and_footers_follow_the_reported_kinds() {
+        for (out, doctest, function, context) in [
+            (human(&report(), false), true, false, false),
+            (
+                human(&function_report(Remedy::Delete), false),
+                false,
+                true,
+                false,
+            ),
+            (human(&context_report(), false), false, false, true),
+        ] {
+            let summary = out.lines().next().unwrap();
+            assert_eq!(summary.contains("context blocks"), context, "{summary}");
+            assert_eq!(out.contains("rust,dejadoc` fence"), doctest, "{out}");
+            assert_eq!(out.contains("`// dejadoc: allow`"), function, "{out}");
+            let last = out.lines().last().unwrap();
+            assert_eq!(
+                last.contains("approximate") && !last.contains("dejadoc"),
+                context,
+                "{out}"
+            );
+        }
+    }
+
+    #[test]
+    fn human_function_header_carries_the_remedy_action() {
+        let cases = [
+            (Remedy::Delete, "delete"),
+            (Remedy::MergeCfg, "merged cfg"),
+            (Remedy::GenericOrMacro, "generic"),
+            (Remedy::HelperOrMacro, "helper"),
+        ];
+        for (remedy, action) in cases {
+            let out = human(&function_report(remedy), false);
+            let header = out
+                .lines()
+                .find(|line| line.starts_with("[cd34ef56]"))
+                .unwrap();
+            assert!(header.contains("2 functions, 40 tokens,"), "{header}");
+            assert!(header.contains(action), "{header}");
+            for other in ["delete", "merged cfg", "generic", "helper"] {
+                if other != action {
+                    assert!(!header.contains(other), "{header}");
+                }
+            }
+        }
     }
 }

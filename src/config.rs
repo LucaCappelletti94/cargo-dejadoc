@@ -16,6 +16,12 @@ pub(crate) struct Config {
     /// Skip functions whose body counts fewer tokens than this.
     #[serde(rename = "fn-min-tokens")]
     pub(crate) fn_min_tokens: Option<usize>,
+    /// Whether the context-block check runs.
+    #[serde(rename = "context-blocks")]
+    pub(crate) context_blocks: Option<bool>,
+    /// Skip context blocks whose canonical form counts fewer tokens than this.
+    #[serde(rename = "context-min-tokens")]
+    pub(crate) context_min_tokens: Option<usize>,
     /// Scan files marked generated as well.
     #[serde(rename = "scan-generated")]
     pub(crate) scan_generated: Option<bool>,
@@ -54,7 +60,7 @@ mod tests {
         let path = dir.path().join(".dejadoc.toml");
         std::fs::write(
             &path,
-            "threshold = 3\nmin-tokens = 4\nfunctions = false\nfn-min-tokens = 50\nscan-generated = true\ngenerated-markers = [\"by rust-bindgen\"]\n",
+            "threshold = 3\nmin-tokens = 4\nfunctions = false\nfn-min-tokens = 50\ncontext-blocks = true\ncontext-min-tokens = 30\nscan-generated = true\ngenerated-markers = [\"by rust-bindgen\"]\n",
         )
         .unwrap();
         let cfg = load(&path).unwrap();
@@ -62,6 +68,8 @@ mod tests {
         assert_eq!(cfg.min_tokens, Some(4));
         assert_eq!(cfg.functions, Some(false));
         assert_eq!(cfg.fn_min_tokens, Some(50));
+        assert_eq!(cfg.context_blocks, Some(true));
+        assert_eq!(cfg.context_min_tokens, Some(30));
         assert_eq!(cfg.scan_generated, Some(true));
         assert_eq!(
             cfg.generated_markers,

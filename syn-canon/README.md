@@ -56,6 +56,35 @@ Style folds, each applied only where it keeps the meaning:
 - `doc`, lint level and `rustfmt::` attributes go, except in the input of a proc macro derive, which reads them. A `doc` whose value is a macro call runs at compile time and stays.
 - Literals take one spelling, `0x10` and `16` alike, and trailing commas go, except in the input of a macro or attribute that may match on them. The std macros that ignore one, `vec!` and `println!` among them, still lose it.
 
+## Context blocks
+
+`contexts` emits independently normalized function bodies, explicit blocks, complete match arms and complete closures with syntax-tree spans and containing items. Methods, trait defaults and nested functions are included, and explicit blocks in required trait and foreign signatures retain their function names. Arm patterns/guards and closure inputs remain in the form, and unused preceding declarations do not affect numbering.
+
+`Context::span` retains the supplied syntax tree's coordinates, so `syn::parse_file` callers must account for removed BOM and shebang bytes when indexing their original text.
+
+```rust
+let forms = |src: &str| {
+    let file = syn::parse_str(src).unwrap();
+    let mut form = String::new();
+    syn_canon::contexts(&file, &mut |_context, tokens| {
+        form = tokens.to_string();
+    });
+    form
+};
+assert_eq!(
+    forms("fn f(x: u32) -> u32 { x + x }"),
+    forms("fn g(y: u32) -> u32 { y + y }"),
+);
+```
+
+The `ContextKind` names the boundary. Candidate-local binders receive fresh declaration-order numbers from `0`, with namespace tags, and inherited captures receive first-reference numbers from `0`. Unused inherited declarations stay outside the form, and explicit import aliases retain their available target associations.
+
+Namespaces remain distinct, while a declaration shared by value and type positions retains one origin number. Inherited nominal trait-bound paths retain their available spelling or import association, preserving inference-sensitive bound order. Trait `Self` bindings end at the trait boundary.
+
+Raw imported segments retain their spelling. An absolute path keeps `::` when a candidate-local or inherited type binding shadows its root, and absolute import targets bypass lexical aliases.
+
+Equal canonical forms are approximate duplication. The normalization cannot see what the compiler resolves, so two equal forms may still differ in a receiver type, an inferred type or lifetime, an unresolved import, a macro's generated code, an enclosing `cfg`, or the target of a `return`, `break` or `continue`. A context form claims no extraction and no deletion.
+
 ## Stability
 
 The canonical tokens are the contract. Any change to them, a new fold included, is a new major version, so hashes stored by one version stay comparable within it.
