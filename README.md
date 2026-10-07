@@ -59,13 +59,89 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: LucaCappelletti94/cargo-dejadoc@v1
         with:
+          # Review the pull request instead of failing the job. Drop it to gate a push.
           pr-number: ${{ github.event.pull_request.number }}
+          # Report duplicates that predate the pull request too, default `false`.
+          only-new: false
+          # Report a group from this many copies, default `2`.
+          threshold: 2
+          # Ignore doctests below this token count, default `0`.
+          min-tokens: 0
+          # Check for duplicated functions too, default `false`.
           functions: true
+          # Ignore functions whose body counts fewer tokens than this, default `30`.
+          fn-min-tokens: 30
+          # Scan bin and example doctests as well as lib ones, default `false`.
+          all-targets: true
+          # Restrict to one workspace member, and scan from a subdirectory.
+          package: mycrate
+          cwd: .
+          # Annotate each copy to remove, default `true`.
+          annotations: true
+          # Render the review in the job summary instead of posting it.
+          dry-run: false
+          # Use the `cargo dejadoc` already on the path instead of installing one, default `true`.
+          install: true
 ```
 
 Review mode reports newly introduced duplicates by default. Removal suggestions appear on eligible copies, with links to the kept copy. Omit `pr-number` to fail the job on duplicates, or set `only-new: false` to include pre-existing copies.
 
 Fork pull requests receive summaries and annotations because their token is read-only. For review comments on forks, use [`mode: prepare` and `mode: post`](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/action.yml) in separate workflows following the [`workflow_run` security pattern](https://securitylab.github.com/resources/github-actions-preventing-pwn-requests/). The privileged posting job must never check out or execute pull-request code.
+
+<details>
+<summary>Two workflows, so forks keep the removal suggestion</summary>
+
+```yaml
+# .github/workflows/dejadoc.yml
+name: dejadoc
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          mode: prepare
+          payload: dejadoc-payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+```
+
+```yaml
+# .github/workflows/dejadoc-post.yml
+on:
+  workflow_run:
+    workflows: [dejadoc]
+    types: [completed]
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          mode: post
+          payload: dejadoc-payload
+```
+
+The payload carries the pull request number, head commit and rendered comments. The posting job consumes only that data and needs no checkout, toolchain or scanner installation.
+
+</details>
 
 See [`action.yml`](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/action.yml) for all inputs.
 
@@ -74,19 +150,12 @@ See [`action.yml`](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/
 Use `dejadoc = { version = "0.5", default-features = false, features = ["std"] }` for in-memory reports without the CLI. Scanning compiles no code and includes all `cfg` variants in one run.
 
 ```rust
-let report = dejadoc::Dejadoc::default().run("tests/fixtures/dupws").unwrap();
-assert_eq!(report.groups.len(), 2);
-let report = dejadoc::Dejadoc::default().functions().run("tests/fixtures/fnws").unwrap();
-assert_eq!(report.groups.len(), 7);
 let report = dejadoc::Dejadoc::default()
+    .functions()
     .context_blocks()
-    .context_min_tokens(0)
-    .run("tests/fixtures/contextws")
+    .run(".")
     .unwrap();
-let group = report.context_groups.iter()
-    .find(|g| g.sites.iter().any(|s| s.item == "contextws::count_up"))
-    .unwrap();
-assert_eq!(group.sites.len(), 2);
+println!("{}", dejadoc::human(&report, false));
 ```
 
 Coding agents get the same guidance from the [`dejadoc` skill](https://github.com/LucaCappelletti94/cargo-dejadoc/blob/main/skills/dejadoc/SKILL.md), installed with the [skills CLI](https://github.com/vercel-labs/skills).
