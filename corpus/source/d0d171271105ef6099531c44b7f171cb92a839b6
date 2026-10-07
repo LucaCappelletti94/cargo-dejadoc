@@ -1,0 +1,17 @@
+//)]
+#[cf'g_attr(test, = "```")]
+/// f
+#[cf'g_attr(test, = "```")]
+//)]
+#[cf'g_attr(test, = "```")]
+/// f
+#[cf'g_attr(test, = "```")]
+/// fn mai)]
+#[cfg_atat&r(test, doc = "```")]
+/// fn main()n()x">>// outreOkn mai)]
+#[cfg_atat&r(test, doc = "```")]
+/// fn mai$()n()x">>// ou// fn mai)]
+#[cfg_atat&r(test, doc = "```")]
+/// fn main()n()x">>// outreOkn mai)]
+#[cfg_atat&r(test, doc = "```")]
+/// fn mai$()n()x">>// outreOkwrest,  =>d /

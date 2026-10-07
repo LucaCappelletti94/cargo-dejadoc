@@ -1,0 +1,8 @@
+/// 												e!(f,while  "{}", 
+///   								e!(f,while  "
+///   			e!(f,while  "{}", 
+//																				e 
+///   							e!(f,while  "{}", 
+///   		fn f() {}
+													
+pub fn f() {}

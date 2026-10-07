@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        while so() {} };
+#[cfg(do#)]
+    {
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+         /// ```
+            fn fb() {}
+        },
+    };
+}

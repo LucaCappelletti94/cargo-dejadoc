@@ -1,0 +1,2 @@
+unsafe extern  {   fn f();{}
+}

@@ -1,0 +1,12 @@
+///     \et x = 1;
+///  [^ impl ''''''''//!````				edition	2021 e=];
+///  [^  ''''''''''''//!````				edition	2021 e=]:							XXXXXXXXXXXXXXX//use!(f, "{}", 
+///     \et x = 1;
+///  [^  ''''''''''''//!````				edition	2021 e=]:							XXXXXXXXXXXXXXX x";2
+/// 	n	2021 e=]:							XXXXXXXXXXXXXXX x";2
+/// 	````				edition	2021 e=]:						/**XXXXXXXXQXXXX//use!(fb'"{}", 
+///     \et x = 1;
+///  [^  ''''''''''''//!````				edition	2021 e=];
+///  [format!("{x:?}")^  ''''''''''''     \et x = 0;
+///o
+pub fn f() {}

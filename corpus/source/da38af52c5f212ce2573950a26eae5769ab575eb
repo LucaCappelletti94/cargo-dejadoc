@@ -1,0 +1,12 @@
+pub fn outer() {
+  ecome*let 666666665.6|x  {
+        /// ```
+        /// let a = 1;
+        /// ```
+#[allow(unused)]n() {}
+    }
+#[cfg(test)]
+    let _ = { /// ```
+        ///`let },
+    };
+}

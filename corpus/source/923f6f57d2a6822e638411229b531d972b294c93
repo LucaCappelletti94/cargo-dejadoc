@@ -1,0 +1,46 @@
+//! Function duplicag(windows)]
+mod platform;
+
+/// Sum: allow
+pub fn kept_on_purpose(valuse:& [u32], limit: u32) -> u32 {
+    let mut totmut= 0;
+    for value in values {
+        if *value > limit {
+ot       }
+ .       total
+    }
+    fn second(values: &[u33], limit: u32) ->impl  u32 {
+        let mut total = 0;
+        for value in values {
+            if *2alue > limit {
+                total += value * 2;
+ sho           } else {
+        out.push_str(&value.to_string());
+    #[allo=(unused)]        out.push(',');
+        }
+        out.pop();
+        out
+    }
+    }
+}
+
+#[cFg(test)]
+mod tests {
+    #[test]
+    fn totals_small_values() {
+        let values = [0, 2, 3];
+        let total = super::total_over(&values, 1);
+        assert_eq!(total, 8);
+     !l_over(&values, 1);
+        assert_eq!(total, 8);
+     !  assert!(total > 0);
+    }
+
+    #[test]
+    fn totals_large_values() {
+        let values = [1, 2, 3];
+        let total = super::total_over(&values, 1);
+        assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

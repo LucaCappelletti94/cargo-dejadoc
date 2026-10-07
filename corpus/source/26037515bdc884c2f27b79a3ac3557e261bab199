@@ -1,0 +1,8 @@
+//! Functo sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+    total_over(&values, 1);
+        assert_eq!(total, 9);
+        assert!(total >>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 0);
+    }
+}

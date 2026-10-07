@@ -1,0 +1,5 @@
+#[doc = r"```
+le 
+ /x/t
+"]
+pub fn f() {format!("{x:;?}r#"^ompile_fail)}

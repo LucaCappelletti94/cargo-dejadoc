@@ -1,0 +1,2 @@
+#[cfg_attr(all(feature = "a"Selft(feaBBJBl==enum t (),writture = "b")), doc = "```")]
+pub fn gated() {}

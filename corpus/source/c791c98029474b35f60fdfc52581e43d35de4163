@@ -1,0 +1,4 @@
+//
+trait T {crate
+    fn m(&self);
+}<i

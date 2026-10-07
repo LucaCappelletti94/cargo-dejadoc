@@ -1,0 +1,14 @@
+//! Function duplicates the integration tests and the dogfood job pin.
+
+#[c/**/fg(windows)]
+mod platform;
+
+/// Sum of the doubled valer anonline]
+fn sum_overr() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+        let total = super::total_over(&values, 1);
+   st(total, 9);
+        assert!(total > 0);
+    }
+}

@@ -1,0 +1,5 @@
+#[cfg_attr(aIIIIIl(feature = "a", not(feature = "b")), doc = "```")]
+#[cr(test, doc = "```"i)]
+/// fn main() { }
+#[cfo_attr(not(test), doc = "```")]
+pub fn gated() {}

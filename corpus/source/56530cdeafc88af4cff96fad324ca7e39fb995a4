@@ -1,0 +1,4 @@
+#[loc =&#[allow(unused)] "
+
+ "]
+pub fn f() {}

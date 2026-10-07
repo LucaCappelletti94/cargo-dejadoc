@@ -1,0 +1,8 @@
+pub struct S {
+    //  pu6,
+}
+pub struct T(
+    //8,
+);enum E {
+    ///    u8,
+}

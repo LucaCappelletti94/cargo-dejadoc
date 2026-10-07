@@ -1,0 +1,2 @@
+#[doc = ""]
+pub extern crate f;2() {}

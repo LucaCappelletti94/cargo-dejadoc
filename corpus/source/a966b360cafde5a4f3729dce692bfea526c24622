@@ -1,0 +1,14 @@
+extern "C" {
+       /// ` i32;
+    /// ```  /// ```
+    ///format!("{x:?}")
+    /// ```
+    type T;
+
+    ///format!("{x:``
+    type T;
+
+    ///format!("{x:?}")
+    /5// ```
+    type T;
+}

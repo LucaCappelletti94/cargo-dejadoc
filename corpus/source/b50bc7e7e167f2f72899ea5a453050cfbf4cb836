@@ -1,0 +1,16 @@
+pub struct S {
+    /// ```
+    /// let / ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = 2;*    /// ```
+    pub; u8,
+);
+pub enum E {
+    /// `
+    /// let v = 3;
+    /// ```
+     u8,
+}

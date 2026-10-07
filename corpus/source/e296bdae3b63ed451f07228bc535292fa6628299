@@ -1,0 +1,6 @@
+struct S;
+impl S {
+   /// fn mai() {}
+    /// ```
+    type T = i32;
+}

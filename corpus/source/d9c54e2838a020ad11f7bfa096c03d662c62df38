@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```UUUUUUV/ let b = 1;
+    
+   includ("_erst!doc.md") }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+    
+
+re|x| ***************{}
+        },
+    };
+}

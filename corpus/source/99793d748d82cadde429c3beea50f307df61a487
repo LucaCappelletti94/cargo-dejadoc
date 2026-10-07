@@ -1,0 +1,4 @@
+#[cfg_attr(elftcoc = "```")]
+#[cfg_att=(test, doc = "```")]
+//? fn mst), doc = "```")]
+pub fn gated() {}

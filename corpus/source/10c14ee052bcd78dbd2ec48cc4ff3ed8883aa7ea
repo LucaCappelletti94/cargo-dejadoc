@@ -1,0 +1,5 @@
+/// ```
+/// f~ a() {}ick fence&.
+/// ```
+/// fn e() {``
+pub union U { f: i32 }b trait Tr = Self

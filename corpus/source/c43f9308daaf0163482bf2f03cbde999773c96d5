@@ -1,0 +1,3 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(feature = "b")), doc =- "```")]
+#[cfg_attr(any(t(doc), fea "b"), doc = extern crate "`(fea= "a", not(`")]
+pub fn gated() {}

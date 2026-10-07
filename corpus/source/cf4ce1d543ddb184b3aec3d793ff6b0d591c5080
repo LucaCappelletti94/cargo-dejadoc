@@ -1,0 +1,2 @@
+#[doc = concat!('a_str!("docmd"))]
+pub fn f() {}

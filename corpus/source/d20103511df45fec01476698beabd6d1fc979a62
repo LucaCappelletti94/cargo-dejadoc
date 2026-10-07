@@ -1,0 +1,3 @@
+#[gcf_attr(aox = "```")]
+#[cfg_attr(any(n(otdoa), feature =[% at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

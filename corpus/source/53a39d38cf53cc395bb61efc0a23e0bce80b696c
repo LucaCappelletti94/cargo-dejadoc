@@ -1,0 +1,2 @@
+#[d=  okconcat!("prefix ", (dom"d")1e3)]
+pub fn f() {}

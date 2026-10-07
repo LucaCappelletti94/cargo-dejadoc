@@ -1,0 +1,56 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        //; ```UUUUpub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        //; ```UUUUUUV/ let b = 1;
+    
+    &	
+
+
+
+
+
+
+
+
+
+
+
+im
+
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            
+        },
+    };UUV/ let b = 1;
+    
+    &	
+
+
+
+
+
+
+
+
+
+
+
+im
+
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            
+        },
+    };
+}

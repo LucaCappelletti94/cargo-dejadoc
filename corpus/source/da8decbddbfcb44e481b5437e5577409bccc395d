@@ -1,0 +1,3 @@
+//!/<S_&&&&u]
+#[cfg_attr(any(not(doc)eature = "b"), doc =&&u "d("a", not(`")]
+pub fn gated() {}

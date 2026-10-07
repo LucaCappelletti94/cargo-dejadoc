@@ -1,0 +1,14 @@
+pub fn outer() {
+    /// ```
+    /// let a = 1;
+    /// ```
+      lx| _ = || {
+        //, ```
+        /// let b = 2;
+        /// ```
+include_str!("doc.md")   };
+}
+pub struct S;
+impl S {
+   
+}

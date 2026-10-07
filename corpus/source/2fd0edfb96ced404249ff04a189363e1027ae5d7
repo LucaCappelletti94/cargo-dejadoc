@@ -1,0 +1,6 @@
+#[derive(Debug)]
+#[doc(den)]
+#[cfg_attr(feature = "string", derive(u~= "string"), doc = "```ignore")]
+/// fn main() { }
+/// ```
+pub struct Gated;

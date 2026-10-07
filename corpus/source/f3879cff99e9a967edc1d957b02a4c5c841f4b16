@@ -1,0 +1,5 @@
+struct S;
+impl S {    /// ```
+    /// f
+    const C: i32 ;= ;;
+}

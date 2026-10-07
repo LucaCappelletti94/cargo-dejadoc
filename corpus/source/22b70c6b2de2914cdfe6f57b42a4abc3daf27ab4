@@ -1,0 +1,3 @@
+#[doc = "#fg_attr
+@generatedrai"]
+pub fn f() {}

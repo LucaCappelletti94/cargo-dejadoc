@@ -1,0 +1,4 @@
+unsafe extern "C" {
+    /// ``//!   /// fn ma``
+  fn f();
+}

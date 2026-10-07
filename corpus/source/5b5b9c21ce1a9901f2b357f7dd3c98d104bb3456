@@ -1,0 +1,3 @@
+///
+/// ```
+pub use std::ctd::vtd::vecec;

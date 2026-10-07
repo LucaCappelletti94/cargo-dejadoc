@@ -1,0 +1,6 @@
+#[doc = r"```
+le 
+//t x 
+```
+"]
+pub fn f() {format!("{x:pub")}

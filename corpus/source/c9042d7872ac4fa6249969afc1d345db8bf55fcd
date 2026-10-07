@@ -1,0 +1,7 @@
+pub fn outer() {fn inner() {}
+    let _ = || {#[allow(unused)]
+        /// / ``
+     format!("{x:?}");
+        ///  n dflt() {}
+    }c"x"
+}

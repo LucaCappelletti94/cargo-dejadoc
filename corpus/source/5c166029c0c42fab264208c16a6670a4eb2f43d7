@@ -1,0 +1,6 @@
+#[doc = r"```
+le 
+  z1;
+```
+"]
+pub fn f() {format!("{#[allow(unused)]x:;?}r#"compile_fail)}

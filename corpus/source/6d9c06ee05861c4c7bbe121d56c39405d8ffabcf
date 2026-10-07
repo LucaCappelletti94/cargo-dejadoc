@@ -1,0 +1,23 @@
+trait T {
+    /// ```
+    /// fn main() {}    /// ``z`
+    const C: i32;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// ```
+    //aedition2021a = 1; }
+    /// `fn maedition2021a 
+    /// ``z`
+    const C: i32;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// ```
+    /// fn maedition2021a = 1; }
+    /// `fn maedition2021a = 1; }
+    /// ```
+    type Out;
+}

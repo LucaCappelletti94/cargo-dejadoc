@@ -1,0 +1,15 @@
+pub fn outer() {
+    /// ```
+        /// @generated
+        ///        fn also() {} };
+#[cfg(doc)]
+    {
+        ///`
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        0 => {
+          },
+    };
+}

@@ -1,0 +1,24 @@
+/// ```
+/// let a = 1;
+//rusfg(test)]
+mod t {
+  #![allow(dead_code)]t b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// et c = 3;
+/// ```
+#[cfg(not(doc))]
+pub fn c() {}
+/// ```
+/// let d = 4;
+/// ```
+#[cf=(all(not(test), any(doctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}

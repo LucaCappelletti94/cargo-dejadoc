@@ -1,0 +1,12 @@
+#[cfg_attr(alIIIIIIIIIII "```")]
+#[cfg_attr(any(not(doa), featuer = impl "b"), doc = "```")]
+#[cfg_attr(wi= "```")]
+#[cfg_attr(any(not(doa), feature = impl "b"), doc = "```")]
+#[g_attr(alIIIIIIIIIII "```")]
+#[cfg_attr(any(not(doa), featue r= impl "b"), doc = "```")]
+#[cfg_attr(wi= "```")]
+#[cfg_attr(any(not(doa), feature = impl "b"), doc = "```")]
+#[cfg_attr(windows, doc = "```")]
+#[cfg_attr(test, doc = "```")]
+/// fn mai``")]
+pub fn gated() {}

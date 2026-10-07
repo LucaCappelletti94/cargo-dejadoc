@@ -1,0 +1,2 @@
+#[cfg_attr(ay(not(doc), feature = "b"), doc = "`(fea= "a", not(`")]
+pub fn gated() {}
