@@ -4,10 +4,10 @@
 [![crates.io](https://img.shields.io/crates/v/syn-canon.svg)](https://crates.io/crates/syn-canon)
 [![docs.rs](https://docs.rs/syn-canon/badge.svg)](https://docs.rs/syn-canon)
 
-Canonical form of a [`syn`](https://docs.rs/syn) file. Two files that differ only in formatting, in style rustfmt or a reviewer would not call a difference, or in the names of their local binders print the same canonical tokens, so their hashes match.
+Canonical forms of [`syn`](https://docs.rs/syn) files. Formatting, supported style folds and local binder names share one comparison key.
 
 ```rust
-let canonical = |src: &str| syn_canon::canonicalize(syn::parse_str(src).unwrap()).to_string();
+let canonical = |src: &str| syn_canon::canonicalize(syn::parse_str(src).unwrap());
 
 assert_eq!(
     canonical("fn f(x: u32) -> u32 { return (x + 1); }"),
@@ -20,6 +20,8 @@ assert_ne!(
 ```
 
 `no_std` with `alloc`. It powers [`cargo-dejadoc`](https://github.com/LucaCappelletti94/cargo-dejadoc), which finds duplicated doctests.
+
+`canonicalize` and `canonicalize_failing` return `CanonicalForm`. Its key is opaque and cannot be parsed as Rust, with `Eq`, `Hash` and `Display` sharing that key. `leaf_tokens()` counts canonical leaves, while `body_units()` counts body paths, lifetimes and operators as one and excludes commas and delimiters.
 
 ## Folds
 
@@ -66,8 +68,8 @@ Style folds, each applied only where it keeps the meaning:
 let forms = |src: &str| {
     let file = syn::parse_str(src).unwrap();
     let mut form = String::new();
-    syn_canon::contexts(&file, &mut |_context, tokens| {
-        form = tokens.to_string();
+    syn_canon::contexts(&file, &mut |_context, canonical| {
+        form = canonical.into_key();
     });
     form
 };
@@ -87,4 +89,4 @@ Equal canonical forms are approximate duplication. The normalization cannot see 
 
 ## Stability
 
-The canonical tokens are the contract. Any change to them, a new fold included, is a new major version, so hashes stored by one version stay comparable within it.
+`CanonicalForm` keys and hashes are comparable within one major version. New folds require a major version.

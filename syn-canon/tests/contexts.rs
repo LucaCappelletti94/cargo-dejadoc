@@ -396,17 +396,17 @@ fn capture_numbering_depends_on_references_not_parameter_order() {
 
 #[test]
 fn literal_values_that_resemble_canonical_names_are_preserved() {
-    struct Strings(Vec<String>);
-    impl<'ast> syn::visit::Visit<'ast> for Strings {
-        fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
-            self.0.push(literal.value());
-        }
-    }
-    let (found, _) = sites("fn a(x: u32, y: u32) { consume({ (y, x, \"_iv0\") }); }");
-    let block = syn::parse_str(forms_of(&found, ContextKind::Block)[0]).unwrap();
-    let mut strings = Strings(Vec::new());
-    syn::visit::Visit::visit_block(&mut strings, &block);
-    assert_eq!(strings.0, ["_iv0"]);
+    let (original, _) = sites("fn a(x: u32, y: u32) { consume({ (y, x, \"_iv0\") }); }");
+    let (renamed, _) = sites("fn b(y: u32, x: u32) { consume({ (y, x, \"_iv0\") }); }");
+    let (changed, _) = sites("fn b(y: u32, x: u32) { consume({ (y, x, \"_iv1\") }); }");
+    assert_eq!(
+        forms_of(&original, ContextKind::Block),
+        forms_of(&renamed, ContextKind::Block)
+    );
+    assert_ne!(
+        forms_of(&renamed, ContextKind::Block),
+        forms_of(&changed, ContextKind::Block)
+    );
 }
 
 #[test]
@@ -640,45 +640,25 @@ fn contextual_self_imports_preserve_module_targets() {
 
 #[test]
 fn whole_file_self_imports_preserve_module_member_references() {
+    let original = "
+        mod local { pub fn f() {} pub fn other() {} }
+        mod caller {
+            use super::local::{self};
+            pub fn g() { local::f(); }
+        }";
+    let renamed = "
+        mod local { pub fn helper() {} pub fn neighbor() {} }
+        mod caller {
+            use super::local::{self};
+            pub fn invoke() { local::helper(); }
+        }";
+    let changed = renamed.replace("local::helper()", "local::neighbor()");
     for canonicalize in [syn_canon::canonicalize, syn_canon::canonicalize_failing] {
-        let input = syn::parse_str(
-            "mod local { pub fn f() {} }
-             mod caller {
-                 use super::local::{self};
-                 pub fn g() { local::f(); }
-             }",
-        )
-        .unwrap();
-        let file: syn::File = syn::parse2(canonicalize(input)).unwrap();
-        let modules: Vec<_> = file
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                syn::Item::Mod(module) => module.content.as_ref().map(|(_, items)| items),
-                _ => None,
-            })
-            .collect();
-        let member = modules[0]
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Fn(function) => Some(&function.sig.ident),
-                _ => None,
-            })
-            .unwrap();
-        let caller = modules[1]
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Fn(function) => Some(&function.block),
-                _ => None,
-            })
-            .unwrap();
-        let syn::Stmt::Expr(syn::Expr::Call(call), _) = &caller.stmts[0] else {
-            panic!("expected a module member call");
-        };
-        let syn::Expr::Path(path) = &*call.func else {
-            panic!("expected a module path");
-        };
-        assert_eq!(path.path.segments.last().unwrap().ident, *member);
+        let original = canonicalize(syn::parse_str(original).unwrap());
+        let renamed = canonicalize(syn::parse_str(renamed).unwrap());
+        let changed = canonicalize(syn::parse_str(&changed).unwrap());
+        assert_eq!(original, renamed);
+        assert_ne!(renamed, changed);
     }
 }
 

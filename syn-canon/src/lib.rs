@@ -9,31 +9,38 @@ mod alpha;
 mod blocks;
 mod const_items;
 mod drift;
+mod form;
 
 use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
 use quote::ToTokens;
 
 pub use blocks::{Context, ContextKind, ContextWork, contexts};
+pub use form::CanonicalForm;
 
-/// The canonical tokens of a compiling `file`, equal across style and local binder names.
+/// The canonical form of compiling syntax.
 #[must_use]
-pub fn canonicalize(file: syn::File) -> TokenStream {
+pub fn canonicalize(file: syn::File) -> CanonicalForm {
     canonical(file, true)
 }
 
-/// The canonical tokens of a `file` meant to fail, retaining spellings whose equivalence requires compilation.
+/// The canonical form preserving compilation-failure distinctions.
 #[must_use]
-pub fn canonicalize_failing(file: syn::File) -> TokenStream {
+pub fn canonicalize_failing(file: syn::File) -> CanonicalForm {
     canonical(file, false)
 }
 
-fn canonical(mut file: syn::File, compiles: bool) -> TokenStream {
+fn canonical(mut file: syn::File, compiles: bool) -> CanonicalForm {
     drift::normalize_file(&mut file, compiles);
     alpha::normalize_file(&mut file);
-    fold_tokens(file.to_token_stream(), false, false)
+    let body_units = match file.items.as_slice() {
+        [syn::Item::Fn(function)] => form::body_units(function.block.to_token_stream()),
+        _ => 0,
+    };
+    let tokens = fold_tokens(file.to_token_stream(), false, false)
         .into_iter()
-        .collect()
+        .collect();
+    CanonicalForm::from_tokens(tokens, body_units)
 }
 
 /// The std macros that accept an optional trailing comma and treat it as nothing.
@@ -1310,12 +1317,6 @@ mod tests {
     fn float_trailing_zeros_agree() {
         assert_eq!(canonicalize("1.50").text, canonicalize("1.500").text);
         assert_eq!(canonicalize("1.50").text, canonicalize("1.5").text);
-    }
-
-    #[test]
-    fn a_float_canonicalizes_to_its_text_form() {
-        assert_eq!(canonicalize("1_000.50").text, "fn _canon_0 () { 1000.5 }");
-        assert_eq!(canonicalize("1.0E+03").text, "fn _canon_0 () { 1.0e3 }");
     }
 
     #[test]
@@ -4361,35 +4362,6 @@ mod tests {
         assert_eq!(a.text, b.text);
     }
 
-    fn token_after(text: &str, keyword: &str) -> String {
-        let words: Vec<&str> = text
-            .split_whitespace()
-            .map(|w| w.trim_end_matches([')', ',', ';']))
-            .collect();
-        let i = words.iter().position(|w| *w == keyword).unwrap();
-        words[i + 1].to_string()
-    }
-
-    #[test]
-    fn a_use_alias_annotation_prints_the_declared_binder() {
-        // The alias is printed once, the annotation must carry the very
-        // canon the use statement declares, twin tests cannot see a split
-        // because both sides split alike.
-        let a = canonicalize("use a::T;\nfn f(x: T) {}");
-        assert_eq!(token_after(&a.text, "as"), token_after(&a.text, ":"));
-    }
-
-    #[test]
-    fn an_impl_trait_path_prints_the_declared_trait() {
-        // A top level value sharing the trait name must not hijack the
-        // impl trait path, a value-first lookup breaks the twin
-        // identically on both sides, so the check is that the impl names
-        // the declared trait.
-        let a = canonicalize(
-            "const t: u8 = 5; trait t { fn m(&self) -> u8; } struct W; impl t for W { fn m(&self) -> u8 { 1 } } fn g() { let _ = t; W.m(); }",
-        );
-        assert_eq!(token_after(&a.text, "trait"), token_after(&a.text, "impl"));
-    }
     #[test]
     fn a_higher_ranked_dyn_bound_does_not_shadow_a_loop_label() {
         let a = canonicalize(
@@ -4799,22 +4771,6 @@ mod tests {
                 "let b = 1; let v: <<S>::b>::Out = g(b);",
             ),
         ]);
-    }
-
-    #[test]
-    fn a_bare_qself_path_keeps_its_separator() {
-        for code in [
-            "let n = <&str>::len(\"abc\");",
-            "let v = <Vec<u8>>::new();",
-            "let v: <<S>::A>::B = g();",
-            "let <S>::A(v) = g();",
-        ] {
-            let text = canonicalize(code).text;
-            assert!(
-                syn::parse_str::<syn::File>(&text).is_ok(),
-                "{code} → {text}"
-            );
-        }
     }
 
     #[test]

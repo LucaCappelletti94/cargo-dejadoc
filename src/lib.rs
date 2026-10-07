@@ -334,6 +334,10 @@ const DEFAULT_FN_MIN_TOKENS: usize = 30;
 /// Weighted-token floor for lexical contexts.
 const DEFAULT_CONTEXT_MIN_TOKENS: usize = 30;
 
+const DOCTEST_DOMAIN: u8 = 1;
+const TEXT_DOMAIN: u8 = 2;
+const FUNCTION_DOMAIN: u8 = 3;
+
 /// The module path of `file` in `target`.
 fn module_prefix(target: &TargetScan, file: &SourceFile) -> String {
     match file.segments.first() {
@@ -594,12 +598,20 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         } else {
             normalize::canonicalize(&block.code)
         };
-        let mut hashed = canonical.text.clone();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[if canonical.unparsed {
+            TEXT_DOMAIN
+        } else {
+            DOCTEST_DOMAIN
+        }]);
+        let length = u64::try_from(canonical.key.len()).expect("the key length fits u64");
+        hasher.update(&length.to_be_bytes());
+        hasher.update(canonical.key.as_bytes());
         for tag in checked_attributes(&block.info) {
-            hashed.push('\n');
-            hashed.push_str(tag);
+            hasher.update(b"\n");
+            hasher.update(tag.as_bytes());
         }
-        let hash = blake3::hash(hashed.as_bytes()).to_hex().to_string();
+        let hash = hasher.finalize().to_hex().to_string();
         (
             hash,
             canonical.unparsed,
@@ -656,9 +668,14 @@ fn group_functions(
                 items: alloc::vec![syn::Item::Fn(f.func)],
             };
             let canonical = syn_canon::canonicalize(file);
-            let tokens = normalize::body_tokens(canonical.clone());
-            let keyed = format!("{}\n{canonical}", f.scope);
-            let hash = blake3::hash(keyed.as_bytes()).to_hex().to_string();
+            let tokens = canonical.body_units();
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&[FUNCTION_DOMAIN]);
+            let length = u64::try_from(f.scope.len()).expect("the scope length fits u64");
+            hasher.update(&length.to_be_bytes());
+            hasher.update(f.scope.as_bytes());
+            hasher.update(canonical.key().as_bytes());
+            let hash = hasher.finalize().to_hex().to_string();
             (hash, false, tokens, (f.site, f.context))
         });
     let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens, |sites| {
