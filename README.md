@@ -6,6 +6,8 @@
 [![crates.io](https://img.shields.io/crates/v/dejadoc.svg)](https://crates.io/crates/dejadoc)
 [![docs.rs](https://docs.rs/dejadoc/badge.svg)](https://docs.rs/dejadoc)
 
+Whoa, deja vu. A doctest went past us, and then another that looked just like it.
+
 `cargo dejadoc` finds duplicated Rust doctests and optionally checks functions and lexical contexts across a workspace.
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
