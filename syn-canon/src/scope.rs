@@ -65,11 +65,26 @@ pub(crate) enum Origin {
     SelfTy,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum IntWidth {
+    W8 = 8,
+    W16 = 16,
+    W32 = 32,
+    W64 = 64,
+    W128 = 128,
+}
+
+impl IntWidth {
+    pub(crate) fn bits(self) -> u32 {
+        self as u32
+    }
+}
+
 /// A fixed-width primitive scalar rustc evaluates independently of the target.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum PrimTy {
     /// A two's-complement integer of `width` bits.
-    Int { width: u32, signed: bool },
+    Int { width: IntWidth, signed: bool },
     /// The `bool` scalar.
     Bool,
 }
@@ -82,23 +97,21 @@ impl PrimTy {
                 width,
                 signed: true,
             } => match width {
-                8 => "i8",
-                16 => "i16",
-                32 => "i32",
-                64 => "i64",
-                128 => "i128",
-                _ => unreachable!("a fixed-width primitive"),
+                IntWidth::W8 => "i8",
+                IntWidth::W16 => "i16",
+                IntWidth::W32 => "i32",
+                IntWidth::W64 => "i64",
+                IntWidth::W128 => "i128",
             },
             Self::Int {
                 width,
                 signed: false,
             } => match width {
-                8 => "u8",
-                16 => "u16",
-                32 => "u32",
-                64 => "u64",
-                128 => "u128",
-                _ => unreachable!("a fixed-width primitive"),
+                IntWidth::W8 => "u8",
+                IntWidth::W16 => "u16",
+                IntWidth::W32 => "u32",
+                IntWidth::W64 => "u64",
+                IntWidth::W128 => "u128",
             },
             Self::Bool => "bool",
         }
@@ -109,43 +122,43 @@ impl PrimTy {
 pub(crate) fn primitive_suffix(name: &str) -> Option<PrimTy> {
     match unraw(name) {
         "i8" => Some(PrimTy::Int {
-            width: 8,
+            width: IntWidth::W8,
             signed: true,
         }),
         "i16" => Some(PrimTy::Int {
-            width: 16,
+            width: IntWidth::W16,
             signed: true,
         }),
         "i32" => Some(PrimTy::Int {
-            width: 32,
+            width: IntWidth::W32,
             signed: true,
         }),
         "i64" => Some(PrimTy::Int {
-            width: 64,
+            width: IntWidth::W64,
             signed: true,
         }),
         "i128" => Some(PrimTy::Int {
-            width: 128,
+            width: IntWidth::W128,
             signed: true,
         }),
         "u8" => Some(PrimTy::Int {
-            width: 8,
+            width: IntWidth::W8,
             signed: false,
         }),
         "u16" => Some(PrimTy::Int {
-            width: 16,
+            width: IntWidth::W16,
             signed: false,
         }),
         "u32" => Some(PrimTy::Int {
-            width: 32,
+            width: IntWidth::W32,
             signed: false,
         }),
         "u64" => Some(PrimTy::Int {
-            width: 64,
+            width: IntWidth::W64,
             signed: false,
         }),
         "u128" => Some(PrimTy::Int {
-            width: 128,
+            width: IntWidth::W128,
             signed: false,
         }),
         "bool" => Some(PrimTy::Bool),
