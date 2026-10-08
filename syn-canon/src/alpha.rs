@@ -120,7 +120,7 @@ fn resolve_prefix<'a>(
     (rooted, segments)
 }
 
-/// Resolve a `use` root while retaining opaque qualified suffixes.
+/// Resolve a nonempty `use` path while retaining opaque qualified suffixes.
 pub(crate) fn resolve_target_path<'a>(
     resolve: &dyn Fn(&str) -> FirstSeg<'a>,
     rooted: bool,
@@ -138,9 +138,7 @@ pub(crate) fn resolve_target_path<'a>(
                 .collect(),
         );
     }
-    let Some((leaf, prefix)) = path.split_last() else {
-        return (rooted, Vec::new());
-    };
+    let (leaf, prefix) = path.split_last().expect("a use target has a leaf");
     if prefix.is_empty() {
         return match resolve(leaf.as_str()) {
             FirstSeg::Alias(target) => (target.rooted, target.segments.clone()),
@@ -1258,23 +1256,21 @@ impl<'env> Renamer<'env> {
     ) {
         let observed = self.observed;
         self.observed |= crate::context::live_attr(attrs);
-        let scoped = self.compiles && body.is_some();
-        if scoped {
-            let frozen = match body.as_deref_mut() {
-                Some(block) => {
-                    self.push();
-                    self.prebind_block_uses(block);
-                    let frozen = schedule::unknown_macro_reaches(self, block) || self.observed;
-                    self.pop();
-                    frozen
-                }
-                None => self.observed,
-            };
+        let scoped = if self.compiles
+            && let Some(block) = body.as_deref_mut()
+        {
+            self.push();
+            self.prebind_block_uses(block);
+            let frozen = schedule::unknown_macro_reaches(self, block) || self.observed;
+            self.pop();
             self.scopes.push(schedule::ScopeState {
                 frozen,
                 ..Default::default()
             });
-        }
+            true
+        } else {
+            false
+        };
         begin_generics(self, &mut sig.generics);
         self.visit_attrs(attrs);
         self.push();
