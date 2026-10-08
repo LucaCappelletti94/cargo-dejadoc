@@ -9,10 +9,11 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use quote::ToTokens;
+use syn::visit::Visit;
 
 use crate::alpha;
 use crate::form;
-use crate::scope::{Binding, BindingId, Frame, Ns, Origin, ident_name, unraw};
+use crate::scope::{Binding, BindingId, Frame, Ns, Origin, PrimTy, ident_name, unraw};
 
 /// The original owner of a function.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -64,9 +65,10 @@ fn mangle_owner(text: &str) -> String {
 #[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Debug)]
 struct ModuleId(usize);
 
-/// One indexed module: its seed frame.
+/// One indexed module: its seed frame and its own glob uncertainty.
 struct Module {
     seed: Frame,
+    prim_fallback: bool,
 }
 
 /// One original declaration and its module environment.
@@ -75,6 +77,8 @@ struct Decl<'a> {
     /// The original declaration attributes.
     attrs: &'a [syn::Attribute],
     owner: Owner,
+    prim_fallback: bool,
+    observed: bool,
     /// The original enclosing impl or trait generics.
     generics: Option<*const syn::Generics>,
 }
@@ -131,6 +135,8 @@ impl FunctionView<'_> {
             alpha::Options {
                 seed: Some(seed),
                 generics,
+                prim_fallback: self.entry.prim_fallback,
+                observed: self.entry.observed,
                 self_canon,
             },
         )
@@ -149,7 +155,7 @@ impl<'a> SourceContext<'a> {
     }
 
     /// Index every module's top-level seed and every function it declares,
-    /// inline modules under their own path and seed.
+    /// inline modules under their own path, seed, and glob uncertainty.
     pub fn new<I>(files: I) -> Self
     where
         I: IntoIterator<Item = (&'a [String], &'a syn::File)>,
@@ -167,9 +173,13 @@ impl<'a> SourceContext<'a> {
         let mut module_ids: BTreeMap<Vec<String>, ModuleId> = BTreeMap::new();
         let mut modules: Vec<Module> = Vec::new();
         for (path, scope) in &scopes {
-            let seed = seed_frame(&scopes, path, scope);
+            let prim_fallback = scope_primitives_known(scope.items());
+            let seed = seed_frame(&scopes, path, scope, prim_fallback);
             module_ids.insert(path.clone(), ModuleId(modules.len()));
-            modules.push(Module { seed });
+            modules.push(Module {
+                seed,
+                prim_fallback,
+            });
         }
         let mut decls: BTreeMap<(*const syn::Signature, *const syn::Block), Decl<'a>> =
             BTreeMap::new();
@@ -181,6 +191,7 @@ impl<'a> SourceContext<'a> {
                 &modules,
                 path,
                 &file.items,
+                live_attr(&file.attrs),
                 &mut gen_frames,
             );
         }
@@ -210,6 +221,59 @@ impl<'a> SourceContext<'a> {
             sig,
             block,
         })
+    }
+}
+
+/// Whether a module imports no wildcard names.
+fn glob_free(items: &[syn::Item]) -> bool {
+    !items
+        .iter()
+        .any(|item| matches!(item, syn::Item::Use(use_item) if has_glob(&use_item.tree)))
+}
+
+pub(crate) fn scope_primitives_known(items: &[syn::Item]) -> bool {
+    let mut uncertainty = ScopeUncertainty(false);
+    for item in items {
+        uncertainty.visit_item(item);
+        if uncertainty.0 {
+            return false;
+        }
+    }
+    glob_free(items)
+}
+
+struct ScopeUncertainty(bool);
+
+impl<'ast> Visit<'ast> for ScopeUncertainty {
+    fn visit_attribute(&mut self, attr: &'ast syn::Attribute) {
+        self.0 |=
+            live(&attr.meta) || attr.path().is_ident("cfg") || attr.path().is_ident("cfg_attr");
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        for attr in &item.attrs {
+            self.visit_attribute(attr);
+        }
+    }
+
+    fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+        self.0 |= item.ident.is_none();
+        syn::visit::visit_item_macro(self, item);
+    }
+
+    fn visit_item_extern_crate(&mut self, _: &'ast syn::ItemExternCrate) {
+        self.0 = true;
+    }
+
+    fn visit_block(&mut self, _: &'ast syn::Block) {}
+}
+
+pub(crate) fn has_glob(tree: &syn::UseTree) -> bool {
+    match tree {
+        syn::UseTree::Glob(_) => true,
+        syn::UseTree::Path(path) => has_glob(&path.tree),
+        syn::UseTree::Group(group) => group.items.iter().any(has_glob),
+        _ => false,
     }
 }
 
@@ -244,9 +308,9 @@ impl<'a> ModuleScope<'a> {
         let raw = if name == "core" { "r#core" } else { "r#std" };
         let matches = |ident: &syn::Ident| ident == name || ident == raw;
         self.items().iter().any(|item| {
-            type_item_ident(item).is_some_and(matches)
+            alpha::type_item_ident(item).is_some_and(matches)
                 || matches!(item, syn::Item::Use(import)
-                    if imported_name_matches(&import.tree, matches))
+                    if alpha::imported_name_matches(&import.tree, matches))
         })
     }
 }
@@ -293,12 +357,18 @@ fn qualified_part(out: &mut String, part: &str) {
 }
 
 /// One resolved `use` target.
-enum UseTarget {
+enum UseTarget<'a> {
     /// An external path: `std`, `core`, or a leading `::`.
     External,
-    /// A crate item the context resolved, its qualified name.
-    Item(String),
-    /// A name the context could not resolve.
+    /// A crate item the context resolved, an alias's target and siblings
+    /// for the prim chain.
+    Item {
+        name: String,
+        alias: Option<&'a syn::ItemType>,
+        siblings: &'a [syn::Item],
+        value_only: bool,
+    },
+    /// A name the context could not resolve, its prim stays unproven.
     Unresolved,
 }
 
@@ -367,17 +437,36 @@ fn bind_use_name(binder: &mut UseBinder<'_>, path: &[String], alias: &str) {
     if !binder.visited.insert(alias.to_string()) {
         return;
     }
-    let canon = match resolve_use(binder.scopes, binder.from, path, binder.leading_colon) {
-        UseTarget::External => qualified_name(&path[..path.len() - 1], &path[path.len() - 1]),
-        UseTarget::Item(name) => name,
-        UseTarget::Unresolved => qualified_name(binder.from, alias),
-    };
+    let (canon, prim, value_only) =
+        match resolve_use(binder.scopes, binder.from, path, binder.leading_colon) {
+            UseTarget::External => (
+                qualified_name(&path[..path.len() - 1], &path[path.len() - 1]),
+                external_prim(path),
+                false,
+            ),
+            UseTarget::Item {
+                name,
+                alias: type_alias,
+                siblings,
+                value_only,
+            } => {
+                let prim_fallback = scope_primitives_known(siblings);
+                (
+                    name,
+                    type_alias.and_then(|a| alias_chain_prim(a, siblings, prim_fallback, 0)),
+                    value_only,
+                )
+            }
+            UseTarget::Unresolved => (qualified_name(binder.from, alias), None, false),
+        };
+    let prim = if value_only { None } else { prim };
     let binding = Binding {
         id: BindingId(*binder.next_id),
         canon,
         origin: Origin::Use,
         target: None,
         raw: false,
+        prim,
     };
     *binder.next_id += 1;
     binder.frame.bind(Ns::Value, alias, binding.clone());
@@ -386,12 +475,12 @@ fn bind_use_name(binder: &mut UseBinder<'_>, path: &[String], alias: &str) {
 }
 
 /// Resolve a use path against the module map, `from` the importing module.
-fn resolve_use(
-    scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
+fn resolve_use<'a>(
+    scopes: &BTreeMap<Vec<String>, ModuleScope<'a>>,
     from: &[String],
     path: &[String],
     leading_colon: bool,
-) -> UseTarget {
+) -> UseTarget<'a> {
     if path.is_empty() {
         return UseTarget::Unresolved;
     }
@@ -402,7 +491,10 @@ fn resolve_use(
     let Some(local) = scopes.get(from) else {
         return UseTarget::Unresolved;
     };
-    if matches!(first, "std" | "core") && !local.shadows_primitive_crate(first) {
+    if matches!(first, "std" | "core")
+        && scope_primitives_known(local.items())
+        && !local.shadows_primitive_crate(first)
+    {
         return UseTarget::External;
     }
     let (mut base, rest) = match first {
@@ -441,7 +533,7 @@ fn resolve_use(
     UseTarget::Unresolved
 }
 
-fn resolve_item(items: &[syn::Item], module: &[String], name: &str) -> UseTarget {
+fn resolve_item<'a>(items: &'a [syn::Item], module: &[String], name: &str) -> UseTarget<'a> {
     let item = items
         .iter()
         .find(|item| match item {
@@ -451,52 +543,78 @@ fn resolve_item(items: &[syn::Item], module: &[String], name: &str) -> UseTarget
             _ => false,
         })
         .or_else(|| {
-            items
-                .iter()
-                .find(|item| type_item_ident(item).is_some_and(|ident| ident_name(ident) == name))
+            items.iter().find(|item| {
+                alpha::type_item_ident(item).is_some_and(|ident| ident_name(ident) == name)
+            })
         });
-    match item {
-        Some(_) => UseTarget::Item(qualified_name(module, name)),
-        None => UseTarget::Unresolved,
+    let (alias, value_only) = match item {
+        Some(syn::Item::Type(alias)) => (Some(alias), false),
+        Some(syn::Item::Fn(_) | syn::Item::Const(_) | syn::Item::Static(_)) => (None, true),
+        Some(_) => (None, false),
+        None => return UseTarget::Unresolved,
+    };
+    UseTarget::Item {
+        name: qualified_name(module, name),
+        alias,
+        siblings: items,
+        value_only,
     }
 }
 
-/// The identifier of a type-namespace item, `use` and `macro_rules!` aside.
-fn type_item_ident(item: &syn::Item) -> Option<&syn::Ident> {
-    match item {
-        syn::Item::Struct(item) => Some(&item.ident),
-        syn::Item::Enum(item) => Some(&item.ident),
-        syn::Item::Union(item) => Some(&item.ident),
-        syn::Item::Type(item) => Some(&item.ident),
-        syn::Item::Trait(item) => Some(&item.ident),
-        syn::Item::TraitAlias(item) => Some(&item.ident),
-        syn::Item::Mod(item) => Some(&item.ident),
-        _ => None,
+/// The primitive an external `std::primitive` or `core::primitive` path
+/// names, when it names one.
+fn external_prim(path: &[String]) -> Option<PrimTy> {
+    if let [first, middle, third] = path
+        && middle == "primitive"
+        && (first == "std" || first == "core")
+    {
+        return crate::scope::primitive_suffix(third);
     }
+    None
 }
 
-/// Whether any local name the import tree binds satisfies `matches`.
-fn imported_name_matches(
-    tree: &syn::UseTree,
-    mut matches: impl FnMut(&syn::Ident) -> bool,
-) -> bool {
-    fn walk(
-        tree: &syn::UseTree,
-        parent: Option<&syn::Ident>,
-        matches: &mut impl FnMut(&syn::Ident) -> bool,
-    ) -> bool {
-        match tree {
-            syn::UseTree::Path(path) => walk(&path.tree, Some(&path.ident), matches),
-            syn::UseTree::Name(name) if name.ident == "self" => parent.is_some_and(matches),
-            syn::UseTree::Name(name) => matches(&name.ident),
-            syn::UseTree::Rename(rename) => matches(&rename.rename),
-            syn::UseTree::Group(group) => {
-                group.items.iter().any(|tree| walk(tree, parent, matches))
+/// The proven primitive a type alias names, its target resolved through
+/// the sibling items, the chain bounded to sixteen hops.
+fn alias_chain_prim(
+    alias: &syn::ItemType,
+    siblings: &[syn::Item],
+    prim_fallback: bool,
+    hops: usize,
+) -> Option<PrimTy> {
+    if hops > 16 || !prim_fallback {
+        return None;
+    }
+    let target = alpha::single_segment_type_name(&alias.ty)?;
+    let target = unraw(&target);
+    for item in siblings {
+        match item {
+            syn::Item::Type(other) if ident_name(&other.ident) == target => {
+                return alias_chain_prim(other, siblings, prim_fallback, hops + 1);
             }
-            syn::UseTree::Glob(_) => false,
+            syn::Item::Use(use_item) => {
+                if has_glob(&use_item.tree) {
+                    return None;
+                }
+                if alpha::imported_name_matches(&use_item.tree, |ident| ident_name(ident) == target)
+                {
+                    return None;
+                }
+            }
+            other => {
+                if let Some(ident) = alpha::type_item_ident(other)
+                    && !matches!(other, syn::Item::Type(_))
+                    && ident_name(ident) == target
+                {
+                    return None;
+                }
+            }
         }
     }
-    walk(tree, None, &mut matches)
+    if prim_fallback {
+        crate::scope::primitive_suffix(target)
+    } else {
+        None
+    }
 }
 
 fn bind_item_ident(
@@ -505,6 +623,7 @@ fn bind_item_ident(
     ns: Ns,
     ident: &syn::Ident,
     origin: Origin,
+    prim: Option<PrimTy>,
     next_id: &mut usize,
 ) {
     let name = ident.to_string();
@@ -514,40 +633,52 @@ fn bind_item_ident(
         origin,
         target: None,
         raw: false,
+        prim,
     };
     frame.bind(ns, &name, binding);
     *next_id += 1;
 }
 
-/// The namespace, name and origin of a module item.
-fn item_seed(item: &syn::Item) -> Option<(Ns, &syn::Ident, Origin)> {
+/// The identity a module item seeds at its own spelling: the namespace it
+/// occupies, its identifier, and the prim its alias target proves.
+fn item_seed<'a>(
+    item: &'a syn::Item,
+    siblings: &'a [syn::Item],
+    prim_fallback: bool,
+) -> Option<(Ns, &'a syn::Ident, Origin, Option<PrimTy>)> {
     match item {
-        syn::Item::Fn(i) => Some((Ns::Value, &i.sig.ident, Origin::Item)),
-        syn::Item::Const(i) => Some((Ns::Value, &i.ident, Origin::Item)),
-        syn::Item::Static(i) => Some((Ns::Value, &i.ident, Origin::Item)),
-        syn::Item::Struct(i) => Some((Ns::Type, &i.ident, Origin::Item)),
-        syn::Item::Enum(i) => Some((Ns::Type, &i.ident, Origin::Item)),
-        syn::Item::Union(i) => Some((Ns::Type, &i.ident, Origin::Item)),
-        syn::Item::Trait(i) => Some((Ns::Type, &i.ident, Origin::Item)),
-        syn::Item::TraitAlias(i) => Some((Ns::Type, &i.ident, Origin::Item)),
-        syn::Item::Mod(i) => Some((Ns::Type, &i.ident, Origin::Item)),
-        syn::Item::Type(i) => Some((Ns::Type, &i.ident, Origin::TypeAlias)),
+        syn::Item::Fn(i) => Some((Ns::Value, &i.sig.ident, Origin::Item, None)),
+        syn::Item::Const(i) => Some((Ns::Value, &i.ident, Origin::Item, None)),
+        syn::Item::Static(i) => Some((Ns::Value, &i.ident, Origin::Item, None)),
+        syn::Item::Struct(i) => Some((Ns::Type, &i.ident, Origin::Item, None)),
+        syn::Item::Enum(i) => Some((Ns::Type, &i.ident, Origin::Item, None)),
+        syn::Item::Union(i) => Some((Ns::Type, &i.ident, Origin::Item, None)),
+        syn::Item::Trait(i) => Some((Ns::Type, &i.ident, Origin::Item, None)),
+        syn::Item::TraitAlias(i) => Some((Ns::Type, &i.ident, Origin::Item, None)),
+        syn::Item::Mod(i) => Some((Ns::Type, &i.ident, Origin::Item, None)),
+        syn::Item::Type(i) => Some((
+            Ns::Type,
+            &i.ident,
+            Origin::TypeAlias,
+            alias_chain_prim(i, siblings, prim_fallback, 0),
+        )),
         _ => None,
     }
 }
 
-/// The seed frame of one module scope: its items at their qualified
-/// identity spelling, its `use` imports resolved through the module map.
+/// The seed frame of one module scope: its items at their identity
+/// spelling, the prims its type aliases and use imports prove.
 fn seed_frame(
     scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
     path: &[String],
     scope: &ModuleScope<'_>,
+    prim_fallback: bool,
 ) -> Frame {
     let mut frame = Frame::default();
     let mut next_id = 0usize;
     for item in scope.items() {
-        if let Some((ns, ident, origin)) = item_seed(item) {
-            bind_item_ident(&mut frame, path, ns, ident, origin, &mut next_id);
+        if let Some((ns, ident, origin, prim)) = item_seed(item, scope.items(), prim_fallback) {
+            bind_item_ident(&mut frame, path, ns, ident, origin, prim, &mut next_id);
             continue;
         }
         match item {
@@ -569,6 +700,7 @@ fn seed_frame(
                         Ns::Macro,
                         ident,
                         Origin::MacroRule,
+                        None,
                         &mut next_id,
                     );
                 }
@@ -598,6 +730,7 @@ fn bind_generic_param(
         origin,
         target: None,
         raw: false,
+        prim: None,
     };
     frame.bind(ns, &name, binding);
     *next_id += 1;
@@ -644,6 +777,7 @@ fn generics_frame(
                     origin: Origin::Generic,
                     target: None,
                     raw: false,
+                    prim: None,
                 };
                 frame.bind(Ns::Value, &name, binding.clone());
                 frame.bind(Ns::Type, &name, binding);
@@ -661,9 +795,11 @@ fn index_scope<'a>(
     modules: &[Module],
     path: &[String],
     items: &'a [syn::Item],
+    observed: bool,
     gen_frames: &mut BTreeMap<*const syn::Generics, Frame>,
 ) {
     let module = *module_ids.get(path).expect("a module id");
+    let prim_fallback = modules[module.0].prim_fallback;
     for item in items {
         match item {
             syn::Item::Fn(f) => {
@@ -671,7 +807,9 @@ fn index_scope<'a>(
                     decls,
                     FnDecl {
                         module,
+                        prim_fallback,
                         owner: Owner::Free,
+                        observed,
                         attrs: &f.attrs,
                         generics: None,
                     },
@@ -683,7 +821,15 @@ fn index_scope<'a>(
                 if let Some((_, inner)) = &m.content {
                     let mut child = path.to_vec();
                     child.push(unraw(&m.ident.to_string()).to_string());
-                    index_scope(decls, module_ids, modules, &child, inner, gen_frames);
+                    index_scope(
+                        decls,
+                        module_ids,
+                        modules,
+                        &child,
+                        inner,
+                        observed || live_attr(&m.attrs),
+                        gen_frames,
+                    );
                 }
             }
             syn::Item::Impl(i) => {
@@ -693,6 +839,7 @@ fn index_scope<'a>(
                 } else {
                     Owner::Inherent(text)
                 };
+                let observed = observed || live_attr(&i.attrs);
                 let key = &raw const i.generics;
                 gen_frames
                     .entry(key)
@@ -703,7 +850,9 @@ fn index_scope<'a>(
                             decls,
                             FnDecl {
                                 module,
+                                prim_fallback,
                                 owner: owner.clone(),
+                                observed,
                                 attrs: &f.attrs,
                                 generics: Some(key),
                             },
@@ -715,6 +864,7 @@ fn index_scope<'a>(
             }
             syn::Item::Trait(t) => {
                 let text = t.ident.to_string();
+                let observed = observed || live_attr(&t.attrs);
                 let key = &raw const t.generics;
                 gen_frames.entry(key).or_insert_with(|| {
                     let ident = &t.ident;
@@ -733,7 +883,9 @@ fn index_scope<'a>(
                             decls,
                             FnDecl {
                                 module,
+                                prim_fallback,
                                 owner: Owner::Trait(text.clone()),
+                                observed,
                                 attrs: &f.attrs,
                                 generics: Some(key),
                             },
@@ -766,7 +918,9 @@ fn impl_generics_frame(
 /// The module facts one indexed function is recorded with.
 struct FnDecl<'a> {
     module: ModuleId,
+    prim_fallback: bool,
     owner: Owner,
+    observed: bool,
     attrs: &'a [syn::Attribute],
     generics: Option<*const syn::Generics>,
 }
@@ -787,6 +941,8 @@ fn index_fn<'a>(
             module: facts.module,
             attrs: facts.attrs,
             owner: facts.owner,
+            prim_fallback: facts.prim_fallback,
+            observed: facts.observed || live_attr(facts.attrs),
             generics: facts.generics,
         },
     );
@@ -810,7 +966,7 @@ fn type_text(ty: &syn::Type) -> String {
 /// Whether `meta` takes part in the comparison. `cfg`, the hints that
 /// leave the body's meaning alone, the attributes that export a symbol,
 /// and a `cfg_attr` wrapping only those do not.
-fn live(meta: &syn::Meta) -> bool {
+pub(crate) fn live(meta: &syn::Meta) -> bool {
     let path = meta.path();
     if path.is_ident("cfg_attr") {
         return wrapped(meta, 1).is_none_or(|metas| metas.iter().any(live));
@@ -841,6 +997,11 @@ fn live(meta: &syn::Meta) -> bool {
     ];
     !inert.iter().any(|name| path.is_ident(name))
         && path.segments.first().is_none_or(|s| s.ident != "rustfmt")
+}
+
+/// Whether any attribute in `attrs` takes part in the comparison.
+pub(crate) fn live_attr(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| live(&attr.meta))
 }
 
 /// The metas `meta` wraps after its first `skip` arguments, `None` when

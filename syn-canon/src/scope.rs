@@ -41,11 +41,101 @@ pub(crate) enum Origin {
     SelfTy,
 }
 
+/// A fixed-width primitive scalar rustc evaluates independently of the target.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub(crate) enum PrimTy {
+    /// A two's-complement integer of `width` bits.
+    Int { width: u32, signed: bool },
+    /// The `bool` scalar.
+    Bool,
+}
+
+impl PrimTy {
+    /// The canonical spelling of the suffix.
+    pub(crate) fn suffix(self) -> &'static str {
+        match self {
+            Self::Int {
+                width,
+                signed: true,
+            } => match width {
+                8 => "i8",
+                16 => "i16",
+                32 => "i32",
+                64 => "i64",
+                128 => "i128",
+                _ => unreachable!("a fixed-width primitive"),
+            },
+            Self::Int {
+                width,
+                signed: false,
+            } => match width {
+                8 => "u8",
+                16 => "u16",
+                32 => "u32",
+                64 => "u64",
+                128 => "u128",
+                _ => unreachable!("a fixed-width primitive"),
+            },
+            Self::Bool => "bool",
+        }
+    }
+}
+
+/// The primitive a primitive name spells, raw or plain.
+pub(crate) fn primitive_suffix(name: &str) -> Option<PrimTy> {
+    match unraw(name) {
+        "i8" => Some(PrimTy::Int {
+            width: 8,
+            signed: true,
+        }),
+        "i16" => Some(PrimTy::Int {
+            width: 16,
+            signed: true,
+        }),
+        "i32" => Some(PrimTy::Int {
+            width: 32,
+            signed: true,
+        }),
+        "i64" => Some(PrimTy::Int {
+            width: 64,
+            signed: true,
+        }),
+        "i128" => Some(PrimTy::Int {
+            width: 128,
+            signed: true,
+        }),
+        "u8" => Some(PrimTy::Int {
+            width: 8,
+            signed: false,
+        }),
+        "u16" => Some(PrimTy::Int {
+            width: 16,
+            signed: false,
+        }),
+        "u32" => Some(PrimTy::Int {
+            width: 32,
+            signed: false,
+        }),
+        "u64" => Some(PrimTy::Int {
+            width: 64,
+            signed: false,
+        }),
+        "u128" => Some(PrimTy::Int {
+            width: 128,
+            signed: false,
+        }),
+        "bool" => Some(PrimTy::Bool),
+        _ => None,
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Binding {
     pub(crate) id: BindingId,
     pub(crate) canon: String,
     pub(crate) origin: Origin,
+    /// A proven fixed-width primitive scalar type.
+    pub(crate) prim: Option<PrimTy>,
     pub(crate) target: Option<usize>,
     pub(crate) raw: bool,
 }
@@ -53,6 +143,8 @@ pub(crate) struct Binding {
 #[derive(Clone, Default)]
 pub(crate) struct Frame {
     names: [BTreeMap<String, Binding>; 5],
+    /// A glob import marked this scope uncertain.
+    pub(crate) glob: bool,
 }
 
 impl Frame {

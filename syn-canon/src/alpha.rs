@@ -2,6 +2,7 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -14,9 +15,9 @@ use syn::parse::discouraged::Speculative as _;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
-use crate::reference::{ReferenceFacts, Resolution};
+use crate::reference::{ReferenceFacts, ReferenceKind, Resolution};
 use crate::scope::{
-    Binding, BindingId, Domain, FirstSeg, Frame, Inherited, Ns, Origin, Target, TargetSeg,
+    Binding, BindingId, Domain, FirstSeg, Frame, Inherited, Ns, Origin, PrimTy, Target, TargetSeg,
     new_ident,
 };
 
@@ -29,6 +30,11 @@ pub(crate) struct Options<'a> {
     pub(crate) generics: Option<&'a Frame>,
     /// The canon the view's `Self` names, for a method or trait view.
     pub(crate) self_canon: Option<String>,
+    /// Unresolved type names may still spell a primitive, when no glob
+    /// import can shadow them.
+    pub(crate) prim_fallback: bool,
+    /// A live observer attribute on the declaration or an enclosing item.
+    pub(crate) observed: bool,
 }
 
 /// A resolved name reference, its identity only, the canon resolves on render.
@@ -37,6 +43,8 @@ struct Resolved {
     domain: Domain,
     ns: Ns,
     id: BindingId,
+    origin: Origin,
+    prim: Option<PrimTy>,
     target: Option<usize>,
 }
 
@@ -157,7 +165,7 @@ static EMPTY_MOD_FRAMES: BTreeMap<BindingId, Frame> = BTreeMap::new();
 /// The canonicalizer, one mutable traversal per pass.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "Normalization mode, syntax positions and token opacity are independent"
+    reason = "Normalization mode, syntax positions, token opacity and proof scope are independent"
 )]
 pub(crate) struct Renamer<'env> {
     /// The scope stack of the pass, the base frame first.
@@ -194,6 +202,19 @@ pub(crate) struct Renamer<'env> {
     after_bare_qself: bool,
     /// Raw-involved identifiers in macro input keep their token spelling.
     opaque_tokens: bool,
+    /// A passing doctest: the proof analysis runs on its function blocks.
+    compiles: bool,
+    /// Unresolved type names may still spell a primitive, when no glob
+    /// import can shadow them.
+    prim_fallback: bool,
+    /// A live observer attribute froze the declarations being visited.
+    observed: bool,
+    /// The block nesting level of the traversal.
+    depth: usize,
+    /// The frozen flag of every function scope open in the traversal.
+    proof_scopes: Vec<bool>,
+    /// The proven types of producer patterns, one map per analyzed block.
+    proof_prims: Vec<BTreeMap<*const syn::Pat, PrimTy>>,
     /// The resolutions collected for the macro arguments being rewritten.
     macro_origins: Option<Vec<Resolution>>,
     /// The reference provenance the pass recorded.
@@ -220,6 +241,12 @@ impl<'env> Renamer<'env> {
             in_type: false,
             after_bare_qself: false,
             opaque_tokens: false,
+            compiles: false,
+            prim_fallback: false,
+            observed: false,
+            depth: 0,
+            proof_scopes: Vec::new(),
+            proof_prims: Vec::new(),
             macro_origins: None,
             facts: ReferenceFacts::default(),
         }
@@ -246,21 +273,20 @@ impl<'env> Renamer<'env> {
     }
 
     /// A file pass with the optional seeded environment of a function view.
-    fn seeded(
-        seed: Option<&'env Frame>,
-        generics: Option<&'env Frame>,
-        self_canon: Option<String>,
-    ) -> Self {
+    fn seeded(options: Options<'env>, compiles: bool) -> Self {
         let mut renamer = Self::new();
-        if let Some(frame) = seed {
+        renamer.compiles = compiles;
+        renamer.prim_fallback = options.prim_fallback;
+        renamer.observed = options.observed;
+        if let Some(frame) = options.seed {
             renamer.seed = Some(frame);
             renamer.next_id = renamer.next_id.max(frame.next_id());
         }
-        if let Some(frame) = generics {
+        if let Some(frame) = options.generics {
             renamer.generics = Some(frame);
             renamer.next_id = renamer.next_id.max(frame.next_id());
         }
-        if let Some(canon) = self_canon {
+        if let Some(canon) = options.self_canon {
             let id = BindingId(renamer.next_id);
             renamer.next_id += 1;
             let mut frame = Frame::default();
@@ -271,6 +297,7 @@ impl<'env> Renamer<'env> {
                     id,
                     canon,
                     origin: Origin::SelfTy,
+                    prim: None,
                     target: None,
                     raw: false,
                 },
@@ -318,12 +345,18 @@ impl<'env> Renamer<'env> {
 
     /// Bind `name` in the current frame and return the new binding.
     fn bind(&mut self, ns: Ns, name: &str, origin: Origin) -> Binding {
+        self.bind_proven(ns, name, origin, None)
+    }
+
+    /// Bind `name` with its proven scalar type.
+    fn bind_proven(&mut self, ns: Ns, name: &str, origin: Origin, prim: Option<PrimTy>) -> Binding {
         let id = self.alloc_id();
         let canon = self.local_canon(ns);
         let binding = Binding {
             id,
             canon: canon.clone(),
             origin,
+            prim,
             target: None,
             raw: false,
         };
@@ -345,6 +378,7 @@ impl<'env> Renamer<'env> {
             id,
             canon: canon.clone(),
             origin,
+            prim: None,
             target,
             raw: false,
         };
@@ -429,6 +463,8 @@ impl<'env> Renamer<'env> {
             domain,
             ns,
             id: binding.id,
+            origin: binding.origin,
+            prim: binding.prim,
             target: binding.target,
         }
     }
@@ -463,30 +499,36 @@ impl<'env> Renamer<'env> {
         None
     }
 
-    /// The provenance of the reference retained by normalization.
+    /// The provenance and proven scalar type of a retained reference.
     fn resolution(&self, ns: &[Ns], name: &str) -> Resolution {
         let Some(resolved) = self.lookup(ns, name) else {
-            return Resolution::Unresolved;
+            return Resolution::default();
         };
         let domain = if let Some(index) = resolved.target {
             let target = self.target_of(resolved.domain, index);
             if target.rooted {
-                return Resolution::Unresolved;
+                return Resolution::default();
             }
             let Some((domain, _, _)) = target.segments.first().and_then(|segment| segment.origin)
             else {
-                return Resolution::Unresolved;
+                return Resolution::default();
             };
             if domain == Domain::Inherited {
-                return Resolution::Unresolved;
+                return Resolution::default();
             }
             domain
         } else {
             resolved.domain
         };
         match domain {
-            Domain::Local => Resolution::Owned,
-            Domain::Inherited => Resolution::Inherited,
+            Domain::Local => Resolution {
+                kind: ReferenceKind::Owned,
+                prim: resolved.prim,
+            },
+            Domain::Inherited => Resolution {
+                kind: ReferenceKind::Inherited,
+                prim: resolved.prim,
+            },
         }
     }
 
@@ -525,6 +567,152 @@ impl<'env> Renamer<'env> {
         {
             rename(ident, &self.render(&resolved));
         }
+    }
+
+    /// The unproven type names a scope may still spell as primitives, no
+    /// type binder captured the name.
+    fn name_prim(&self, name: &str) -> Option<PrimTy> {
+        if let Some(resolved) = self.lookup(&[Ns::Type], name) {
+            return match resolved.origin {
+                Origin::TypeAlias | Origin::Use => resolved.prim,
+                _ => None,
+            };
+        }
+        if self.prim_fallback {
+            crate::scope::primitive_suffix(name)
+        } else {
+            None
+        }
+    }
+
+    /// The proven primitive type of a declared type, when the declaration
+    /// establishes one through fully known local definitions.
+    pub(crate) fn param_prim(&self, ty: &syn::Type) -> Option<PrimTy> {
+        if !self.prim_fallback {
+            return None;
+        }
+        match ty {
+            syn::Type::Group(group) => self.param_prim(&group.elem),
+            syn::Type::Path(path) if path.qself.is_none() => {
+                if path
+                    .path
+                    .segments
+                    .iter()
+                    .any(|segment| !matches!(segment.arguments, syn::PathArguments::None))
+                {
+                    return None;
+                }
+                let names: Vec<String> = path
+                    .path
+                    .segments
+                    .iter()
+                    .map(|segment| crate::scope::ident_name(&segment.ident))
+                    .collect();
+                if let [first, middle, third] = names.as_slice()
+                    && middle == "primitive"
+                    && matches!(first.as_str(), "std" | "core")
+                    && (path.path.leading_colon.is_some()
+                        || self.lookup(&[Ns::Type], first).is_none())
+                {
+                    return crate::scope::primitive_suffix(third);
+                }
+                if names.len() == 1 {
+                    return self.name_prim(&names[0]);
+                }
+                None
+            }
+            _ => None,
+        }
+    }
+
+    /// Whether a local macro rule, use import, or glob import claims the
+    /// name, so the call is not the standard macro it spells.
+    pub(crate) fn macro_shadowed(&self, name: &str) -> bool {
+        !self.prim_fallback
+            || self.frames.iter().any(|frame| frame.glob)
+            || self.lookup(&[Ns::Macro], name).is_some()
+    }
+
+    /// Whether a type-namespace binder resolves `name`.
+    pub(crate) fn type_shadowed(&self, name: &str) -> bool {
+        self.lookup(&[Ns::Type], name).is_some()
+    }
+
+    /// Whether the innermost function scope is frozen by an unknown
+    /// observer.
+    pub(crate) fn proof_frozen(&self) -> bool {
+        *self.proof_scopes.last().expect("a function scope")
+    }
+
+    /// The block nesting level of the traversal.
+    pub(crate) fn depth(&self) -> usize {
+        self.depth
+    }
+
+    /// Pass every visible value binding into the proof's value
+    /// environment, a nearer name masking a farther one.
+    pub(crate) fn proof_env(&self, env: &mut BTreeMap<String, crate::proof::Value>) {
+        for frame in self.frames.iter().rev() {
+            for (name, binding) in frame.bindings(Ns::Value) {
+                env.entry(name.clone())
+                    .or_insert_with(|| crate::proof::Value {
+                        producer: None,
+                        prim: binding.prim,
+                    });
+            }
+        }
+    }
+
+    /// Bind the local names a block use tree imports into the current
+    /// frame, a glob marking the frame uncertain.
+    fn prebind_use_tree(&mut self, tree: &syn::UseTree) {
+        match tree {
+            syn::UseTree::Path(path) => self.prebind_use_tree(&path.tree),
+            syn::UseTree::Name(name) => {
+                self.prebind_macro_name(crate::scope::unraw(&name.ident.to_string()));
+            }
+            syn::UseTree::Rename(rename) => {
+                self.prebind_macro_name(crate::scope::unraw(&rename.rename.to_string()));
+            }
+            syn::UseTree::Group(group) => {
+                for inner in &group.items {
+                    self.prebind_use_tree(inner);
+                }
+            }
+            syn::UseTree::Glob(_) => self.top_glob(),
+        }
+    }
+
+    /// Bind one imported macro name into the current frame.
+    fn prebind_macro_name(&mut self, name: &str) {
+        let id = self.alloc_id();
+        self.top_bind(
+            Ns::Macro,
+            name,
+            Binding {
+                id,
+                canon: String::new(),
+                origin: Origin::Use,
+                prim: None,
+                target: None,
+                raw: false,
+            },
+        );
+    }
+
+    /// Mark the current frame as glob-scoped.
+    fn top_glob(&mut self) {
+        self.frames.last_mut().expect("a scope frame").glob = true;
+    }
+
+    /// Bind every block-local use into a temporary frame, source
+    /// untouched, so an imported macro name is uncertain before the
+    /// body's own visit would bind it.
+    fn prebind_block_uses(&mut self, block: &syn::Block) {
+        self.push();
+        let mut binder = BlockUseBinder { renamer: self };
+        syn::visit::visit_block(&mut binder, block);
+        self.pop();
     }
 
     /// Visit the attribute list of an item or function.
@@ -830,7 +1018,10 @@ impl<'env> Renamer<'env> {
                     .collect();
                 syn::UseTree::Group(group)
             }
-            glob @ syn::UseTree::Glob(_) => glob,
+            glob @ syn::UseTree::Glob(_) => {
+                self.top_glob();
+                glob
+            }
         }
     }
 
@@ -859,28 +1050,55 @@ impl<'env> Renamer<'env> {
 
     /// Bind every name `pat` binds, then visit and rewrite it.
     fn bind_pat(&mut self, pat: &mut syn::Pat) {
+        let prim = self
+            .proof_prims
+            .last()
+            .and_then(|pats| pats.get(&core::ptr::from_ref(pat)).copied());
         let mut names = Vec::new();
         pattern_names(pat, &mut names);
         for name in &names {
-            self.bind(Ns::Value, name, Origin::Let);
+            self.bind_proven(Ns::Value, name, Origin::Let, prim);
         }
         syn::visit_mut::visit_pat_mut(self, pat);
         rewrite_pat_bindings(self, pat);
     }
 
     /// A function's generics frame and parameter frame around its
-    /// signature and body.
+    /// signature and body, its own name already handled.
     fn visit_fn(
         &mut self,
         attrs: &mut [syn::Attribute],
         sig: &mut syn::Signature,
-        body: Option<&mut syn::Block>,
+        mut body: Option<&mut syn::Block>,
     ) {
+        let observed = self.observed;
+        self.observed |= crate::context::live_attr(attrs);
+        let scoped = self.compiles && body.is_some();
+        if scoped {
+            let frozen = match body.as_deref_mut() {
+                Some(block) => {
+                    self.push();
+                    self.prebind_block_uses(block);
+                    let frozen = crate::proof::unknown_macro_reaches(self, block) || self.observed;
+                    self.pop();
+                    frozen
+                }
+                None => self.observed,
+            };
+            self.proof_scopes.push(frozen);
+        }
         begin_generics(self, &mut sig.generics);
         self.visit_attrs(attrs);
         self.push();
-        for param in fn_param_names(sig.inputs.iter_mut()) {
-            self.bind(Ns::Value, &param, Origin::Parameter);
+        for input in &mut sig.inputs {
+            if let syn::FnArg::Typed(pat_type) = input {
+                let prim = self.param_prim(&pat_type.ty);
+                let mut names = Vec::new();
+                pattern_names(&mut pat_type.pat, &mut names);
+                for name in &names {
+                    self.bind_proven(Ns::Value, name, Origin::Parameter, prim);
+                }
+            }
         }
         visit_fn_inputs(self, sig.inputs.iter_mut());
         syn::visit_mut::visit_return_type_mut(self, &mut sig.output);
@@ -889,6 +1107,10 @@ impl<'env> Renamer<'env> {
         }
         self.pop();
         self.pop();
+        if scoped {
+            self.proof_scopes.pop().expect("a fn scope");
+        }
+        self.observed = observed;
     }
 
     /// Rename a type item, then open its generics frame and visit its
@@ -998,7 +1220,7 @@ fn push_format_name(renamer: &mut Renamer<'_>, name: &str, out: &mut String) {
         }
         _ => {
             if let Some(origins) = &mut renamer.macro_origins {
-                origins.push(Resolution::Unresolved);
+                origins.push(Resolution::default());
             }
             out.push_str(name);
         }
@@ -1066,8 +1288,12 @@ fn rewrite_format_str(renamer: &mut Renamer<'_>, lit: &syn::LitStr) -> syn::LitS
 }
 
 /// Alpha-normalize a parsed file in place, returning the reference facts.
-pub(crate) fn normalize_file(file: &mut syn::File, options: Options<'_>) -> ReferenceFacts {
-    let mut renamer = Renamer::seeded(options.seed, options.generics, options.self_canon);
+pub(crate) fn normalize_file(
+    file: &mut syn::File,
+    compiles: bool,
+    options: Options<'_>,
+) -> ReferenceFacts {
+    let mut renamer = Renamer::seeded(options, compiles);
     renamer.visit_file_mut(file);
     renamer.into_reference_facts()
 }
@@ -1139,15 +1365,118 @@ fn pattern_names(pat: &mut syn::Pat, out: &mut Vec<String>) {
     });
 }
 
-/// The names bound by the function parameters of `inputs`.
-fn fn_param_names<'a>(inputs: impl Iterator<Item = &'a mut syn::FnArg>) -> Vec<String> {
-    let mut out = Vec::new();
-    for input in inputs {
-        if let syn::FnArg::Typed(pat_type) = input {
-            pattern_names(&mut pat_type.pat, &mut out);
+/// Binds the leaf macro names a block use tree imports into a temporary
+/// frame, the source untouched.
+struct BlockUseBinder<'a, 'e> {
+    renamer: &'a mut Renamer<'e>,
+}
+
+impl Visit<'_> for BlockUseBinder<'_, '_> {
+    fn visit_stmt(&mut self, stmt: &syn::Stmt) {
+        if let syn::Stmt::Item(syn::Item::Use(use_item)) = stmt {
+            self.renamer.prebind_use_tree(&use_item.tree);
+        } else {
+            syn::visit::visit_stmt(self, stmt);
         }
     }
-    out
+}
+
+/// The identifier of a type-namespace item, `use` and `macro_rules!` aside.
+pub(crate) fn type_item_ident(item: &syn::Item) -> Option<&syn::Ident> {
+    match item {
+        syn::Item::Struct(item) => Some(&item.ident),
+        syn::Item::Enum(item) => Some(&item.ident),
+        syn::Item::Union(item) => Some(&item.ident),
+        syn::Item::Type(item) => Some(&item.ident),
+        syn::Item::Trait(item) => Some(&item.ident),
+        syn::Item::TraitAlias(item) => Some(&item.ident),
+        syn::Item::Mod(item) => Some(&item.ident),
+        _ => None,
+    }
+}
+
+/// Whether the use tree binds the name `matches` claims, a plain glob
+/// binding no particular name.
+pub(crate) fn imported_name_matches(
+    tree: &syn::UseTree,
+    mut matches: impl FnMut(&syn::Ident) -> bool,
+) -> bool {
+    fn walk(
+        tree: &syn::UseTree,
+        parent: Option<&syn::Ident>,
+        matches: &mut impl FnMut(&syn::Ident) -> bool,
+    ) -> bool {
+        match tree {
+            syn::UseTree::Path(path) => walk(&path.tree, Some(&path.ident), matches),
+            syn::UseTree::Name(name) if name.ident == "self" => parent.is_some_and(matches),
+            syn::UseTree::Name(name) => matches(&name.ident),
+            syn::UseTree::Rename(rename) => matches(&rename.rename),
+            syn::UseTree::Group(group) => {
+                group.items.iter().any(|tree| walk(tree, parent, matches))
+            }
+            syn::UseTree::Glob(_) => false,
+        }
+    }
+    walk(tree, None, &mut matches)
+}
+
+/// The proven primitive a type alias names, its target a single-segment
+/// path resolved through the sibling items and the outer frames.
+fn alias_prim(renamer: &Renamer, items: &[&syn::Item], name: &str) -> Option<PrimTy> {
+    let mut visited = BTreeSet::new();
+    alias_prim_inner(renamer, items, crate::scope::unraw(name), 0, &mut visited)
+}
+
+fn alias_prim_inner(
+    renamer: &Renamer,
+    items: &[&syn::Item],
+    name: &str,
+    hops: usize,
+    visited: &mut BTreeSet<String>,
+) -> Option<PrimTy> {
+    if hops > 16 || !visited.insert(name.to_string()) {
+        return None;
+    }
+    let alias = items.iter().find_map(|item| match item {
+        syn::Item::Type(item) if crate::scope::ident_name(&item.ident) == name => Some(item),
+        _ => None,
+    })?;
+    if alias.attrs.iter().any(|attr| {
+        crate::context::live(&attr.meta)
+            || attr.path().is_ident("cfg")
+            || attr.path().is_ident("cfg_attr")
+    }) {
+        return None;
+    }
+    let ty = &alias.ty;
+    let target = single_segment_type_name(ty)?;
+    let target = crate::scope::unraw(&target);
+    // A sibling of the target's name decides it before any outer binding.
+    for item in items {
+        match item {
+            syn::Item::Use(use_item) => {
+                if crate::context::has_glob(&use_item.tree) {
+                    return None;
+                }
+                if imported_name_matches(&use_item.tree, |ident| {
+                    crate::scope::ident_name(ident) == target
+                }) {
+                    return None;
+                }
+            }
+            syn::Item::Type(alias) if crate::scope::ident_name(&alias.ident) == target => {
+                return alias_prim_inner(renamer, items, target, hops + 1, visited);
+            }
+            other => {
+                if let Some(ident) = type_item_ident(other)
+                    && crate::scope::ident_name(ident) == target
+                {
+                    return None;
+                }
+            }
+        }
+    }
+    renamer.name_prim(target)
 }
 
 /// The name and namespace of an item the prebind recognizes.
@@ -1177,20 +1506,28 @@ fn item_origin(item: &syn::Item) -> Origin {
 
 /// Pre-bind item names so a use may precede its definition, skipping
 /// `macro_rules!` and `use`, which are visible only after their line.
-fn prebind<'a>(renamer: &mut Renamer<'_>, items: impl Iterator<Item = &'a syn::Item>) {
+fn prebind(renamer: &mut Renamer<'_>, items: &[&syn::Item]) {
     for item in items {
         let Some((ns, ident)) = item_binding(item) else {
             continue;
         };
+        let name = ident.to_string();
+        let prim = matches!(item, syn::Item::Type(_))
+            .then(|| alias_prim(renamer, items, &name))
+            .flatten();
         let origin = item_origin(item);
-        let binding = renamer.bind(ns, &ident.to_string(), origin);
+        let binding = renamer.bind_proven(ns, &name, origin, prim);
         if let syn::Item::Mod(syn::ItemMod {
-            content: Some((_, items)),
+            content: Some((_, module_items)),
             ..
         }) = item
         {
             renamer.push();
-            prebind(renamer, items.iter());
+            let previous = renamer.prim_fallback;
+            renamer.prim_fallback = crate::context::scope_primitives_known(module_items);
+            let items: Vec<&syn::Item> = module_items.iter().collect();
+            prebind(renamer, &items);
+            renamer.prim_fallback = previous;
             let frame = renamer.frames.pop().expect("a scope frame");
             renamer.mod_frames.insert(binding.id, frame);
         }
@@ -1371,21 +1708,37 @@ fn restore_type(facts: &mut ReferenceFacts, ty: &syn::Type, resolutions: &[TypeR
 
 impl VisitMut for Renamer<'_> {
     fn visit_file_mut(&mut self, file: &mut syn::File) {
-        prebind(self, file.items.iter());
+        self.observed |= crate::context::live_attr(&file.attrs);
+        let items: Vec<&syn::Item> = file.items.iter().collect();
+        prebind(self, &items);
         syn::visit_mut::visit_file_mut(self, file);
     }
 
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
         self.push();
-        prebind(
-            self,
-            block.stmts.iter().filter_map(|stmt| match stmt {
+        let items: Vec<&syn::Item> = block
+            .stmts
+            .iter()
+            .filter_map(|stmt| match stmt {
                 syn::Stmt::Item(item) => Some(item),
                 _ => None,
-            }),
-        );
+            })
+            .collect();
+        prebind(self, &items);
+        self.depth += 1;
+        let analyzed =
+            self.compiles && !self.proof_scopes.is_empty() && self.macro_origins.is_none();
+        if analyzed {
+            let (proof, pats) = crate::proof::analyze(self, block);
+            self.facts.blocks.insert(core::ptr::from_ref(block), proof);
+            self.proof_prims.push(pats);
+        }
         syn::visit_mut::visit_block_mut(self, block);
+        self.depth -= 1;
         self.pop();
+        if analyzed {
+            self.proof_prims.pop().expect("an analyzed block");
+        }
     }
 
     fn visit_local_mut(&mut self, local: &mut syn::Local) {
@@ -1454,6 +1807,7 @@ impl VisitMut for Renamer<'_> {
                 id,
                 canon,
                 origin: Origin::SelfTy,
+                prim: None,
                 target: None,
                 raw: false,
             },
@@ -1489,6 +1843,7 @@ impl VisitMut for Renamer<'_> {
                     id,
                     canon,
                     origin: Origin::SelfTy,
+                    prim: None,
                     target: None,
                     raw: false,
                 },
@@ -1582,12 +1937,16 @@ impl VisitMut for Renamer<'_> {
         if let Some(bound) = &mut closure.lifetimes {
             self.visit_bound_lifetimes_mut(bound);
         }
-        let mut names = Vec::new();
         for input in &mut closure.inputs {
+            let prim = match input {
+                syn::Pat::Type(pat_type) => self.param_prim(&pat_type.ty),
+                _ => None,
+            };
+            let mut names = Vec::new();
             pattern_names(input, &mut names);
-        }
-        for name in &names {
-            self.bind(Ns::Value, name, Origin::Closure);
+            for name in &names {
+                self.bind_proven(Ns::Value, name, Origin::Closure, prim);
+            }
         }
         for input in &mut closure.inputs {
             syn::visit_mut::visit_pat_mut(self, input);

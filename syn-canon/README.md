@@ -25,6 +25,8 @@ assert_ne!(
 
 `SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves qualified inherited references and owner generics while alpha-renaming declarations inside the view.
 
+Comparison keys retain proven fixed-width scalar types through resolved aliases. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.
