@@ -181,9 +181,8 @@ struct Producer {
 struct Region {
     /// The region's producers, producer indices in source order.
     producers: Vec<usize>,
-    /// The statement range the region covers, exclusive end.
+    /// The first statement in the region.
     start: usize,
-    end: usize,
     /// A region retained as opaque, by bound or by taint.
     dead: bool,
 }
@@ -379,27 +378,6 @@ fn peel_paren(expr: &syn::Expr) -> &syn::Expr {
     expr
 }
 
-/// The expression inside a `Paren` or `Group`.
-fn paren_expr(expr: &syn::Expr) -> &syn::Expr {
-    match expr {
-        syn::Expr::Paren(paren) => &paren.expr,
-        syn::Expr::Group(group) => &group.expr,
-        _ => expr,
-    }
-}
-
-/// The single operation character a binary op maps to, for the total
-/// bitwise and shift operators.
-fn op_char(op: &syn::BinOp) -> Option<char> {
-    match op {
-        syn::BinOp::BitAnd(_) => Some('&'),
-        syn::BinOp::BitOr(_) => Some('|'),
-        syn::BinOp::BitXor(_) => Some('^'),
-        syn::BinOp::Shl(_) => Some('<'),
-        syn::BinOp::Shr(_) => Some('>'),
-        _ => None,
-    }
-}
 /// Whether `op` is a compound assignment the labels group under one tag.
 fn is_assign_op(op: &syn::BinOp) -> bool {
     matches!(
@@ -445,7 +423,15 @@ fn op_text(op: &syn::BinOp) -> String {
 /// The total result type of a bitwise or shift operation over proven
 /// scalars, an unsuffixed integer literal adopting the operation's
 /// established type.
-fn total_op(op: char, bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<(char, PrimTy)> {
+fn total_op(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<(char, PrimTy)> {
+    let op = match bin_op {
+        syn::BinOp::BitAnd(_) => '&',
+        syn::BinOp::BitOr(_) => '|',
+        syn::BinOp::BitXor(_) => '^',
+        syn::BinOp::Shl(_) => '<',
+        syn::BinOp::Shr(_) => '>',
+        _ => return None,
+    };
     let left_prim = left.prim();
     let right_prim = right.prim();
     if matches!(bin_op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) {
@@ -457,9 +443,6 @@ fn total_op(op: char, bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<(c
             Lbl::Int(count, _) if *count < u128::from(width) => Some((op, prim)),
             _ => None,
         };
-    }
-    if op != '&' && op != '|' && op != '^' {
-        return None;
     }
     let prim = match (left_prim, right_prim) {
         (Some(left), Some(right)) if left == right => left,
@@ -541,14 +524,6 @@ fn pat_names(pat: &syn::Pat) -> Vec<String> {
         syn::Pat::Guard(guard) => pat_names(&guard.pat),
         syn::Pat::Or(orbit) => orbit.cases.first().map(pat_names).unwrap_or_default(),
         _ => Vec::new(),
-    }
-}
-
-/// The binding names of a pattern list, as used by for-loops and closures.
-fn pat_names_list(pat: &syn::Pat) -> Vec<String> {
-    match pat {
-        syn::Pat::Tuple(tuple) => tuple.elems.iter().flat_map(pat_names).collect(),
-        _ => pat_names(pat),
     }
 }
 
@@ -672,9 +647,8 @@ fn label_expr(
         syn::Expr::Path(path) if path.qself.is_none() => label_path(renamer, env, &path.path),
         syn::Expr::Path(_) => (Lbl::Other("q".into(), Vec::new()), Vec::new()),
         syn::Expr::Binary(bin) => label_binary(renamer, env, bin, consumer, locals),
-        syn::Expr::Paren(_) | syn::Expr::Group(_) => {
-            label_expr(renamer, env, paren_expr(expr), consumer, locals)
-        }
+        syn::Expr::Paren(paren) => label_expr(renamer, env, &paren.expr, consumer, locals),
+        syn::Expr::Group(group) => label_expr(renamer, env, &group.expr, consumer, locals),
         syn::Expr::Tuple(tuple) => label_tuple(renamer, env, &tuple.elems, consumer, locals),
         syn::Expr::Call(call) => label_call(renamer, env, call, consumer, locals),
         syn::Expr::MethodCall(method) => label_method(renamer, env, method, consumer, locals),
@@ -721,9 +695,6 @@ fn label_expr(
         syn::Expr::Unsafe(block) => label_blk(renamer, env, &block.block, consumer, locals),
         syn::Expr::Async(block) => label_blk(renamer, env, &block.block, consumer, locals),
         syn::Expr::Const(block) => label_blk(renamer, env, &block.block, consumer, locals),
-        syn::Expr::Continue(_) | syn::Expr::Infer(_) | syn::Expr::Yield(_) => {
-            (Lbl::Other("e".into(), Vec::new()), Vec::new())
-        }
         syn::Expr::Verbatim(tokens) => (
             Lbl::Other("v".into(), vec![Lbl::Lit(tokens.to_string())]),
             Vec::new(),
@@ -779,7 +750,7 @@ fn label_binary(
     let (left, mut sites) = label_expr(renamer, env, &bin.left, consumer, locals);
     let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals);
     sites.extend(r_sites);
-    let total = op_char(&bin.op).and_then(|op| total_op(op, &bin.op, &left, &right));
+    let total = total_op(&bin.op, &left, &right);
     if let Some((op, prim)) = total {
         (Lbl::Op(op, Box::new(left), Box::new(right), prim), sites)
     } else {
@@ -921,7 +892,7 @@ fn label_for_loop(
 ) -> (Lbl, Vec<Site>) {
     let (iterable, mut sites) = label_expr(renamer, env, &for_loop.expr, consumer, locals);
     let mut inner = env.clone();
-    for name in pat_names_list(&for_loop.pat) {
+    for name in pat_names(&for_loop.pat) {
         inner.insert(
             name,
             Value {
@@ -975,7 +946,7 @@ fn label_match_expr(
     let mut children = vec![scrutinee];
     for arm in &r#match.arms {
         let mut inner = env.clone();
-        for name in pat_names_list(&arm.pat) {
+        for name in pat_names(&arm.pat) {
             inner.insert(
                 name,
                 Value {
@@ -1015,7 +986,7 @@ fn label_closure(
             syn::Pat::Type(pat_type) => renamer.param_prim(&pat_type.ty),
             _ => None,
         };
-        for name in pat_names_list(input) {
+        for name in pat_names(input) {
             inner.insert(
                 name,
                 Value {
@@ -1787,12 +1758,21 @@ fn schedule_region(
 ) -> Option<Vec<usize>> {
     let nodes = &region.producers;
     let n = nodes.len();
-    if n > MAX_REGION_NODES {
-        return None;
-    }
     let mut slots: BTreeMap<usize, usize> = BTreeMap::new();
     for (slot, &id) in nodes.iter().enumerate() {
         slots.insert(id, slot);
+    }
+    if nodes
+        .iter()
+        .enumerate()
+        .skip(1)
+        .all(|(slot, &id)| producers[id].deps.contains(&(slot - 1)))
+    {
+        // Every predecessor is required, so only source order is legal.
+        for use_ in uses.iter().filter(|use_| slots.contains_key(&use_.node)) {
+            region_label(&use_.label, &slots, producers, sealed)?;
+        }
+        return Some((0..n).collect());
     }
     let inits: Vec<Lbl> = nodes
         .iter()
@@ -1939,14 +1919,12 @@ impl BlockScan {
             self.regions.push(Region {
                 producers: Vec::new(),
                 start: index,
-                end: index + 1,
                 dead: false,
             });
             self.regions.len() - 1
         });
         if self.regions[region].producers.len() == MAX_REGION_NODES {
             self.regions[region].dead = true;
-            self.regions[region].end = index + 1;
             self.env.insert(
                 name,
                 Value {
@@ -1989,7 +1967,6 @@ impl BlockScan {
         });
         let id = self.producers.len() - 1;
         self.regions[region].producers.push(id);
-        self.regions[region].end = index + 1;
         self.env.insert(
             self.producers[id].name.clone(),
             Value {
@@ -2040,12 +2017,9 @@ impl BlockScan {
     }
 
     fn captures(&mut self, index: usize, stmt: &syn::Stmt, label: &Lbl) {
-        let Some(mac) = stmt_macro(stmt) else {
-            return;
-        };
-        let Some((format_at, _)) = crate::drift::format_operand(&mac.path) else {
-            return;
-        };
+        let mac = stmt_macro(stmt).expect("barrier statements name a macro");
+        let (format_at, _) =
+            crate::drift::format_operand(&mac.path).expect("barrier macros are format macros");
         let args = macro_args(mac);
         let Some(syn::Expr::Lit(syn::ExprLit {
             lit: syn::Lit::Str(lit),
@@ -2078,16 +2052,15 @@ impl BlockScan {
         let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
             unreachable!("a pending tail is an expression");
         };
+        *self
+            .tags
+            .last_mut()
+            .expect("a pending tail has a statement role") =
+            if self.unreachable { UNREACHABLE } else { TAIL };
         if self.unreachable {
-            if let Some(tag) = self.tags.last_mut() {
-                *tag = UNREACHABLE;
-            }
             let (label, sites) = label_expr(renamer, &self.env, expr, 0, &mut self.locals);
             self.note(&sites, USE_UNREACHABLE, 0, &label);
             return;
-        }
-        if let Some(tag) = self.tags.last_mut() {
-            *tag = TAIL;
         }
         if let syn::Expr::Tuple(tuple) = peel_paren(expr) {
             for (position, element) in tuple.elems.iter().enumerate() {

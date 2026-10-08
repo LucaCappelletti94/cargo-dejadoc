@@ -489,3 +489,159 @@ fn generated_module_bindings_cannot_seed_qualified_primitive_parameters() {
         "core::primitive::u32",
     );
 }
+
+/// A borrowed function with an inherited scalar alias and constant.
+fn inherited_alias_tail_form(body: &str, width: &str) -> syn_canon::CanonicalForm {
+    let code = format!(
+        "mod helper {{ pub type W = {width}; pub const WORD: W = 0; }} use helper::{{WORD, W}}; {body}"
+    );
+    let source: syn::File = syn::parse_str(&code).unwrap();
+    let context = SourceContext::new(core::iter::once((&[][..], &source)));
+    let f = function(&source, "f");
+    context.function(&f.sig, &f.block).unwrap().canonicalize()
+}
+
+#[test]
+fn inherited_alias_tail_widths_retain_their_resolved_types() {
+    let a = inherited_alias_tail_form("fn f() -> W { WORD }", "u32");
+    let b = inherited_alias_tail_form("fn f() -> W { WORD }", "u64");
+    assert_ne!(a, b, "the tail keeps its resolved alias width");
+}
+
+#[test]
+fn inherited_alias_tuple_tails_retain_their_resolved_element_types() {
+    let a = inherited_alias_tail_form("fn f() -> (W, W) { (WORD, WORD) }", "u32");
+    let b = inherited_alias_tail_form("fn f() -> (W, W) { (WORD, WORD) }", "u64");
+    assert_ne!(a, b, "the tuple tail keeps its resolved alias widths");
+}
+
+fn function_form(source: &str) -> syn_canon::CanonicalForm {
+    let parsed: syn::File = syn::parse_str(source).unwrap();
+    let context = SourceContext::new(core::iter::once((&[][..], &parsed)));
+    let value = function(&parsed, "value");
+    context
+        .function(&value.sig, &value.block)
+        .unwrap()
+        .canonicalize()
+}
+
+#[test]
+fn division_and_remainder_labels_keep_their_operator_kinds() {
+    let quotient = function_form(
+        "fn value(left: u32, right: u32) -> (u32, u32) { let part = left / right; (part, part) }",
+    );
+    assert_eq!(
+        quotient,
+        function_form(
+            "fn value(first: u32, second: u32) -> (u32, u32) { let share = first / second; (share, share) }"
+        ),
+        "the quotient keeps its alpha identity"
+    );
+    assert_ne!(
+        quotient,
+        function_form(
+            "fn value(left: u32, right: u32) -> (u32, u32) { let part = left % right; (part, part) }"
+        ),
+        "the remainder keeps a distinct operator kind"
+    );
+}
+
+#[test]
+fn qualified_calls_keep_their_written_const_generic_arguments() {
+    let call = |width: &str, input: &str| {
+        format!(
+            "mod helpers {{
+                pub fn take<const N: usize>(value: u32) -> u32 {{ value + N as u32 }}
+            }}
+            fn value({input}: u32) -> u32 {{ helpers::take::<{width}>({input}) }}"
+        )
+    };
+    let taken = function_form(&call("4", "input"));
+    assert_eq!(
+        taken,
+        function_form(&call("4", "argument")),
+        "the argument keeps its alpha identity"
+    );
+    assert_ne!(
+        taken,
+        function_form(&call("8", "input")),
+        "the written argument keeps its width"
+    );
+}
+
+#[test]
+fn nested_mutable_locals_keep_their_unproven_reads() {
+    let code = |name: &str, width: &str| {
+        format!(
+            "fn value(input: u32) -> u32 {{
+                let tail = {{ let mut {name} = input & 15u32; {name} >> {width} }};
+                tail
+            }}"
+        )
+    };
+    let nested = function_form(&code("cell", "4"));
+    assert_eq!(
+        nested,
+        function_form(&code("slot", "4")),
+        "the nested local keeps its alpha identity"
+    );
+    assert_ne!(
+        nested,
+        function_form(&code("cell", "8")),
+        "the nested shift keeps its width"
+    );
+}
+
+#[test]
+fn local_type_aliases_keep_distinct_cast_target_identities() {
+    let code = |body: &str| {
+        let source: syn::File = syn::parse_str(body).unwrap();
+        syn_canon::canonicalize(source)
+    };
+    let scoped = "
+        mod wide { pub type Wide = u32; }
+        fn value(input: u32) -> (u32, u32) {
+            type Slim = u32;
+            let a = input & 15u32;
+            let b = input >> 4;
+            (a as Slim, b as wide::Wide)
+        }
+    ";
+    let renamed = scoped
+        .replace(
+            "mod wide { pub type Wide = u32; }",
+            "mod broad { pub type Broad = u32; }",
+        )
+        .replace("Slim", "Narrow")
+        .replace("wide::Wide", "broad::Broad");
+    let reordered = scoped.replace(
+        "let a = input & 15u32;\n            let b = input >> 4;",
+        "let b = input >> 4;\n            let a = input & 15u32;",
+    );
+    let primitive = scoped.replace("a as Slim", "a as u32");
+    let scoped = code(scoped);
+    assert_eq!(scoped, code(&renamed), "the alias keeps its local identity");
+    assert_eq!(
+        scoped,
+        code(&reordered),
+        "the producers keep their scheduled order"
+    );
+    assert_ne!(
+        scoped,
+        code(&primitive),
+        "the alias keeps a distinct cast target"
+    );
+}
+
+#[test]
+fn whitespace_terminated_format_captures_keep_their_producer_ports() {
+    let source = "fn value(input: u32) -> String { let low = input & 15u32; let high = input >> 4; format!(\"{low } {high}\") }";
+    let reordered = source.replace(
+        "let low = input & 15u32; let high = input >> 4;",
+        "let high = input >> 4; let low = input & 15u32;",
+    );
+    let other = source.replace("{low }", "{high }");
+    let original = function_form(source);
+    assert_eq!(original, function_form(&reordered));
+    assert_ne!(original, function_form(&other));
+}

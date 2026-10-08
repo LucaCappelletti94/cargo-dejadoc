@@ -785,3 +785,278 @@ fn grouped_block_imports_preserve_renamed_bindings_and_targets() {
     assert_eq!(form(source), form(&renamed));
     assert_ne!(form(source), form(&other));
 }
+
+#[test]
+fn alias_parameters_schedule_like_their_primitive() {
+    let original: syn::File = syn::parse_str(
+        "type Word = u32; struct S; fn f(input: Word) -> (Word, Word) { let low = input & 15u32; let high = input >> 4; (low, high) }",
+    )
+    .unwrap();
+    let swapped: syn::File = syn::parse_str(
+        "type Word = u32; struct S; fn f(input: Word) -> (Word, Word) { let high = input >> 4; let low = input & 15u32; (low, high) }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
+    let original_fn = function(&original, "f");
+    let swapped_fn = function(&swapped, "f");
+    assert_eq!(
+        original_context
+            .function(&original_fn.sig, &original_fn.block)
+            .unwrap()
+            .canonicalize(),
+        swapped_context
+            .function(&swapped_fn.sig, &swapped_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn cast_targets_keep_their_resolved_identity() {
+    let original: syn::File = syn::parse_str(
+        "type Wide = u64; type Signed = i64; fn f(input: u32) -> (Wide, Signed) { let low = input & 15u32; let high = input >> 4; (low as Wide, high as Signed) }",
+    )
+    .unwrap();
+    let swapped: syn::File = syn::parse_str(
+        "type Wide = u64; type Signed = i64; fn f(input: u32) -> (Wide, Signed) { let high = input >> 4; let low = input & 15u32; (low as Wide, high as Signed) }",
+    )
+    .unwrap();
+    let other: syn::File = syn::parse_str(
+        "type Wide = u64; type Signed = i32; fn f(input: u32) -> (Wide, Signed) { let low = input & 15u32; let high = input >> 4; (low as Wide, high as Signed) }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
+    let other_context = SourceContext::new(core::iter::once((&[][..], &other)));
+    let original_fn = function(&original, "f");
+    let swapped_fn = function(&swapped, "f");
+    let other_fn = function(&other, "f");
+    let original_form = original_context
+        .function(&original_fn.sig, &original_fn.block)
+        .unwrap()
+        .canonicalize();
+    assert_eq!(
+        original_form,
+        swapped_context
+            .function(&swapped_fn.sig, &swapped_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+    assert_ne!(
+        original_form,
+        other_context
+            .function(&other_fn.sig, &other_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn nested_blocks_keep_their_captured_schedule() {
+    let original: syn::File = syn::parse_str(
+        "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; { (low, high) } }",
+    )
+    .unwrap();
+    let swapped: syn::File = syn::parse_str(
+        "fn f(input: u32) -> (u32, u32) { let high = input >> 4; let low = input & 15u32; { (low, high) } }",
+    )
+    .unwrap();
+    let other: syn::File = syn::parse_str(
+        "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 5; { (low, high) } }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
+    let other_context = SourceContext::new(core::iter::once((&[][..], &other)));
+    let original_fn = function(&original, "f");
+    let swapped_fn = function(&swapped, "f");
+    let other_fn = function(&other, "f");
+    let original_form = original_context
+        .function(&original_fn.sig, &original_fn.block)
+        .unwrap()
+        .canonicalize();
+    assert_eq!(
+        original_form,
+        swapped_context
+            .function(&swapped_fn.sig, &swapped_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+    assert_ne!(
+        original_form,
+        other_context
+            .function(&other_fn.sig, &other_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn closure_captures_keep_their_lexical_order() {
+    let original: syn::File = syn::parse_str(
+        "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; let capture = || (low, high); std::hint::black_box(capture); (low, high) }",
+    )
+    .unwrap();
+    let swapped: syn::File = syn::parse_str(
+        "fn f(input: u32) -> (u32, u32) { let high = input >> 4; let low = input & 15u32; let capture = || (low, high); std::hint::black_box(capture); (low, high) }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
+    let original_fn = function(&original, "f");
+    let swapped_fn = function(&swapped, "f");
+    assert_ne!(
+        original_context
+            .function(&original_fn.sig, &original_fn.block)
+            .unwrap()
+            .canonicalize(),
+        swapped_context
+            .function(&swapped_fn.sig, &swapped_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn shallow_sibling_blocks_keep_their_schedule_near_the_depth_bound() {
+    let sibling = "let p = input & 15u32; let q = input >> 4; p ^ q";
+    let swapped = "let q = input >> 4; let p = input & 15u32; p ^ q";
+    let source = |body| {
+        let mut out = String::from("fn f(input: u32) -> u32 {");
+        for _ in 0..60 {
+            out.push_str(" {");
+        }
+        for _ in 0..39 {
+            write!(out, " {{{body}}};").unwrap();
+        }
+        write!(out, " {{{body}}}").unwrap();
+        for _ in 0..61 {
+            out.push('}');
+        }
+        out
+    };
+    let original: syn::File = syn::parse_str(&source(sibling)).unwrap();
+    let swapped: syn::File = syn::parse_str(&source(swapped)).unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
+    let original_fn = function(&original, "f");
+    let swapped_fn = function(&swapped, "f");
+    assert_eq!(
+        original_context
+            .function(&original_fn.sig, &original_fn.block)
+            .unwrap()
+            .canonicalize(),
+        swapped_context
+            .function(&swapped_fn.sig, &swapped_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn nested_modules_inherit_their_observer_ancestry() {
+    let body = "let low = input & 15u32; let high = input >> 4; (low, high)";
+    let swapped = "let high = input >> 4; let low = input & 15u32; (low, high)";
+    let template = |attribute, body| {
+        format!(
+            "{attribute} mod outer {{ mod inner {{ fn f(input: u32) -> (u32, u32) {{ {body} }} }} }}"
+        )
+    };
+    let observed = template("#[observer::inspect]", body);
+    let observed_swapped = template("#[observer::inspect]", swapped);
+    let plain = template("", body);
+    let plain_swapped = template("", swapped);
+    assert_ne!(form(&observed), form(&observed_swapped));
+    assert_eq!(form(&plain), form(&plain_swapped));
+}
+
+#[test]
+fn observed_impl_methods_freeze_their_bodies() {
+    let body_a = "fn a(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }";
+    let body_b = "fn b(input: u32) -> (u32, u32) { let high = input >> 4; let low = input & 15u32; (low, high) }";
+    let source = |attribute| format!("struct S; {attribute} impl S {{ {body_a} {body_b} }}");
+    let observed_file: syn::File = syn::parse_str(&source("#[observer::inspect]")).unwrap();
+    let plain_file: syn::File = syn::parse_str(&source("")).unwrap();
+    let forms = |file: &syn::File| -> Vec<CanonicalForm> {
+        let context = SourceContext::new(core::iter::once((&[][..], file)));
+        file.items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Impl(impl_item) => Some(&impl_item.items),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|item| match item {
+                syn::ImplItem::Fn(method) => Some(
+                    context
+                        .function(&method.sig, &method.block)
+                        .unwrap()
+                        .canonicalize(),
+                ),
+                _ => None,
+            })
+            .collect()
+    };
+    let observed = forms(&observed_file);
+    let plain = forms(&plain_file);
+    assert_ne!(observed[0], observed[1]);
+    assert_eq!(plain[0], plain[1]);
+}
+
+#[test]
+fn observed_trait_methods_freeze_their_bodies() {
+    let body_a = "fn a(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }";
+    let body_b = "fn b(input: u32) -> (u32, u32) { let high = input >> 4; let low = input & 15u32; (low, high) }";
+    let source = |attribute| format!("{attribute} trait Tt {{ {body_a} {body_b} }}");
+    let observed_file: syn::File = syn::parse_str(&source("#[observer::inspect]")).unwrap();
+    let plain_file: syn::File = syn::parse_str(&source("")).unwrap();
+    let forms = |file: &syn::File| -> Vec<CanonicalForm> {
+        let context = SourceContext::new(core::iter::once((&[][..], file)));
+        file.items
+            .iter()
+            .filter_map(|item| match item {
+                syn::Item::Trait(trait_item) => Some(&trait_item.items),
+                _ => None,
+            })
+            .flatten()
+            .filter_map(|item| match item {
+                syn::TraitItem::Fn(method) if method.default.is_some() => {
+                    let block = method.default.as_ref().unwrap();
+                    Some(context.function(&method.sig, block).unwrap().canonicalize())
+                }
+                _ => None,
+            })
+            .collect()
+    };
+    let observed = forms(&observed_file);
+    let plain = forms(&plain_file);
+    assert_ne!(observed[0], observed[1]);
+    assert_eq!(plain[0], plain[1]);
+}
+
+#[test]
+fn group_wrapped_parameters_keep_their_primitive() {
+    let sources = [
+        "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }",
+        "fn f(input: u32) -> (u32, u32) { let high = input >> 4; let low = input & 15u32; (low, high) }",
+    ];
+    let forms = sources.map(|source| {
+        let mut grouped: syn::File = syn::parse_str(source).unwrap();
+        let syn::Item::Fn(function) = &mut grouped.items[0] else {
+            unreachable!()
+        };
+        let syn::FnArg::Typed(pat_type) = function.sig.inputs.iter_mut().next().unwrap() else {
+            unreachable!()
+        };
+        let inner =
+            core::mem::replace(&mut *pat_type.ty, syn::parse_str::<syn::Type>("_").unwrap());
+        *pat_type.ty = syn::Type::Group(syn::TypeGroup {
+            attrs: Vec::new(),
+            group_token: syn::token::Group::default(),
+            elem: Box::new(inner),
+        });
+        syn_canon::canonicalize(grouped)
+    });
+    assert_eq!(forms[0], forms[1]);
+}
