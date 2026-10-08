@@ -43,7 +43,7 @@ impl<'a> Forms<'a> {
             if !seen.insert(range) {
                 return;
             }
-            let tokens = crate::normalize::units(canonical.clone());
+            let tokens = canonical.body_units();
             if tokens < self.floor {
                 return;
             }
@@ -56,7 +56,7 @@ impl<'a> Forms<'a> {
                     byte_column(&file.text, bytes.end + source_offset),
                 )
             };
-            let form = canonical.to_string();
+            let form = canonical.into_key();
             let site = ContextSite {
                 file: path.to_string(),
                 line: u32::try_from(start.line).unwrap_or(u32::MAX),

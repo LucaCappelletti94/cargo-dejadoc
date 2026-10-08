@@ -9,14 +9,14 @@ use alloc::vec::Vec;
 use syn::ext::IdentExt;
 use syn::visit_mut::VisitMut;
 /// Canonical form of a doctest body.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug)]
 pub(crate) struct Canonical {
-    /// Canonical text, a deterministic token-stream string, or the
-    /// collapsed text fallback.
-    pub(crate) text: String,
+    /// Comparison key, the framed canonical key or the collapsed text fallback.
+    pub(crate) key: String,
     /// True when no `syn` parse succeeded and the text fallback was used.
     pub(crate) unparsed: bool,
-    /// Token count for `min-tokens` filtering.
+    /// Size for `min-tokens` filtering, the canonical leaf tokens or the
+    /// fallback's word count.
     pub(crate) tokens: usize,
 }
 
@@ -38,20 +38,25 @@ fn canonical(code: &str, compiles: bool) -> Canonical {
     let stripped = without_crate_attrs(&unhidden);
     let body = stripped.as_ref();
     let Some(mut file) = within_caps(body).then(|| parse_as_crate(body)).flatten() else {
-        let text = body.split_whitespace().collect::<Vec<_>>().join(" ");
+        let key = body.split_whitespace().collect::<Vec<_>>().join(" ");
         return Canonical {
-            tokens: text.split_whitespace().count(),
-            text,
+            tokens: key.split_whitespace().count(),
+            key,
             unparsed: true,
         };
     };
     IncludeDepth.visit_file_mut(&mut file);
-    let stream = if compiles {
+    let form = if compiles {
         syn_canon::canonicalize(file)
     } else {
         syn_canon::canonicalize_failing(file)
     };
-    from_stream(stream)
+    let tokens = form.leaf_tokens();
+    Canonical {
+        key: form.into_key(),
+        unparsed: false,
+        tokens,
+    }
 }
 
 /// Deepest bracket and generic nesting a body may reach before it hashes as
@@ -315,106 +320,13 @@ fn flat_literal(lit: &proc_macro2::Literal) -> Option<proc_macro2::Literal> {
     format!("{prefix}\"{stripped}\"{hashes}").parse().ok()
 }
 
-fn from_stream(stream: proc_macro2::TokenStream) -> Canonical {
-    let text = stream.to_string();
-    Canonical {
-        text,
-        unparsed: false,
-        tokens: count_tokens(stream),
-    }
-}
-
-/// Number of leaf tokens in a token stream.
-/// The multi-character operators, longest first, each counted as one token.
-const OPERATORS: [&str; 23] = [
-    "<<=", ">>=", "...", "..=", "=>", "==", "!=", "<=", ">=", "&&", "||", "+=", "-=", "*=", "/=",
-    "%=", "^=", "&=", "|=", "<<", ">>", "..", "->",
-];
-
-/// The size of a function's body in its canonical tokens, the signature left out. A path, a
-/// multi-character operator or a lifetime counts as one token, a comma or a bracket as none.
-/// A function canonicalized as a one-item file ends in its body.
-pub(crate) fn body_tokens(function: proc_macro2::TokenStream) -> usize {
-    match function.into_iter().last() {
-        Some(proc_macro2::TokenTree::Group(body)) => units(body.stream()),
-        _ => 0,
-    }
-}
-
-/// The tokens of `stream` as `body_tokens` counts them.
-pub(crate) fn units(stream: proc_macro2::TokenStream) -> usize {
-    use proc_macro2::{Spacing, TokenTree};
-
-    let mut trees = stream.into_iter().peekable();
-    let mut count = 0;
-    // The last token was an identifier, so a `::` after it continues one path.
-    let (mut ident, mut joined) = (false, false);
-    while let Some(tree) = trees.next() {
-        match tree {
-            TokenTree::Group(group) => {
-                count += units(group.stream());
-                (ident, joined) = (false, false);
-            }
-            TokenTree::Ident(_) => {
-                count += usize::from(!joined);
-                (ident, joined) = (true, false);
-            }
-            TokenTree::Literal(_) => {
-                count += 1;
-                (ident, joined) = (false, false);
-            }
-            TokenTree::Punct(first) => {
-                if first.as_char() == '\'' && matches!(trees.peek(), Some(TokenTree::Ident(_))) {
-                    trees.next();
-                    count += 1;
-                    (ident, joined) = (false, false);
-                    continue;
-                }
-                let mut run = alloc::string::String::from(first.as_char());
-                let mut spacing = first.spacing();
-                while spacing == Spacing::Joint
-                    && let Some(TokenTree::Punct(next)) = trees.peek()
-                {
-                    run.push(next.as_char());
-                    spacing = next.spacing();
-                    trees.next();
-                }
-                let mut rest = run.as_str();
-                while let Some(c) = rest.chars().next() {
-                    if let Some(tail) = rest.strip_prefix("::") {
-                        joined = ident;
-                        rest = tail;
-                        continue;
-                    }
-                    let op = OPERATORS.iter().find(|op| rest.starts_with(*op));
-                    count += usize::from(c != ',');
-                    (ident, joined) = (false, false);
-                    rest = &rest[op.map_or(c.len_utf8(), |op| op.len())..];
-                }
-            }
-        }
-    }
-    count
-}
-
-pub(crate) fn count_tokens(stream: proc_macro2::TokenStream) -> usize {
-    stream.into_iter().map(count_tree).sum()
-}
-
-fn count_tree(tree: proc_macro2::TokenTree) -> usize {
-    match tree {
-        proc_macro2::TokenTree::Group(group) => count_tokens(group.stream()),
-        _ => 1,
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// The body count of `function` canonicalized as a one-item file.
     fn body_of(function: &str) -> usize {
-        body_tokens(syn_canon::canonicalize(syn::parse_str(function).unwrap()))
+        syn_canon::canonicalize(syn::parse_str(function).unwrap()).body_units()
     }
 
     #[test]
@@ -441,14 +353,6 @@ mod tests {
         for (function, count) in cases {
             assert_eq!(body_of(function), count, "{function}");
         }
-    }
-
-    #[test]
-    fn item_body_parses() {
-        let a = canonicalize("fn main() { }");
-        assert!(!a.unparsed);
-        assert_ne!(a.text, "");
-        assert!(a.tokens > 0);
     }
 
     /// Whether `code` hashes as text, canonicalized on the stack `group` uses.
@@ -504,7 +408,7 @@ mod tests {
 # fn main() { run().unwrap(); }"#;
         let far = r#"# include!("../../doctest_setup.rs");
 # fn main() { run().unwrap(); }"#;
-        assert_eq!(canonicalize(near).text, canonicalize(far).text);
+        assert_eq!(canonicalize(near).key, canonicalize(far).key);
     }
 
     #[test]
@@ -513,14 +417,14 @@ mod tests {
 # fn main() {}"#;
         let b = r#"# include!("../../../a/y.rs");
 # fn main() {}"#;
-        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+        assert_ne!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
     fn a_printed_relative_path_is_its_own_content() {
         let a = r#"fn main() { println!("../status"); }"#;
         let b = r#"fn main() { println!("status"); }"#;
-        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+        assert_ne!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
@@ -536,7 +440,7 @@ mod tests {
             ),
         ];
         for (deep, flat) in pairs {
-            assert_eq!(canonicalize(deep).text, canonicalize(flat).text, "{deep}");
+            assert_eq!(canonicalize(deep).key, canonicalize(flat).key, "{deep}");
         }
     }
 
@@ -544,28 +448,28 @@ mod tests {
     fn a_nested_macro_path_is_its_own_content() {
         let a = canonicalize("let v = vec![format!(\"../x\")];");
         let b = canonicalize("let v = vec![format!(\"x\")];");
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
     fn include_str_depth_is_not_a_difference() {
         let a = r#"let readme = include_str!("../README.md");"#;
         let b = r#"let readme = include_str!("README.md");"#;
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+        assert_eq!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
     fn include_bytes_depth_is_not_a_difference() {
         let a = r#"let icon = include_bytes!("../../assets/icon.png");"#;
         let b = r#"let icon = include_bytes!("assets/icon.png");"#;
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+        assert_eq!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
     fn raw_include_paths_keep_their_hashes() {
         let a = r##"let spec = include_str!(r#"../SPEC.md"#);"##;
         let b = r##"let spec = include_str!(r#"SPEC.md"#);"##;
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+        assert_eq!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
@@ -574,35 +478,35 @@ mod tests {
 # fn main() {}"#;
         let far = r#"# r#include!("../../doctest_setup.rs");
 # fn main() {}"#;
-        assert_eq!(canonicalize(near).text, canonicalize(far).text);
+        assert_eq!(canonicalize(near).key, canonicalize(far).key);
     }
 
     #[test]
     fn a_variable_named_includes_holds_content() {
         let a = r#"let includes = "../parts.cfg";"#;
         let b = r#"let includes = "parts.cfg";"#;
-        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+        assert_ne!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
     fn a_variable_named_include_holds_content() {
         let a = r#"let include = "../parts.cfg";"#;
         let b = r#"let include = "parts.cfg";"#;
-        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+        assert_ne!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
     fn a_method_named_includes_holds_content() {
         let a = r#"let hit = config.includes("../parts.cfg");"#;
         let b = r#"let hit = config.includes("parts.cfg");"#;
-        assert_ne!(canonicalize(a).text, canonicalize(b).text);
+        assert_ne!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
     fn escaped_quotes_do_not_end_a_literal() {
         let a = "# include!(\"../a\\\"b.rs\");\nfn main() {}";
         let b = "# include!(\"a\\\"b.rs\");\nfn main() {}";
-        assert_eq!(canonicalize(a).text, canonicalize(b).text);
+        assert_eq!(canonicalize(a).key, canonicalize(b).key);
     }
 
     #[test]
@@ -610,22 +514,22 @@ mod tests {
         let a = canonicalize("include!(\"../x.rs\",");
         let b = canonicalize("include!(\"x.rs\",");
         assert!(a.unparsed && b.unparsed);
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
     fn comment_and_whitespace_drift_collapses() {
         let a = canonicalize("fn main() { }\n// a comment");
         let b = canonicalize("fn main(){}  /* other */  \n");
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
         assert_eq!(a.tokens, b.tokens);
     }
 
     #[test]
     fn raw_string_hash_counts_agree() {
         assert_eq!(
-            canonicalize(r##"r#"a"#"##).text,
-            canonicalize(r###"r##"a"##"###).text,
+            canonicalize(r##"r#"a"#"##).key,
+            canonicalize(r###"r##"a"##"###).key,
         );
     }
 
@@ -633,7 +537,7 @@ mod tests {
     fn hidden_lint_attr_merges() {
         let a = canonicalize("# #[allow(unused)]\nfn f() {}");
         let b = canonicalize("fn f() {}");
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
     }
 
     #[test]
@@ -653,7 +557,7 @@ mod tests {
     fn hidden_line_keeps_its_content() {
         let a = canonicalize("# use foo::bar;\nbar();\n");
         let b = canonicalize("use foo::bar;\nbar();\n");
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
         assert!(!a.unparsed);
     }
 
@@ -662,8 +566,8 @@ mod tests {
         let stmt = canonicalize("let x = 1;\nassert_eq!(x, 1);");
         let explicit = canonicalize("fn main() {\n    let x = 1;\n    assert_eq!(x, 1);\n}");
         let hidden = canonicalize("# fn main() {\nlet x = 1;\nassert_eq!(x, 1);\n# }");
-        assert_eq!(stmt.text, explicit.text);
-        assert_eq!(explicit.text, hidden.text);
+        assert_eq!(stmt.key, explicit.key);
+        assert_eq!(explicit.key, hidden.key);
     }
 
     #[test]
@@ -672,14 +576,14 @@ mod tests {
         let b = canonicalize(
             "fn main() {\n    let x = 1;\n    {\n        let y = x + 1;\n        assert_eq!(y, 2);\n    }\n}",
         );
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
     }
 
     #[test]
     fn implicit_main_item_body_wrapped() {
         let items = canonicalize("struct P;\nlet p = P;");
         let wrapped = canonicalize("fn main() { struct P; let p = P; }");
-        assert_eq!(items.text, wrapped.text);
+        assert_eq!(items.key, wrapped.key);
     }
 
     #[test]
@@ -687,35 +591,35 @@ mod tests {
         let body = "fn helper() -> u8 { 1 }\nfn main() { let _x = helper(); }";
         let double = canonicalize(&alloc::format!("fn main() {{\n{body}\n}}"));
         let direct = canonicalize(body);
-        assert_ne!(double.text, direct.text);
+        assert_ne!(double.key, direct.key);
     }
 
     #[test]
     fn bare_expression_equals_wrapped_main() {
         let bare = canonicalize("1 + 1");
         let wrapped = canonicalize("fn main() { 1 + 1 }");
-        assert_eq!(bare.text, wrapped.text);
+        assert_eq!(bare.key, wrapped.key);
     }
 
     #[test]
     fn hidden_extern_crate_equals_no_extern_crate() {
         let with_ec = canonicalize("# extern crate foo;\nfoo::run();");
         let without_ec = canonicalize("foo::run();");
-        assert_eq!(with_ec.text, without_ec.text);
+        assert_eq!(with_ec.key, without_ec.key);
     }
 
     #[test]
     fn an_attributed_extern_crate_stays() {
         let a = canonicalize("#[macro_use]\nextern crate foo;\nbar!();");
         let b = canonicalize("bar!();");
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
     fn aliased_extern_crate_stays_distinct() {
         let aliased = canonicalize("extern crate foo as bar;\nbar::run();");
         let plain = canonicalize("bar::run();");
-        assert_ne!(aliased.text, plain.text);
+        assert_ne!(aliased.key, plain.key);
     }
 
     #[test]
@@ -724,7 +628,7 @@ mod tests {
             "# extern crate foo;\n# extern crate bar;\nextern crate baz as qux;\nfoo::a();\nbar::b();\nqux::c();",
         );
         let b = canonicalize("extern crate baz as qux;\nfoo::a();\nbar::b();\nqux::c();");
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
     }
 
     #[test]
@@ -732,15 +636,14 @@ mod tests {
         let tail = canonicalize("let x = f()?;\nOk::<(), E>(())");
         let explicit =
             canonicalize("fn main() -> Result<(), E> {\n    let x = f()?;\n    Ok(())\n}");
-        assert_eq!(tail.text, explicit.text);
+        assert_eq!(tail.key, explicit.key);
     }
 
     #[test]
     fn an_ok_tail_with_a_lifetime_argument_keeps_it() {
         let a = canonicalize("let x = f()?;\nOk::<(), 'a>(())");
         let b = canonicalize("let x = f()?;\nOk::<()>(())");
-        assert_ne!(a.text, b.text);
-        assert!(a.text.contains('\''));
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
@@ -757,10 +660,10 @@ mod tests {
             let explicit = canonicalize(&format!(
                 "fn main() -> Result<(), E> {{ let x = f()?; {call} }}"
             ));
-            assert_ne!(bare.text, explicit.text, "{tail}");
+            assert_ne!(bare.key, explicit.key, "{tail}");
         }
         let unit_err = canonicalize("fn main() -> Result<(), ()> {\n    Ok(())\n}");
-        assert_ne!(canonicalize("Ok::<()>(())").text, unit_err.text);
+        assert_ne!(canonicalize("Ok::<()>(())").key, unit_err.key);
     }
 
     #[test]
@@ -769,58 +672,44 @@ mod tests {
         let explicit = canonicalize(
             "fn main() -> Result<(), MyError> {\n    let x = g()?;\n    let y = x + 1;\n    Ok(())\n}",
         );
-        assert_eq!(tail.text, explicit.text);
+        assert_eq!(tail.key, explicit.key);
     }
 
     #[test]
     fn ok_tail_different_error_types_stay_distinct() {
         let a = canonicalize("Ok::<(), std::io::Error>(())");
         let b = canonicalize("Ok::<(), String>(())");
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
     fn ok_without_turbofish_does_not_match_result_tail() {
         let plain = canonicalize("Ok(())");
         let result = canonicalize("fn main() -> Result<(), ()> { Ok(()) }");
-        assert_ne!(plain.text, result.text);
+        assert_ne!(plain.key, result.key);
     }
 
     #[test]
     fn hash_without_space_is_kept() {
         let a = canonicalize("#let x = 1;\nx\n");
-        assert!(a.text.contains("#let"));
         let b = canonicalize("# let x = 1;\nx\n");
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
-    fn double_hash_shows_as_single_hash() {
-        let a = canonicalize("## setup\nx\n");
-        assert!(a.text.contains("# setup"));
+    fn double_hash_lines_stay_in_the_body() {
+        let shown = canonicalize("## a\nlet x = 1;\n");
+        let hidden = canonicalize("let x = 1;\n");
+        assert!(shown.unparsed);
+        assert_ne!(shown.key, hidden.key);
     }
 
     #[test]
     fn bare_hash_line_becomes_empty() {
         let a = canonicalize("#\nlet x = 1;\n");
         let b = canonicalize("let x = 1;\n");
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
         assert!(!a.unparsed);
-    }
-
-    #[test]
-    fn unparseable_falls_back_to_collapsed_text() {
-        let c = canonicalize("@ not @ rust at all");
-        assert!(c.unparsed);
-        assert_eq!(c.text, "@ not @ rust at all");
-        assert!(c.tokens > 0);
-    }
-
-    #[test]
-    fn empty_body_is_empty() {
-        let c = canonicalize("");
-        assert!(!c.unparsed);
-        assert!(c.tokens > 0);
     }
 
     #[test]
@@ -837,16 +726,12 @@ mod tests {
                 "let x = 1;",
             ),
         ] {
-            assert_ne!(
-                canonicalize(with).text,
-                canonicalize(without).text,
-                "{with}"
-            );
+            assert_ne!(canonicalize(with).key, canonicalize(without).key, "{with}");
         }
         // Lint levels, features and literal docs still lift away.
         assert_eq!(
-            canonicalize("#![allow(unused)]\n#![doc = \"Text.\"]\nlet x = 1;").text,
-            canonicalize("let x = 1;").text
+            canonicalize("#![allow(unused)]\n#![doc = \"Text.\"]\nlet x = 1;").key,
+            canonicalize("let x = 1;").key
         );
     }
 
@@ -856,7 +741,7 @@ mod tests {
             canonicalize("#![allow(unused)]\n#![feature(x)]\n# use x::Y;\nlet pino = Y::new();\n");
         let b = canonicalize("# use x::Y;\nlet abete = Y::new();\n");
         assert!(!a.unparsed);
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
     }
 
     #[test]
@@ -864,7 +749,7 @@ mod tests {
         let a = canonicalize("let pino = @\n");
         let b = canonicalize("let abete = @\n");
         assert!(a.unparsed);
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
@@ -874,21 +759,21 @@ mod tests {
         // whichever way the contract call goes.
         let near = canonicalize("let i = include_image!(b\"../icon.png\");");
         let here = canonicalize("let i = include_image!(b\"icon.png\");");
-        assert_eq!(near.text, here.text);
+        assert_eq!(near.key, here.key);
     }
 
     #[test]
     fn include_depth_folds_on_raw_byte_path_literals() {
         let near = canonicalize("let i = include_image!(br\"../icon.png\");");
         let here = canonicalize("let i = include_image!(br\"icon.png\");");
-        assert_eq!(near.text, here.text);
+        assert_eq!(near.key, here.key);
     }
 
     #[test]
     fn include_depth_folds_on_c_string_path_literals() {
         let near = canonicalize("let i = include_image!(c\"../icon\");");
         let here = canonicalize("let i = include_image!(c\"icon\");");
-        assert_eq!(near.text, here.text);
+        assert_eq!(near.key, here.key);
     }
 
     #[test]
@@ -897,20 +782,20 @@ mod tests {
         // prefixed literal, which merged `../x.png` with `../x.pnq`.
         let a = canonicalize("let i = include_image!(b\"../x.png\");");
         let b = canonicalize("let i = include_image!(b\"../x.pnq\");");
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
     fn distinct_c_string_include_paths_stay_distinct() {
         let a = canonicalize("let i = include_image!(c\"../a\");");
         let b = canonicalize("let i = include_image!(c\"../b\");");
-        assert_ne!(a.text, b.text);
+        assert_ne!(a.key, b.key);
     }
 
     #[test]
     fn indented_hidden_line_is_trimmed() {
         let a = canonicalize("   # let x = 1;\n   x\n");
         let b = canonicalize("let x = 1;\nx\n");
-        assert_eq!(a.text, b.text);
+        assert_eq!(a.key, b.key);
     }
 }

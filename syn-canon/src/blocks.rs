@@ -10,6 +10,7 @@ use quote::ToTokens;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
+use crate::CanonicalForm;
 use crate::alpha::{
     Bind, Domain, FirstSeg, Frame, Inherited, Ns, Renamer, Target, TargetSeg, is_unit_path,
     item_binding, resolve_target_path, single_segment_type_name,
@@ -48,7 +49,7 @@ pub struct ContextWork {
 }
 
 /// Emit each original lexical context once, normalized against its visible declarations.
-pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, TokenStream)) -> ContextWork {
+pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, CanonicalForm)) -> ContextWork {
     let mut walker = Walker {
         frames: vec![Frame::default()],
         mod_frames: BTreeMap::new(),
@@ -197,7 +198,7 @@ struct Walker<'w> {
     /// The measured work.
     work: ContextWork,
     /// The candidate emitter.
-    emit: &'w mut dyn FnMut(Context<'_>, TokenStream),
+    emit: &'w mut dyn FnMut(Context<'_>, CanonicalForm),
 }
 
 impl Walker<'_> {
@@ -432,7 +433,7 @@ impl Walker<'_> {
         kind: ContextKind,
         span: Span,
         input_tokens: usize,
-        form: TokenStream,
+        form: CanonicalForm,
     ) {
         let item = self.item_path.join("::");
         (self.emit)(
@@ -866,7 +867,7 @@ impl Visit<'_> for Walker<'_> {
 }
 
 /// Normalize one cloned function body against the inherited environment.
-fn build_function_body_form(inherited: Inherited<'_>, body: &syn::Block) -> TokenStream {
+fn build_function_body_form(inherited: Inherited<'_>, body: &syn::Block) -> CanonicalForm {
     let mut block = body.clone();
     crate::drift::normalize_block(&mut block);
     crate::drift::fold_fn_body(&mut block);
@@ -876,7 +877,7 @@ fn build_function_body_form(inherited: Inherited<'_>, body: &syn::Block) -> Toke
 }
 
 /// Normalize one cloned block slot, a loop body or an `if` branch.
-fn build_block_slot_form(inherited: Inherited<'_>, block: &syn::Block) -> TokenStream {
+fn build_block_slot_form(inherited: Inherited<'_>, block: &syn::Block) -> CanonicalForm {
     let mut block = block.clone();
     crate::drift::normalize_block(&mut block);
     let mut renamer = Renamer::contextual(inherited);
@@ -885,7 +886,7 @@ fn build_block_slot_form(inherited: Inherited<'_>, block: &syn::Block) -> TokenS
 }
 
 /// Normalize one cloned block expression, the label and block included.
-fn build_block_expr_form(inherited: Inherited<'_>, expr: syn::Expr) -> TokenStream {
+fn build_block_expr_form(inherited: Inherited<'_>, expr: syn::Expr) -> CanonicalForm {
     let mut expr = expr;
     crate::drift::normalize_expr(&mut expr);
     let mut renamer = Renamer::contextual(inherited);
@@ -894,7 +895,7 @@ fn build_block_expr_form(inherited: Inherited<'_>, expr: syn::Expr) -> TokenStre
 }
 
 /// Normalize one cloned match arm.
-fn build_arm_form(inherited: Inherited<'_>, arm: &syn::Arm) -> TokenStream {
+fn build_arm_form(inherited: Inherited<'_>, arm: &syn::Arm) -> CanonicalForm {
     let mut arm = arm.clone();
     crate::drift::normalize_arm(&mut arm);
     let mut renamer = Renamer::contextual(inherited);
@@ -903,7 +904,7 @@ fn build_arm_form(inherited: Inherited<'_>, arm: &syn::Arm) -> TokenStream {
 }
 
 /// Normalize one cloned closure, inputs and body included.
-fn build_closure_form(inherited: Inherited<'_>, closure: &syn::ExprClosure) -> TokenStream {
+fn build_closure_form(inherited: Inherited<'_>, closure: &syn::ExprClosure) -> CanonicalForm {
     let mut expr = syn::Expr::Closure(closure.clone());
     crate::drift::normalize_expr(&mut expr);
     let mut renamer = Renamer::contextual(inherited);
@@ -912,8 +913,10 @@ fn build_closure_form(inherited: Inherited<'_>, closure: &syn::ExprClosure) -> T
 }
 
 /// Fold the normalized candidate's tokens the way the file pipeline folds its own.
-fn fold_form(node: impl ToTokens) -> TokenStream {
-    crate::fold_tokens(node.to_token_stream(), false, false)
+fn fold_form(node: impl ToTokens) -> CanonicalForm {
+    let tokens: TokenStream = crate::fold_tokens(node.to_token_stream(), false, false)
         .into_iter()
-        .collect()
+        .collect();
+    let units = crate::form::body_units(tokens.clone());
+    CanonicalForm::from_tokens(tokens, units)
 }
