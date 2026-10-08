@@ -1,0 +1,9 @@
+/// ```4;
+/// ```
+#[dyn(all(noany(doctest, feature = "x")))]
+pub fn d()S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub h }

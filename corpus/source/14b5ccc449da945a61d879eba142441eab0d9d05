@@ -1,0 +1,10 @@
+pub fn outer() {
+    #[cfg(test)]
+  66666[cfg(doc)]
+    {
+       () {}
+  0 y
+{}
+        g,
+    };
+}

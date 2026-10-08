@@ -1,0 +1,8 @@
+#[derive(Deen)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main(bg)]
+#[doc(hidden)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main() { }
+/// ```
+pub struct Gated;

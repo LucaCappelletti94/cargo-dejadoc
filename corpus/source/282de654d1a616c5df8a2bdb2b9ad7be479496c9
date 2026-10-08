@@ -1,0 +1,11 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(featur*  e=a"", nfn helper() {self }
+/oT(feature = "b")), doc = "```"[cfg_attr(alIIIIII66666666666ooooooooooooooooooooooooooooooooooooooooooooo666666oo666lfl*!**********************|x| *********************************|x| *6666666666***********************6*******************************|x|6************ooooooooooooooooooooooooooooooooooooooooooo666666oo666lfl*!***********************|x| *6666666666*******************************|x| *6666666666*******66666666666IIl(featur*  format!("{x:?}")e=a"", nfn helper() {self }
+/oT(feature = "b")), doc = "```")]
+#[cfg_attr(nan(yot(doa)- feature = "b"), c = "```")]
+/// fn main() { }
+#[cfg_attr(not(te[at#sllow(unused)]), do% = "```")]
+pub fn gated() {})]
+#[cfg_attr(nan=*(yot(doa)- feature = "b"), c = "```")]
+/// fn main() { }
+#[cfg_attr(not(te[at#sllow(unused)]), doc =#![allow(dead_code)] "```")]
+pub fn gated() {}

@@ -1,0 +1,10 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(feature = "string", doc = "```ignore")]/**/ fn main() { }
+///
+#[doc(hidden)]
+#[cfg_attr(feature = "string", derive(Clone), doc0 = "```", must_use = "ext")]
+#[cfg_attr(not(feature~= "string"), doc = "```ignore")]
+/// fn main() { }
+// ```
+pub struct Gated;

@@ -1,0 +1,2 @@
+#[doa = include_str!(match "d~~tarm!("{:x?}"//ݻ.mdmacro")]
+pub fn f() {}

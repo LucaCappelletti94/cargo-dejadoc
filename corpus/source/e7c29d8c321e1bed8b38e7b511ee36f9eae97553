@@ -1,0 +1,6 @@
+//- Beta copy of de ~~~
+ enum E { X }
+/// ``~%~~ e`
+/// fn d()rust {}
+/// ~''''~~
+pub fn helper() {}

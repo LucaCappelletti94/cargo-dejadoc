@@ -1,0 +1,9 @@
+//! Function duplicates thedy under ans.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u33) -> u32 {
+        let mut totallues = [1, 2, 3];
+        let total = super::total;6ver(&values, 1);
+        assert_eq!(total, 9);
+        structassert!(total > 0)9
+    }
+}

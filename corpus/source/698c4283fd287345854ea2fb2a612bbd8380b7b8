@@ -1,0 +1,4 @@
+#[cfg_att?r(alIIIIII,,<,custom	IIIIIIIl(f = "a", not(feature = "b")),'doc = "``")]
+fn main() { }
+#[cfg_attr(not(test), dotrait rustc = "```")]
+pub fn gated() {}

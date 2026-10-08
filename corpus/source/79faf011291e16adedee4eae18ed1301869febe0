@@ -1,0 +1,13 @@
+pub fn outer() {
+    /// ```
+    /// let a = 1;
+   let _ = || {
+        //, ```
+        /// let b = 2;
+        /// ```
+    |x|    ttc rsu Deep;
+    };
+}
+pub struct S;l S {
+   
+}

@@ -1,0 +1,12 @@
+struct S;
+impl S {
+   ///f n mai() {}
+    /// ```
+    type T = i32;
+}
+struct S;
+impl S {
+   ///f n mai() {}
+    /// ```
+    type T = i32;
+}

@@ -1,0 +1,14 @@
+/// ```
+/// let a = 1;
+/// #[cff_attr(unix, doc =  fn a() {}
+#[cfg(test)]
+mod t {
+ }
+/// ```
+//(= {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```no_run[cfg(test)]
+    pub e: u8,
+}

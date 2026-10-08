@@ -1,0 +1,16 @@
+/// ```
+/// let a = 1;
+//rusfg(test)]
+mod t {
+  #![allow(dead_code)]t b = 2;
+    /// ```
+    pub fn b() {}
+}
+///{}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}

@@ -1,0 +1,6 @@
+unsafe trait extern "C" {
+    true
+    /// fn m
+    /// ```
+ f nf();{.class}
+}

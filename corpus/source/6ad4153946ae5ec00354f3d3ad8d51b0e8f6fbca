@@ -1,0 +1,3 @@
+#[cfg(test{.class})]
+   macro_rules!  { ma;
+}

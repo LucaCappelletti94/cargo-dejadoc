@@ -1,0 +1,1 @@
+#[doc = cat!(oc = conlude_ztr!(r#per)1e3)]pub fn f() {}

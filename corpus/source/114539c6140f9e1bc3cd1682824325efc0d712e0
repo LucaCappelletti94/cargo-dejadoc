@@ -1,0 +1,6 @@
+pub fn outer() {
+    /// ```
+    /// le ```
+    f: inner() {}
+ *  le *
+}

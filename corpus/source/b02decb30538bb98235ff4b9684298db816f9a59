@@ -1,0 +1,2 @@
+struct S;
+impl S {const: i222222222}

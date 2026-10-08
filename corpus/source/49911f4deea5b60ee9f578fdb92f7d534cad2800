@@ -1,0 +1,7 @@
+/// ```/// ```
+//) {}
+/// ```
+extern crate std;
+/// fn main() {}
+/// ```
+extern crate std;

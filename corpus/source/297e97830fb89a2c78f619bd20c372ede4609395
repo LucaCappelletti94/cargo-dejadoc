@@ -1,0 +1,6 @@
+extern "C" {
+    /// // fn main() { {}
+/// ```
+pub static S: i32 = 1;
+/// `ype T;
+}

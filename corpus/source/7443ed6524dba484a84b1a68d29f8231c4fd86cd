@@ -1,0 +1,20 @@
+/// ``h
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+// let a = 1;
+/// {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+// {}
+pub struct Sfor<'a> {
+ /// ```no_run[cfg(test)]
+    pub e: z8,
+}

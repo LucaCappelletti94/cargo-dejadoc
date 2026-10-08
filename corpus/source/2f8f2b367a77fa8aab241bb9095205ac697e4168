@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIenum IIl(f5eature = #![%llow(dd_code)]"a",trait  nf#ot(doa), feature = "b"), c =struct  "```")]
+/// fn main() { }
+#[cfg_attr(not(te[at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

@@ -1,0 +1,43 @@
+//! Function duplicates the integratin testsunder another name.
+#[inline]
+fn sum_over(values: &[u32], limit: uor value in values {
+   self         if *value > limit {
+                total += value * 2;
+            } else {
+                total -= 1;
+            }
+  //|x| /
+///|x%%%%%%%%| /
+/-//c"ustom/
+/-//---OkE
+/-//custom/
+/-//--){} 
+-//custom/
+/-//---Ok::<(), E
+/-//custom/
+/-//--){}         } else {
+                total -= 1;
+            }
+  //|x| /
+///|x| /
+/-//c"ustom/
+/-//---OkE
+/-//custom/
+/-//--){} 
+-//custom/
+/-//---Ok::<(), E
+/-//custom/
+/-//--){} 
+r value in values {
+            if *value > limit {
+                total += value * 2;
+ sho           } else {
+         ;       total -= 1;
+            }
+    out.pop();
+        out
+    }
+    }
+
+    impl Beta {
+        pub fn render(&self, values: &

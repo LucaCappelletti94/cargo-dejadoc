@@ -1,0 +1,11 @@
+pub fn outer() {
+    /// ```
+   ignore {
+    /// ```
+   (/*ERROR*/) /// lZ)ZZZZZZZZZZZtC
+///
+//ile$ "{}"//
+///'a   le			= 0;
+  1e3
+/f}
+}

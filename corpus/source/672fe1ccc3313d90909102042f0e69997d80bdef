@@ -1,0 +1,5 @@
+pub fn outer() {
+    loop {       ///  5;
+        {}
+        ignore };r
+}

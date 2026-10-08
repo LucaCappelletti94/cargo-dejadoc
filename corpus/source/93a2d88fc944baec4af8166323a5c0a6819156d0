@@ -1,0 +1,2 @@
+#[doc = "	 @ge_st\n						"]
+pub fn f() {}

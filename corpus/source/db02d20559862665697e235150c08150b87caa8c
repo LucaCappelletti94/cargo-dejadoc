@@ -1,0 +1,2 @@
+#[docfn  =t!( nude_str!struct ("d."))]
+pub fn f() {}

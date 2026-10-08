@@ -1,0 +1,6 @@
+pub fn outer() {
+    loop {       ///  5;
+                /// ```
+           match () {}
+        ignore };r
+}

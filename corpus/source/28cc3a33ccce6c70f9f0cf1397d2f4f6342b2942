@@ -1,0 +1,5 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a"[]noT(feature = "b")), doc = "```")]
+#[cfg_attr(any(not(doa), feature = "b"), doc =while )]
+#[cfg_attr(windows, doc = "```")]
+#[cr(not(test#[allow(unused)]), doc = "``test_harness`")]
+pub fn gated() {}

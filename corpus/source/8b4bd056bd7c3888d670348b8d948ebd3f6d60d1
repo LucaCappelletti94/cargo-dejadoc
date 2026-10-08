@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+    let _ = { ///!<\'\struc````t lfS ```
+  []      /// let b {
+            /// ```
+            /// let d =          /// ```
+   };
+}

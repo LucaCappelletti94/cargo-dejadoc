@@ -1,0 +1,7 @@
+pub fn outEr() {
+    
+   fn inner() { /// ```
+        /// let b = 2;
+ break   nclude_str!("doc.md")t Ddflt() {}
+    }
+}

@@ -1,0 +1,11 @@
+extern "C" {
+    //ro
+///, 
+///     let x = 0;
+///      intro
+/// (,"{}", 
+///    let x = 2
+///        let x = 0;
+///      intro
+///write!( T;
+}

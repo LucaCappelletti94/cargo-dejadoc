@@ -1,0 +1,6 @@
+unsafe extern "C" {
+    /// 
+    /// fn m
+    /// ```
+ fn f();{.class}
+}

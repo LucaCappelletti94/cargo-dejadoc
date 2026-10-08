@@ -1,0 +1,8 @@
+struct S;
+impl S {
+    /// ` main() {}
+    /// ```
+    const C: i32 = 1;
+    /// ``   `/ 1; }
+  type T = i32;
+}

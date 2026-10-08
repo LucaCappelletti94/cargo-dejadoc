@@ -1,0 +1,32 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[hfg_attr(featureg)]
+#[doc(hidden)]
+#[hfg_attr(featurerive(Clone), doc0 = "```", must_use = "extra")]
+#[cfg_attr(not(feature~= "string"), doc = "```ignore")]
+/// fn main() { }
+///
+#[doc(hiddene(Clone), doc5 = = "string", derive(Clone), doc0 = "```", must_use = "extra")]
+#[cfg_attr(not(feature~= "string"), doc =  type T: i32;
+    /// f``/&&n()  main() { let a c" fn///(fn mni(a) #![al//n() { let a = 0; }
+    /// ```
+    type T: i32;
+    //``
+    /// fn/// fn mni(a) #![allow*/ead_code)]{}
+    /// ```
+    static S: i32;
+    /// ```
+    ///n() { lextern "C" {
+    /// ```/ f``/&&n()  m`in() { let a ```
+    static S: i32;
+    /// ```
+ // ```
+    static S "```ignore")]
+/// fn main() { }
+///
+#[doc(hidden)]
+#[cfg_attr(feature = "string", derive(Clone), doc5 = "```", must_use = "extra")]
+#[cfg_attr(not(feature~= "string"), doc = "```ignore")]
+/// fn main() { }
+// ```
+pub struct eGated;
