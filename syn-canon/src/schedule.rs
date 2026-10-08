@@ -74,7 +74,7 @@ const USE_TAIL: u8 = 6;
 pub(crate) enum Port {
     /// A function parameter, by declared position.
     Param(usize),
-    /// A closure input, by declared position.
+    /// A closure input, by its canonical binding position.
     Closure(usize),
     /// A binder local to the analysis walk.
     Local(usize),

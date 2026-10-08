@@ -363,3 +363,21 @@ fn disconnected_symmetric_chains_preserve_legal_schedules() {
     }";
     assert_eq!(form(original), form(scheduled));
 }
+
+#[test]
+fn heterogeneous_scalar_schedules_preserve_statement_types() {
+    let original = "fn f() -> (u32, bool) { let first = 1u32; let second = true; (first, second) }";
+    let scheduled =
+        "fn f() -> (u32, bool) { let second = true; let first = 1u32; (first, second) }";
+    assert_eq!(form(original), form(scheduled));
+}
+
+#[test]
+fn nested_closure_inputs_have_distinct_lexical_origins() {
+    let original = "fn f() { let action = |outer: u32| { let nested = |inner: u32| { let first = outer & 15u32; let second = inner & 15u32; 0u32 }; nested(0u32) }; action(0u32); }";
+    let scheduled = original.replace(
+        "let first = outer & 15u32; let second = inner & 15u32;",
+        "let second = inner & 15u32; let first = outer & 15u32;",
+    );
+    assert_eq!(form(original), form(&scheduled));
+}

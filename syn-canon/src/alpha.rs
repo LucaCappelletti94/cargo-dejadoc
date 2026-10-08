@@ -387,6 +387,11 @@ impl<'env> Renamer<'env> {
         let (prim, offset, value_port) = plan.map_or((prim, 0, None), |plan| {
             (plan.prim, plan.offset, Some(plan.port))
         });
+        let value_port = if origin == Origin::Closure {
+            Some(schedule::Port::Closure(self.counter))
+        } else {
+            value_port
+        };
         let id = self.alloc_id();
         let canon = self.local_canon_offset(ns, offset);
         let binding = Binding {
@@ -728,7 +733,6 @@ impl<'env> Renamer<'env> {
             for (name, binding) in frame.bindings(Ns::Value) {
                 let port = match binding.origin {
                     Origin::Parameter => schedule::Port::Param(binding.port),
-                    Origin::Closure => schedule::Port::Closure(binding.port),
                     _ => binding.value_port.as_ref().map_or_else(
                         || schedule::Port::Free(FreeKey::Resolved(binding.canon.clone())),
                         Clone::clone,
@@ -2054,7 +2058,7 @@ impl VisitMut for Renamer<'_> {
         if let Some(bound) = &mut closure.lifetimes {
             self.visit_bound_lifetimes_mut(bound);
         }
-        for (port, input) in closure.inputs.iter_mut().enumerate() {
+        for input in &mut closure.inputs {
             let prim = match input {
                 syn::Pat::Type(pat_type) => self.param_prim(&pat_type.ty),
                 _ => None,
@@ -2062,7 +2066,7 @@ impl VisitMut for Renamer<'_> {
             let mut names = Vec::new();
             pattern_names(input, &mut names);
             for name in &names {
-                self.bind_full(Ns::Value, name, Origin::Closure, prim, port, None);
+                self.bind_full(Ns::Value, name, Origin::Closure, prim, 0, None);
             }
         }
         for input in &mut closure.inputs {

@@ -160,11 +160,9 @@ pub(crate) struct Binding {
     pub(crate) origin: Origin,
     /// A proven fixed-width primitive scalar type.
     pub(crate) prim: Option<PrimTy>,
-    /// The declared position of a parameter or closure input, zero for
-    /// every other origin.
+    /// A function parameter's declared position, zero for other origins.
     pub(crate) port: usize,
-    /// The scheduler's value port of a planned let, `None` for every
-    /// other binding.
+    /// The scheduler's value port of a closure input or planned let.
     pub(crate) value_port: Option<crate::schedule::Port>,
     pub(crate) target: Option<usize>,
     pub(crate) raw: bool,
