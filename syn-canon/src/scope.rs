@@ -72,7 +72,7 @@ impl Frame {
     pub(crate) fn next_id(&self) -> usize {
         self.names
             .iter()
-            .flat_map(|names| names.values())
+            .flat_map(BTreeMap::values)
             .map(|binding| binding.id.0)
             .max()
             .map_or(0, |id| id + 1)
@@ -115,11 +115,4 @@ pub(crate) fn unraw(name: &str) -> &str {
 
 pub(crate) fn ident_name(ident: &Ident) -> String {
     unraw(&ident.to_string()).to_string()
-}
-
-pub(crate) fn new_ident(canon: &str, span: proc_macro2::Span) -> Ident {
-    match canon.strip_prefix("r#") {
-        Some(name) => Ident::new_raw(name, span),
-        None => Ident::new(canon, span),
-    }
 }

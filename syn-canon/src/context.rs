@@ -2,7 +2,6 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
@@ -32,19 +31,11 @@ impl Owner {
             Self::Free => return None,
             Self::Inherent(text) | Self::Trait(text) => text,
         };
-        if let Some(name) = single_ident(text)
-            && let Some(binding) = seed.lookup(Ns::Type, name)
-        {
+        if let Some(binding) = seed.lookup(Ns::Type, unraw(text)) {
             return Some(binding.canon.clone());
         }
         Some(mangle_owner(text))
     }
-}
-
-/// The unraw text when it is one identifier, `r#` dropped.
-fn single_ident(text: &str) -> Option<&str> {
-    let name = unraw(text);
-    (name.chars().all(|c| c.is_alphanumeric() || c == '_') && !name.is_empty()).then_some(name)
 }
 
 /// A valid-identifier spelling of `text`, injective over its bytes.
@@ -228,18 +219,6 @@ impl<'a> ModuleScope<'a> {
         }
     }
 
-    fn inline_mod(&self, name: &str) -> Option<ModuleScope<'a>> {
-        for item in self.items() {
-            if let syn::Item::Mod(mod_item) = item
-                && mod_item.ident == name
-                && let Some((_, inner)) = &mod_item.content
-            {
-                return Some(ModuleScope::Inline(inner));
-            }
-        }
-        None
-    }
-
     fn shadows_primitive_crate(&self, name: &str) -> bool {
         let raw = if name == "core" { "r#core" } else { "r#std" };
         let matches = |ident: &syn::Ident| ident == name || ident == raw;
@@ -283,7 +262,7 @@ fn qualified_name(module: &[String], name: &str) -> String {
     out
 }
 
-fn qualified_part(out: &mut String, part: &str) {
+pub(crate) fn qualified_part(out: &mut String, part: &str) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     out.push('_');
     for byte in part.bytes() {
@@ -294,46 +273,90 @@ fn qualified_part(out: &mut String, part: &str) {
 
 /// One resolved `use` target.
 enum UseTarget {
-    /// An external path: `std`, `core`, or a leading `::`.
+    /// An external path.
     External,
-    /// A crate item the context resolved, its qualified name.
-    Item(String),
+    /// An indexed item's name and occupied namespaces.
+    Item(String, [bool; 5]),
     /// A name the context could not resolve.
     Unresolved,
 }
 
-/// The module map, declaration frame, and identity cursor for imported names.
+const IMPORT_NAMESPACES: [Ns; 3] = [Ns::Value, Ns::Type, Ns::Macro];
+
+#[derive(Default)]
+enum UnknownImport {
+    #[default]
+    None,
+    Unique(String),
+    Ambiguous,
+}
+
+#[derive(Default)]
+struct ImportedName {
+    resolved: [Option<String>; 5],
+    unknown: UnknownImport,
+}
+
 struct UseBinder<'a> {
     scopes: &'a BTreeMap<Vec<String>, ModuleScope<'a>>,
     from: &'a [String],
     leading_colon: bool,
-    frame: &'a mut Frame,
-    visited: &'a mut BTreeSet<String>,
-    next_id: &'a mut usize,
+    imports: &'a mut BTreeMap<String, ImportedName>,
 }
 
-/// Bind every explicit local name in one import tree.
-fn seed_use_bindings(
-    scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
-    from: &[String],
-    tree: &syn::UseTree,
-    leading_colon: bool,
+fn import_slots(slots: &mut [Option<String>; 5], namespaces: [bool; 5], canon: String) {
+    let mut active = namespaces
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, present)| present.then_some(index))
+        .peekable();
+    while let Some(index) = active.next() {
+        if active.peek().is_some() {
+            slots[index] = Some(canon.clone());
+        } else {
+            slots[index] = Some(canon);
+            break;
+        }
+    }
+}
+
+fn bind_imports(
     frame: &mut Frame,
+    from: &[String],
+    imports: BTreeMap<String, ImportedName>,
     next_id: &mut usize,
 ) {
-    let mut visited = BTreeSet::new();
-    use_tree_bindings(
-        &mut UseBinder {
-            scopes,
-            from,
-            leading_colon,
-            frame,
-            visited: &mut visited,
-            next_id,
-        },
-        &[],
-        tree,
-    );
+    for (alias, mut imported) in imports {
+        let unknown = match imported.unknown {
+            UnknownImport::None => None,
+            UnknownImport::Unique(canon) => Some(canon),
+            UnknownImport::Ambiguous => Some(qualified_name(from, &alias)),
+        };
+        if let Some(canon) = unknown {
+            let mut unclaimed = [false; 5];
+            for ns in IMPORT_NAMESPACES {
+                unclaimed[ns as usize] =
+                    imported.resolved[ns as usize].is_none() && frame.lookup(ns, &alias).is_none();
+            }
+            import_slots(&mut imported.resolved, unclaimed, canon);
+        }
+        for ns in IMPORT_NAMESPACES {
+            if let Some(canon) = imported.resolved[ns as usize].take() {
+                frame.bind(
+                    ns,
+                    &alias,
+                    Binding {
+                        id: BindingId(*next_id),
+                        canon,
+                        origin: Origin::Use,
+                        target: None,
+                        raw: false,
+                    },
+                );
+                *next_id += 1;
+            }
+        }
+    }
 }
 
 fn use_tree_bindings(binder: &mut UseBinder<'_>, prefix: &[String], tree: &syn::UseTree) {
@@ -362,27 +385,25 @@ fn use_tree_bindings(binder: &mut UseBinder<'_>, prefix: &[String], tree: &syn::
     }
 }
 
-/// Bind one imported name, the path it came from and the alias it lands on.
 fn bind_use_name(binder: &mut UseBinder<'_>, path: &[String], alias: &str) {
-    if !binder.visited.insert(alias.to_string()) {
-        return;
-    }
-    let canon = match resolve_use(binder.scopes, binder.from, path, binder.leading_colon) {
+    let target = resolve_use(binder.scopes, binder.from, path, binder.leading_colon);
+    let imported = if let Some(imported) = binder.imports.get_mut(alias) {
+        imported
+    } else {
+        binder.imports.entry(alias.to_string()).or_default()
+    };
+    let canon = match target {
+        UseTarget::Item(canon, namespaces) => {
+            import_slots(&mut imported.resolved, namespaces, canon);
+            return;
+        }
         UseTarget::External => qualified_name(&path[..path.len() - 1], &path[path.len() - 1]),
-        UseTarget::Item(name) => name,
         UseTarget::Unresolved => qualified_name(binder.from, alias),
     };
-    let binding = Binding {
-        id: BindingId(*binder.next_id),
-        canon,
-        origin: Origin::Use,
-        target: None,
-        raw: false,
+    imported.unknown = match imported.unknown {
+        UnknownImport::None => UnknownImport::Unique(canon),
+        UnknownImport::Unique(_) | UnknownImport::Ambiguous => UnknownImport::Ambiguous,
     };
-    *binder.next_id += 1;
-    binder.frame.bind(Ns::Value, alias, binding.clone());
-    binder.frame.bind(Ns::Type, alias, binding.clone());
-    binder.frame.bind(Ns::Macro, alias, binding);
 }
 
 /// Resolve a use path against the module map, `from` the importing module.
@@ -392,16 +413,11 @@ fn resolve_use(
     path: &[String],
     leading_colon: bool,
 ) -> UseTarget {
-    if path.is_empty() {
-        return UseTarget::Unresolved;
-    }
     let first = unraw(&path[0]);
     if leading_colon {
         return UseTarget::External;
     }
-    let Some(local) = scopes.get(from) else {
-        return UseTarget::Unresolved;
-    };
+    let local = scopes.get(from).expect("indexed importing module");
     if matches!(first, "std" | "core") && !local.shadows_primitive_crate(first) {
         return UseTarget::External;
     }
@@ -428,10 +444,7 @@ fn resolve_use(
         }
         let mut next_path = base.clone();
         next_path.push(name.to_string());
-        let next = scopes
-            .get(&next_path)
-            .copied()
-            .or_else(|| scope.inline_mod(name));
+        let next = scopes.get(&next_path).copied();
         base.push(name.to_string());
         scope = match next {
             Some(scope) => scope,
@@ -442,22 +455,38 @@ fn resolve_use(
 }
 
 fn resolve_item(items: &[syn::Item], module: &[String], name: &str) -> UseTarget {
-    let item = items
-        .iter()
-        .find(|item| match item {
-            syn::Item::Fn(i) => ident_name(&i.sig.ident) == name,
-            syn::Item::Const(i) => ident_name(&i.ident) == name,
-            syn::Item::Static(i) => ident_name(&i.ident) == name,
-            _ => false,
-        })
-        .or_else(|| {
-            items
-                .iter()
-                .find(|item| type_item_ident(item).is_some_and(|ident| ident_name(ident) == name))
-        });
-    match item {
-        Some(_) => UseTarget::Item(qualified_name(module, name)),
-        None => UseTarget::Unresolved,
+    let mut namespaces = [false; 5];
+    for item in items {
+        let value = match item {
+            syn::Item::Fn(item) => Some(&item.sig.ident),
+            syn::Item::Const(item) => Some(&item.ident),
+            syn::Item::Static(item) => Some(&item.ident),
+            _ => None,
+        };
+        if value.is_some_and(|ident| ident_name(ident) == name) {
+            namespaces[Ns::Value as usize] = true;
+        }
+        if type_item_ident(item).is_some_and(|ident| ident_name(ident) == name) {
+            namespaces[Ns::Type as usize] = true;
+            if let syn::Item::Struct(item) = item
+                && !matches!(item.fields, syn::Fields::Named(_))
+            {
+                namespaces[Ns::Value as usize] = true;
+            }
+        }
+        if let syn::Item::Macro(item) = item
+            && item
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident_name(ident) == name)
+        {
+            namespaces[Ns::Macro as usize] = true;
+        }
+    }
+    if namespaces.iter().any(|present| *present) {
+        UseTarget::Item(qualified_name(module, name), namespaces)
+    } else {
+        UseTarget::Unresolved
     }
 }
 
@@ -545,6 +574,7 @@ fn seed_frame(
 ) -> Frame {
     let mut frame = Frame::default();
     let mut next_id = 0usize;
+    let mut imports = BTreeMap::new();
     for item in scope.items() {
         if let Some((ns, ident, origin)) = item_seed(item) {
             bind_item_ident(&mut frame, path, ns, ident, origin, &mut next_id);
@@ -552,13 +582,15 @@ fn seed_frame(
         }
         match item {
             syn::Item::Use(use_item) => {
-                seed_use_bindings(
-                    scopes,
-                    path,
+                use_tree_bindings(
+                    &mut UseBinder {
+                        scopes,
+                        from: path,
+                        leading_colon: use_item.leading_colon.is_some(),
+                        imports: &mut imports,
+                    },
+                    &[],
                     &use_item.tree,
-                    use_item.leading_colon.is_some(),
-                    &mut frame,
-                    &mut next_id,
                 );
             }
             syn::Item::Macro(i) => {
@@ -576,6 +608,7 @@ fn seed_frame(
             _ => {}
         }
     }
+    bind_imports(&mut frame, path, imports, &mut next_id);
     frame
 }
 
@@ -792,19 +825,9 @@ fn index_fn<'a>(
     );
 }
 
-/// The whole type as written, `Foo<u8>` and `a::Foo` telling apart types
-/// one last segment would merge.
+/// The owner type's tokens with opaque payloads intact.
 fn type_text(ty: &syn::Type) -> String {
-    let printed = ty.to_token_stream().to_string();
-    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    let mut out = String::with_capacity(printed.len());
-    let mut chars = printed.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != ' ' || (word(out.chars().last()) && word(chars.peek().copied())) {
-            out.push(c);
-        }
-    }
-    out
+    ty.to_token_stream().to_string()
 }
 
 /// Whether `meta` takes part in the comparison. `cfg`, the hints that

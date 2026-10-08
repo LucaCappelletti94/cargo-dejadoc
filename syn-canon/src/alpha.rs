@@ -17,7 +17,6 @@ use syn::visit_mut::VisitMut;
 use crate::reference::{ReferenceFacts, Resolution};
 use crate::scope::{
     Binding, BindingId, Domain, FirstSeg, Frame, Inherited, Ns, Origin, Target, TargetSeg,
-    new_ident,
 };
 
 /// The normalization options of a file pass.
@@ -38,6 +37,13 @@ struct Resolved {
     ns: Ns,
     id: BindingId,
     target: Option<usize>,
+}
+
+#[derive(Clone, Copy)]
+struct OpaqueBinding<'a> {
+    domain: Domain,
+    ns: Ns,
+    binding: &'a Binding,
 }
 
 /// The namespace letter of a canonical name.
@@ -63,7 +69,7 @@ fn inherited_name(ns: Ns, number: usize) -> String {
 
 /// Point `ident` at `canon`, keeping its span.
 fn rename(ident: &mut Ident, canon: &str) {
-    *ident = new_ident(canon, ident.span());
+    *ident = Ident::new(canon, ident.span());
 }
 
 /// Walk a written `use` prefix, resolving its first segment and copying the rest.
@@ -239,10 +245,7 @@ impl<'env> Renamer<'env> {
 
     /// One candidate pass against the inherited environment.
     pub(crate) fn contextual(inherited: Inherited<'env>) -> Self {
-        let next_id = inherited_max_id(&inherited);
-        let mut renamer = Self::base(true, inherited);
-        renamer.next_id = next_id;
-        renamer
+        Self::base(true, inherited)
     }
 
     /// A file pass with the optional seeded environment of a function view.
@@ -262,7 +265,6 @@ impl<'env> Renamer<'env> {
         }
         if let Some(canon) = self_canon {
             let id = BindingId(renamer.next_id);
-            renamer.next_id += 1;
             let mut frame = Frame::default();
             frame.bind(
                 Ns::Type,
@@ -361,18 +363,16 @@ impl<'env> Renamer<'env> {
         rename(ident, &binding.canon);
     }
 
-    /// Rename `ident` to the canon it already holds in the current frame,
-    /// else bind a new one.
-    fn rename_binder(&mut self, ns: Ns, origin: Origin, ident: &mut Ident) -> BindingId {
+    /// Rename a prebound item declaration.
+    fn rename_binder(&mut self, ns: Ns, ident: &mut Ident) -> BindingId {
         let name = ident.to_string();
-        if let Some(binding) = self.frames.last().and_then(|frame| frame.lookup(ns, &name)) {
-            rename(ident, &binding.canon);
-            binding.id
-        } else {
-            let binding = self.bind(ns, &name, origin);
-            rename(ident, &binding.canon);
-            binding.id
-        }
+        let binding = self
+            .frames
+            .last()
+            .and_then(|frame| frame.lookup(ns, &name))
+            .expect("prebound item binder");
+        rename(ident, &binding.canon);
+        binding.id
     }
 
     /// The canonical name a resolved reference renders.
@@ -387,30 +387,26 @@ impl<'env> Renamer<'env> {
                 if self.context {
                     inherited_name(resolved.ns, self.inherited_number(resolved.id))
                 } else {
-                    self.inherited_canon(resolved.id)
+                    self.inherited_binding(resolved.id).canon.clone()
                 }
             }
         }
     }
 
-    /// The seed canonical name of an inherited binding id, scanned across
-    /// the inherited frames.
-    fn inherited_canon(&self, id: BindingId) -> String {
-        for frame in self
-            .self_frame
+    /// The inherited binding selected by its identity.
+    fn inherited_binding(&self, id: BindingId) -> &Binding {
+        self.self_frame
             .iter()
             .chain(self.generics)
             .chain(self.seed)
             .chain(self.inherited.frames.iter())
-        {
-            for ns in [Ns::Value, Ns::Type, Ns::Lifetime, Ns::Label, Ns::Macro] {
-                if let Some(binding) = frame.bindings(ns).values().find(|binding| binding.id == id)
-                {
-                    return binding.canon.clone();
-                }
-            }
-        }
-        unreachable!("an inherited binding resolved by lookup")
+            .flat_map(|frame| {
+                [Ns::Value, Ns::Type, Ns::Lifetime, Ns::Label, Ns::Macro]
+                    .into_iter()
+                    .flat_map(move |ns| frame.bindings(ns).values())
+            })
+            .find(|binding| binding.id == id)
+            .expect("an inherited binding resolved by lookup")
     }
 
     /// The first-reference number of an inherited binding id.
@@ -509,13 +505,11 @@ impl<'env> Renamer<'env> {
 
     /// Record one token's resolution, into the macro collector only.
     fn record_token(&mut self, ns: &[Ns], name: &str) {
-        if self.macro_origins.is_none() {
-            return;
-        }
         let resolution = self.resolution(ns, name);
-        if let Some(origins) = &mut self.macro_origins {
-            origins.push(resolution);
-        }
+        self.macro_origins
+            .as_mut()
+            .expect("a macro origin collector")
+            .push(resolution);
     }
 
     /// Rename a bare reference through its nearest binder, if any.
@@ -525,6 +519,85 @@ impl<'env> Renamer<'env> {
         {
             rename(ident, &self.render(&resolved));
         }
+    }
+
+    fn resolve_opaque(&mut self, ident: &mut Ident) -> bool {
+        if !self.opaque_tokens || self.seed.is_none() {
+            return false;
+        }
+        let name = ident.to_string();
+        let candidates = [Ns::Value, Ns::Type, Ns::Lifetime, Ns::Label, Ns::Macro].map(|ns| {
+            self.frames
+                .iter()
+                .rev()
+                .find_map(|frame| frame.lookup(ns, &name))
+                .map(|binding| OpaqueBinding {
+                    domain: Domain::Local,
+                    ns,
+                    binding,
+                })
+                .or_else(|| {
+                    self.self_frame
+                        .iter()
+                        .chain(self.generics)
+                        .chain(self.seed)
+                        .chain(self.inherited.frames.iter())
+                        .find_map(|frame| frame.lookup(ns, &name))
+                        .map(|binding| OpaqueBinding {
+                            domain: Domain::Inherited,
+                            ns,
+                            binding,
+                        })
+                })
+        });
+        let Some(first) = candidates.iter().flatten().next().copied() else {
+            return false;
+        };
+        if !candidates
+            .iter()
+            .flatten()
+            .any(|candidate| candidate.domain == Domain::Inherited)
+        {
+            return false;
+        }
+        let raw = name.starts_with("r#")
+            || candidates
+                .iter()
+                .flatten()
+                .any(|candidate| candidate.binding.raw);
+        if !raw
+            && candidates.iter().flatten().all(|candidate| {
+                candidate.domain == first.domain
+                    && candidate.binding.id == first.binding.id
+                    && candidate.binding.canon == first.binding.canon
+            })
+        {
+            rename(ident, &first.binding.canon);
+        } else {
+            let mut canon = String::from("__dejadoc_macro_namespaces");
+            if raw {
+                crate::context::qualified_part(&mut canon, &name);
+            }
+            for candidate in candidates.into_iter().flatten() {
+                canon.push('_');
+                canon.push(ns_letter(candidate.ns));
+                canon.push('_');
+                let name = match candidate.domain {
+                    Domain::Local => self
+                        .local_canons
+                        .get(&candidate.binding.id)
+                        .expect("a local binding"),
+                    Domain::Inherited => &candidate.binding.canon,
+                };
+                canon.push_str(name);
+            }
+            rename(ident, &canon);
+        }
+        self.macro_origins
+            .as_mut()
+            .expect("a macro origin collector")
+            .push(Resolution::Inherited);
+        true
     }
 
     /// Visit the attribute list of an item or function.
@@ -603,19 +676,30 @@ impl<'env> Renamer<'env> {
             &mut path.leading_colon,
             path.segments.first().map(|s| &s.ident),
         );
+        if path.leading_colon.is_none()
+            && let Some(first) = path.segments.first_mut()
+            && self.resolve_opaque(&mut first.ident)
+        {
+            return;
+        }
         let ns: &[Ns] = if self.in_type {
             &[Ns::Type]
         } else {
             &[Ns::Value, Ns::Type]
         };
-        self.record_path(path, ns);
+        let root_ns = if path.segments.len() > 1 {
+            &[Ns::Type][..]
+        } else {
+            ns
+        };
+        self.record_path(path, root_ns);
         if path.leading_colon.is_some() {
             return;
         }
         let Some(resolved) = path
             .segments
             .first()
-            .and_then(|first| self.lookup(ns, &first.ident.to_string()))
+            .and_then(|first| self.lookup(root_ns, &first.ident.to_string()))
         else {
             return;
         };
@@ -688,13 +772,19 @@ impl<'env> Renamer<'env> {
         &mut self,
         mut current: Option<(Domain, BindingId)>,
         ns: &[Ns],
-        segments: impl Iterator<Item = &'a mut syn::PathSegment>,
+        mut segments: impl ExactSizeIterator<Item = &'a mut syn::PathSegment>,
     ) {
-        for segment in segments {
+        while let Some(segment) = segments.next() {
+            let member_ns = if segments.len() == 0 { ns } else { &[Ns::Type] };
             let hit = current.and_then(|(domain, id)| {
                 self.module_frame(domain, id)
                     .and_then(|frame| {
-                        module_member(frame, ns, &segment.ident.to_string(), self.opaque_tokens)
+                        module_member(
+                            frame,
+                            member_ns,
+                            &segment.ident.to_string(),
+                            self.opaque_tokens,
+                        )
                     })
                     .map(|(member, member_ns)| ((domain, member), member_ns))
             });
@@ -733,8 +823,10 @@ impl<'env> Renamer<'env> {
                     } else {
                         &[Ns::Value, Ns::Type]
                     };
-                    self.record_token(ns, &ident.to_string());
-                    self.resolve(ns, &mut ident);
+                    if !self.resolve_opaque(&mut ident) {
+                        self.record_token(ns, &ident.to_string());
+                        self.resolve(ns, &mut ident);
+                    }
                     proc_macro2::TokenTree::Ident(ident)
                 }
                 proc_macro2::TokenTree::Group(group) => {
@@ -899,7 +991,7 @@ impl<'env> Renamer<'env> {
         generics: &mut syn::Generics,
         attrs: &mut [syn::Attribute],
     ) {
-        self.rename_binder(Ns::Type, Origin::Item, ident);
+        self.rename_binder(Ns::Type, ident);
         begin_generics(self, generics);
         self.visit_attrs(attrs);
     }
@@ -933,18 +1025,6 @@ impl<'env> Renamer<'env> {
     pub(crate) fn into_reference_facts(self) -> ReferenceFacts {
         self.facts
     }
-}
-
-/// The largest binding id across the inherited frames, the local ids start
-/// above it.
-fn inherited_max_id(inherited: &Inherited<'_>) -> usize {
-    inherited
-        .frames
-        .iter()
-        .chain(inherited.mod_frames.values())
-        .map(Frame::next_id)
-        .max()
-        .unwrap_or(0)
 }
 
 /// Macro arguments as a comma list or the `elem; count` of `vec!`.
@@ -997,9 +1077,11 @@ fn push_format_name(renamer: &mut Renamer<'_>, name: &str, out: &mut String) {
             out.push_str(&renamer.render(&resolved));
         }
         _ => {
-            if let Some(origins) = &mut renamer.macro_origins {
-                origins.push(Resolution::Unresolved);
-            }
+            renamer
+                .macro_origins
+                .as_mut()
+                .expect("a macro origin collector")
+                .push(Resolution::Unresolved);
             out.push_str(name);
         }
     }
@@ -1167,14 +1249,6 @@ pub(crate) fn item_binding(item: &syn::Item) -> Option<(Ns, &Ident)> {
     })
 }
 
-/// The origin of an item the prebind recognizes.
-fn item_origin(item: &syn::Item) -> Origin {
-    match item {
-        syn::Item::Type(_) => Origin::TypeAlias,
-        _ => Origin::Item,
-    }
-}
-
 /// Pre-bind item names so a use may precede its definition, skipping
 /// `macro_rules!` and `use`, which are visible only after their line.
 fn prebind<'a>(renamer: &mut Renamer<'_>, items: impl Iterator<Item = &'a syn::Item>) {
@@ -1182,8 +1256,7 @@ fn prebind<'a>(renamer: &mut Renamer<'_>, items: impl Iterator<Item = &'a syn::I
         let Some((ns, ident)) = item_binding(item) else {
             continue;
         };
-        let origin = item_origin(item);
-        let binding = renamer.bind(ns, &ident.to_string(), origin);
+        let binding = renamer.bind(ns, &ident.to_string(), Origin::Item);
         if let syn::Item::Mod(syn::ItemMod {
             content: Some((_, items)),
             ..
@@ -1400,7 +1473,7 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_fn_mut(&mut self, item: &mut syn::ItemFn) {
-        self.rename_binder(Ns::Value, Origin::Item, &mut item.sig.ident);
+        self.rename_binder(Ns::Value, &mut item.sig.ident);
         self.visit_fn(&mut item.attrs, &mut item.sig, Some(&mut item.block));
     }
 
@@ -1439,7 +1512,7 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_trait_mut(&mut self, item: &mut syn::ItemTrait) {
-        let binding = self.rename_binder(Ns::Type, Origin::Item, &mut item.ident);
+        let binding = self.rename_binder(Ns::Type, &mut item.ident);
         let id = self.alloc_id();
         let canon = self
             .local_canons
@@ -1524,14 +1597,14 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_const_mut(&mut self, item: &mut syn::ItemConst) {
-        self.rename_binder(Ns::Value, Origin::Item, &mut item.ident);
+        self.rename_binder(Ns::Value, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
     }
 
     fn visit_item_static_mut(&mut self, item: &mut syn::ItemStatic) {
-        self.rename_binder(Ns::Value, Origin::Item, &mut item.ident);
+        self.rename_binder(Ns::Value, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
@@ -1564,7 +1637,7 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
-        let id = self.rename_binder(Ns::Type, Origin::Item, &mut item.ident);
+        let id = self.rename_binder(Ns::Type, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
             let frame = self.mod_frames.remove(&id).unwrap_or_default();
@@ -1659,7 +1732,27 @@ impl VisitMut for Renamer<'_> {
                 field.colon_token = Some(syn::token::Colon::default());
             }
         }
+        let outer = core::mem::replace(&mut self.in_type, true);
         syn::visit_mut::visit_expr_struct_mut(self, expr);
+        self.in_type = outer;
+    }
+
+    fn visit_expr_path_mut(&mut self, expr: &mut syn::ExprPath) {
+        let outer = core::mem::replace(&mut self.in_type, false);
+        syn::visit_mut::visit_expr_path_mut(self, expr);
+        self.in_type = outer;
+    }
+
+    fn visit_pat_struct_mut(&mut self, pat: &mut syn::PatStruct) {
+        let outer = core::mem::replace(&mut self.in_type, true);
+        syn::visit_mut::visit_pat_struct_mut(self, pat);
+        self.in_type = outer;
+    }
+
+    fn visit_pat_tuple_struct_mut(&mut self, pat: &mut syn::PatTupleStruct) {
+        let outer = core::mem::replace(&mut self.in_type, false);
+        syn::visit_mut::visit_pat_tuple_struct_mut(self, pat);
+        self.in_type = outer;
     }
 
     fn visit_qself_mut(&mut self, qself: &mut syn::QSelf) {
@@ -1682,10 +1775,15 @@ impl VisitMut for Renamer<'_> {
             &mut mac.path.leading_colon,
             mac.path.segments.first().map(|s| &s.ident),
         );
-        self.record_path(&mac.path, &[Ns::Macro]);
+        let ns: &[Ns] = if mac.path.segments.len() > 1 {
+            &[Ns::Type]
+        } else {
+            &[Ns::Macro]
+        };
+        self.record_path(&mac.path, ns);
         let parent = self.macro_origins.replace(Vec::new());
         if let Some(first) = mac.path.segments.first_mut() {
-            self.resolve(&[Ns::Macro], &mut first.ident);
+            self.resolve(ns, &mut first.ident);
         }
         let format_at = crate::drift::format_operand(&mac.path).map(|(at, _)| at);
         let outer = core::mem::replace(&mut self.opaque_tokens, true);

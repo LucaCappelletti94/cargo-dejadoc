@@ -7,23 +7,24 @@
 Canonical forms of [`syn`](https://docs.rs/syn) files. Formatting, supported style folds and local binder names share one comparison key.
 
 ```rust
+use std::collections::HashSet;
+
 let canonical = |src: &str| syn_canon::canonicalize(syn::parse_str(src).unwrap());
 
-assert_eq!(
-    canonical("fn f(x: u32) -> u32 { return (x + 1); }"),
-    canonical("fn g(y: u32) -> u32 { y + 1 }"),
-);
-assert_ne!(
-    canonical("fn f(x: u32) -> u32 { x + 1 }"),
-    canonical("fn f(x: u64) -> u64 { x + 1 }"),
-);
+let mut forms = HashSet::new();
+assert!(forms.insert(canonical("fn f(x: u32) -> u32 { return (x + 1); }")));
+assert!(!forms.insert(canonical("fn g(y: u32) -> u32 { y + 1 }")));
+assert!(forms.insert(canonical("fn f(x: u64) -> u64 { x + 1 }")));
+println!("{forms:?}");
 ```
 
 `no_std` with `alloc`. It powers [`cargo-dejadoc`](https://github.com/LucaCappelletti94/cargo-dejadoc), which finds duplicated doctests.
 
 `canonicalize` and `canonicalize_failing` return `CanonicalForm`. Its key is opaque and cannot be parsed as Rust, with `Eq`, `Hash` and `Display` sharing that key. `leaf_tokens()` counts canonical leaves, while `body_units()` counts body paths, lifetimes and operators as one and excludes commas and delimiters.
 
-`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves qualified inherited references and owner generics while alpha-renaming declarations inside the view.
+`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves namespace-specific inherited references, opaque macro scope identities and owner generics while alpha-renaming its declarations. Literal payload bytes remain part of the owner identity.
+
+Indexed imports bind only their declared namespaces. Ambiguous unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
 
 ## Folds
 
