@@ -100,3 +100,61 @@ pub fn check_functions(report: &dejadoc::Report) {
     assert_eq!(per_file[0], per_file[1], "{report:?}");
     assert_eq!(report.functions % 2, 0);
 }
+
+/// Legal typed schedules group together while a changed operand remains distinct.
+pub fn check_dependency_schedules(data: &[u8]) {
+    let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
+    let mask = byte(0);
+    let shift = byte(1) % 32;
+    let bias = byte(2);
+    let (first, second) = if mask & 1 == 0 {
+        ("first", "second")
+    } else {
+        ("r#type", "r#loop")
+    };
+    let statements = [
+        format!("let {first} = input & {mask}u32;"),
+        format!("let {second} = input >> {shift}u32;"),
+        format!("let left = {first} ^ {bias}u32;"),
+        format!("let right = {second} | 1u32;"),
+    ];
+    let source = |order: [usize; 4]| {
+        format!(
+            "fn f(input:u32)->(u32,u32){{ {} {} {} {} (left,right) }}",
+            statements[order[0]], statements[order[1]], statements[order[2]], statements[order[3]],
+        )
+    };
+    let original = source([0, 1, 2, 3]);
+    let scheduled = source([1, 3, 0, 2]);
+    let changed = original.replace(&format!("^ {bias}u32"), &format!("^ {}u32", bias + 1));
+    let site = |item: &str, code: String| DocTest {
+        file: format!("src/{item}.rs"),
+        line: 1,
+        end: None,
+        item: format!("c::{item}"),
+        info: Vec::new(),
+        code,
+        allow: false,
+        self_type: None,
+        public: false,
+    };
+    let report = dejadoc::group(
+        &[
+            site("original", original),
+            site("scheduled", scheduled),
+            site("changed", changed),
+        ],
+        2,
+        0,
+    );
+    let groups: Vec<_> = report
+        .groups
+        .iter()
+        .map(|group| {
+            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
+            members.sort_unstable();
+            members
+        })
+        .collect();
+    assert_eq!(groups, [vec!["c::original", "c::scheduled"]]);
+}
