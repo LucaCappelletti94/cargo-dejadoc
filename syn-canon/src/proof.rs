@@ -417,7 +417,7 @@ fn total_op(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<PrimTy> {
                 return None;
             };
             match right {
-                Lbl::Int(count, _) if *count < u128::from(width) => Some(prim),
+                Lbl::Int(count, _) if *count < u128::from(width.bits()) => Some(prim),
                 _ => None,
             }
         }
