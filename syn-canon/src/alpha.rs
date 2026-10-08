@@ -768,15 +768,6 @@ impl<'env> Renamer<'env> {
         self.block_facts.push(facts);
     }
 
-    /// The identity of a value reference: the nearest binder's canonical
-    /// identity, else the name's own spelling.
-    pub(crate) fn value_identity(&self, name: &str) -> FreeKey {
-        match self.lookup(&[Ns::Value], name) {
-            Some(resolved) => FreeKey::Resolved(self.identity(&resolved)),
-            None => FreeKey::Unresolved(crate::scope::unraw(name).to_string()),
-        }
-    }
-
     /// The identity of a type reference, for the scheduler's cast labels.
     pub(crate) fn type_identity(&self, name: &str) -> FreeKey {
         match self.lookup(&[Ns::Type], name) {

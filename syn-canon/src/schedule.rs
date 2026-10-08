@@ -644,7 +644,7 @@ fn label_expr(
 ) -> (Lbl, Vec<Site>) {
     match expr {
         syn::Expr::Lit(lit) => (label_lit(&lit.lit), Vec::new()),
-        syn::Expr::Path(path) if path.qself.is_none() => label_path(renamer, env, &path.path),
+        syn::Expr::Path(path) if path.qself.is_none() => label_path(env, &path.path),
         syn::Expr::Path(_) => (Lbl::Other("q".into(), Vec::new()), Vec::new()),
         syn::Expr::Binary(bin) => label_binary(renamer, env, bin, consumer, locals),
         syn::Expr::Paren(paren) => label_expr(renamer, env, &paren.expr, consumer, locals),
@@ -708,11 +708,7 @@ fn label_expr(
 
 /// The label and sites of a path, a single-segment unqualified name
 /// resolved through the environment.
-fn label_path(
-    renamer: &Renamer,
-    env: &BTreeMap<String, Value>,
-    path: &syn::Path,
-) -> (Lbl, Vec<Site>) {
+fn label_path(env: &BTreeMap<String, Value>, path: &syn::Path) -> (Lbl, Vec<Site>) {
     if path.segments.len() == 1 {
         let name = path.segments[0].ident.to_string();
         return match env.get(unraw(&name)) {
@@ -725,7 +721,7 @@ fn label_path(
             ),
             None => (
                 Lbl::Ref(Value {
-                    port: Port::Free(renamer.value_identity(unraw(&name))),
+                    port: Port::Free(FreeKey::Unresolved(unraw(&name).to_string())),
                     prim: None,
                 }),
                 Vec::new(),

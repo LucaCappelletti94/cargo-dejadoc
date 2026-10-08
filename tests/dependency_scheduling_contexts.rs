@@ -570,11 +570,11 @@ fn qualified_calls_keep_their_written_const_generic_arguments() {
 }
 
 #[test]
-fn nested_mutable_locals_keep_their_unproven_reads() {
+fn nested_attributed_mutable_locals_keep_their_unproven_reads() {
     let code = |name: &str, width: &str| {
         format!(
             "fn value(input: u32) -> u32 {{
-                let tail = {{ let mut {name} = input & 15u32; {name} >> {width} }};
+                let tail = {{ #[cfg(all())] let mut {name} = input & 255u32; {name} ^= 1; {name} >> {width} }};
                 tail
             }}"
         )
