@@ -11,8 +11,8 @@ mod const_items;
 mod context;
 mod drift;
 mod form;
-mod proof;
 mod reference;
+mod schedule;
 mod scope;
 
 use alloc::vec::Vec;
@@ -49,7 +49,7 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
 }
 
 /// The std macros that accept an optional trailing comma and treat it as nothing.
-const COMMA_BLIND_MACROS: [&str; 21] = [
+pub(crate) const COMMA_BLIND_MACROS: [&str; 21] = [
     "assert",
     "assert_eq",
     "assert_ne",

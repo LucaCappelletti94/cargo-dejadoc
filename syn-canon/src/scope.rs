@@ -1,6 +1,8 @@
-//! Original-source binding identities and lexical namespaces.
+//! Original-source binding identities, lexical namespaces, and the
+//! scheduler reference keys both passes resolve through.
 
 use alloc::collections::BTreeMap;
+use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
 use proc_macro2::Ident;
@@ -25,6 +27,28 @@ impl Ns {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct BindingId(pub(crate) usize);
+
+/// The identity of a value or type reference: the canonical identity of
+/// the binding that answers, or the name's own spelling when nothing
+/// resolves it.
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
+pub(crate) enum FreeKey {
+    /// The canonical identity the shared resolver names the binding.
+    Resolved(String),
+    /// The name's spelling, no binding resolved it.
+    Unresolved(String),
+}
+
+impl FreeKey {
+    /// The stable text the structural labels compare, the prefixes kept
+    /// apart so no spelling can spell a resolved identity.
+    pub(crate) fn text(&self) -> String {
+        match self {
+            Self::Resolved(name) => format!("f{name}"),
+            Self::Unresolved(name) => format!("g{name}"),
+        }
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Origin {
@@ -136,6 +160,12 @@ pub(crate) struct Binding {
     pub(crate) origin: Origin,
     /// A proven fixed-width primitive scalar type.
     pub(crate) prim: Option<PrimTy>,
+    /// The declared position of a parameter or closure input, zero for
+    /// every other origin.
+    pub(crate) port: usize,
+    /// The scheduler's value port of a planned let, `None` for every
+    /// other binding.
+    pub(crate) value_port: Option<crate::schedule::Port>,
     pub(crate) target: Option<usize>,
     pub(crate) raw: bool,
 }

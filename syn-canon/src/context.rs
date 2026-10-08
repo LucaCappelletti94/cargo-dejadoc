@@ -467,6 +467,8 @@ fn bind_use_name(binder: &mut UseBinder<'_>, path: &[String], alias: &str) {
         target: None,
         raw: false,
         prim,
+        port: 0,
+        value_port: None,
     };
     *binder.next_id += 1;
     binder.frame.bind(Ns::Value, alias, binding.clone());
@@ -634,6 +636,8 @@ fn bind_item_ident(
         target: None,
         raw: false,
         prim,
+        port: 0,
+        value_port: None,
     };
     frame.bind(ns, &name, binding);
     *next_id += 1;
@@ -731,6 +735,8 @@ fn bind_generic_param(
         target: None,
         raw: false,
         prim: None,
+        port: 0,
+        value_port: None,
     };
     frame.bind(ns, &name, binding);
     *next_id += 1;
@@ -778,6 +784,8 @@ fn generics_frame(
                     target: None,
                     raw: false,
                     prim: None,
+                    port: 0,
+                    value_port: None,
                 };
                 frame.bind(Ns::Value, &name, binding.clone());
                 frame.bind(Ns::Type, &name, binding);
