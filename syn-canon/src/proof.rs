@@ -228,15 +228,15 @@ impl Scan {
         let Some(syn::Stmt::Expr(expr, None)) = block.stmts.last() else {
             unreachable!("a pending tail is an expression");
         };
+        let role = self
+            .roles
+            .last_mut()
+            .expect("a pending tail has a statement");
         if self.unreachable {
-            if let Some(role) = self.roles.last_mut() {
-                *role = UNREACHABLE;
-            }
+            *role = UNREACHABLE;
             return;
         }
-        if let Some(role) = self.roles.last_mut() {
-            *role = TAIL;
-        }
+        *role = TAIL;
         if let syn::Expr::Tuple(tuple) = peel_paren(expr) {
             for element in &tuple.elems {
                 self.tail_element(renamer, element);
@@ -391,28 +391,6 @@ fn peel_paren(expr: &syn::Expr) -> &syn::Expr {
     expr
 }
 
-/// The expression inside a `Paren` or `Group`.
-fn paren_expr(expr: &syn::Expr) -> &syn::Expr {
-    match expr {
-        syn::Expr::Paren(paren) => &paren.expr,
-        syn::Expr::Group(group) => &group.expr,
-        _ => expr,
-    }
-}
-
-/// The single operation character a binary op maps to, for the total
-/// bitwise and shift operators.
-fn op_char(op: &syn::BinOp) -> Option<char> {
-    match op {
-        syn::BinOp::BitAnd(_) => Some('&'),
-        syn::BinOp::BitOr(_) => Some('|'),
-        syn::BinOp::BitXor(_) => Some('^'),
-        syn::BinOp::Shl(_) => Some('<'),
-        syn::BinOp::Shr(_) => Some('>'),
-        _ => None,
-    }
-}
-
 /// Whether `op` is a compound assignment.
 fn is_assign_op(op: &syn::BinOp) -> bool {
     matches!(
@@ -430,31 +408,29 @@ fn is_assign_op(op: &syn::BinOp) -> bool {
     )
 }
 
-/// The total result type of a bitwise or shift operation over proven
-/// scalars, an unsuffixed integer literal adopting the operation's
-/// established type.
-fn total_op(op: char, bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<PrimTy> {
-    let left_prim = left.prim();
-    let right_prim = right.prim();
-    if matches!(bin_op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) {
-        let prim = left_prim?;
-        let PrimTy::Int { width, .. } = prim else {
-            return None;
-        };
-        return match right {
-            Lbl::Int(count, _) if *count < u128::from(width) => Some(prim),
-            _ => None,
-        };
+/// The total result type of a bitwise or shift operation over proven scalars.
+fn total_op(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<PrimTy> {
+    match bin_op {
+        syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => {
+            let prim = left.prim()?;
+            let PrimTy::Int { width, .. } = prim else {
+                return None;
+            };
+            match right {
+                Lbl::Int(count, _) if *count < u128::from(width) => Some(prim),
+                _ => None,
+            }
+        }
+        syn::BinOp::BitAnd(_) | syn::BinOp::BitOr(_) | syn::BinOp::BitXor(_) => {
+            match (left.prim(), right.prim()) {
+                (Some(left), Some(right)) if left == right => Some(left),
+                (Some(left), None) if matches!(right, Lbl::Int(_, None)) => Some(left),
+                (None, Some(right)) if matches!(left, Lbl::Int(_, None)) => Some(right),
+                _ => None,
+            }
+        }
+        _ => None,
     }
-    if op != '&' && op != '|' && op != '^' {
-        return None;
-    }
-    Some(match (left_prim, right_prim) {
-        (Some(left), Some(right)) if left == right => left,
-        (Some(left), None) if matches!(right, Lbl::Int(_, None)) => left,
-        (None, Some(right)) if matches!(left, Lbl::Int(_, None)) => right,
-        _ => return None,
-    })
 }
 
 fn label_lit(lit: &syn::Lit) -> Lbl {
@@ -621,7 +597,8 @@ fn label_expr(
         syn::Expr::Lit(lit) => (label_lit(&lit.lit), Vec::new()),
         syn::Expr::Path(path) if path.qself.is_none() => label_path(env, &path.path),
         syn::Expr::Binary(bin) => label_binary(renamer, env, bin),
-        syn::Expr::Paren(_) | syn::Expr::Group(_) => label_expr(renamer, env, paren_expr(expr)),
+        syn::Expr::Paren(paren) => label_expr(renamer, env, &paren.expr),
+        syn::Expr::Group(group) => label_expr(renamer, env, &group.expr),
         syn::Expr::Tuple(tuple) => label_elems(renamer, env, tuple.elems.iter()),
         syn::Expr::Call(call) => label_call(renamer, env, call),
         syn::Expr::MethodCall(method) => label_method(renamer, env, method),
@@ -735,7 +712,7 @@ fn label_binary(
     let (left, mut sites) = label_expr(renamer, env, &bin.left);
     let (right, right_sites) = label_expr(renamer, env, &bin.right);
     sites.extend(right_sites);
-    let total = op_char(&bin.op).and_then(|op| total_op(op, &bin.op, &left, &right));
+    let total = total_op(&bin.op, &left, &right);
     (
         total.map_or(Lbl::Other, |prim| Lbl::Value(Some(prim))),
         sites,

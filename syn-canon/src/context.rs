@@ -625,9 +625,6 @@ fn alias_chain_prim(
                 return alias_chain_prim(other, siblings, prim_fallback, hops + 1);
             }
             syn::Item::Use(use_item) => {
-                if has_glob(&use_item.tree) {
-                    return None;
-                }
                 if alpha::imported_name_matches(&use_item.tree, |ident| ident_name(ident) == target)
                 {
                     return None;
@@ -635,7 +632,6 @@ fn alias_chain_prim(
             }
             other => {
                 if let Some(ident) = alpha::type_item_ident(other)
-                    && !matches!(other, syn::Item::Type(_))
                     && ident_name(ident) == target
                 {
                     return None;
@@ -643,11 +639,7 @@ fn alias_chain_prim(
             }
         }
     }
-    if prim_fallback {
-        crate::scope::primitive_suffix(target)
-    } else {
-        None
-    }
+    crate::scope::primitive_suffix(target)
 }
 
 fn bind_item_ident(

@@ -1347,3 +1347,156 @@ fn view_absolute_and_relative_roots_stay_apart_for_generic_parameters() {
     assert_eq!(view_of(&file, "first"), view_of(&file, "renamed"));
     assert_ne!(view_of(&file, "first"), view_of(&file, "local"));
 }
+
+/// The fixed-width scalar spectrum, one entry per suffix spelling.
+const PRIMITIVES: [&str; 11] = [
+    "i8", "i16", "i32", "i64", "i128", "u8", "u16", "u32", "u64", "u128", "bool",
+];
+
+/// The views of the two import spellings of one primitive.
+fn imported_forms(prim: &str) -> (syn_canon::CanonicalForm, syn_canon::CanonicalForm) {
+    let file: syn::File = syn::parse_str(&format!(
+        "use core::primitive::{prim} as first;
+             use core::primitive::{prim} as second;
+             fn left(w: first) -> first {{ w }}
+             fn renamed(w: second) -> second {{ w }}"
+    ))
+    .unwrap();
+    (view_of(&file, "left"), view_of(&file, "renamed"))
+}
+
+#[test]
+fn imported_primitive_aliases_merge_their_spellings_and_keep_prims_apart() {
+    let forms = PRIMITIVES.map(|prim| {
+        let (left, renamed) = imported_forms(prim);
+        assert_eq!(
+            left, renamed,
+            "one primitive under two import spellings {prim}"
+        );
+        (prim, left)
+    });
+    for (index, (prim, form)) in forms.iter().enumerate() {
+        for (other, other_form) in forms.iter().skip(index + 1) {
+            assert_ne!(form, other_form, "distinct primitives {prim} and {other}");
+        }
+    }
+}
+
+#[test]
+fn std_primitive_imports_carry_their_evidence_until_a_wildcard_arrives() {
+    let clean: syn::File = syn::parse_str(
+        "use std::primitive::i128 as first;
+         use std::primitive::i128 as second;
+         fn left(w: first) -> first { w }
+         fn renamed(w: second) -> second { w }",
+    )
+    .unwrap();
+    let uncertain: syn::File = syn::parse_str(
+        "use std::primitive::i128 as wide;
+         use core::primitive::*;
+         fn erased(w: wide) -> wide { w }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&clean, "left"), view_of(&clean, "renamed"));
+    assert_ne!(view_of(&clean, "left"), view_of(&uncertain, "erased"));
+}
+
+#[test]
+fn alias_chains_carry_the_target_evidence_into_reference_forms() {
+    let direct: syn::File = syn::parse_str(
+        "type Wide = u16;
+         fn first(w: Wide) -> Wide { w }",
+    )
+    .unwrap();
+    let chained: syn::File = syn::parse_str(
+        "type Word = u16;
+         type Wide = Word;
+         fn renamed(w: Wide) -> Wide { w }",
+    )
+    .unwrap();
+    let signed: syn::File = syn::parse_str(
+        "type Word = i16;
+         type Wide = Word;
+         fn third(w: Wide) -> Wide { w }",
+    )
+    .unwrap();
+    let widened: syn::File = syn::parse_str(
+        "type Word = u32;
+         type Wide = Word;
+         fn fourth(w: Wide) -> Wide { w }",
+    )
+    .unwrap();
+    let nominal: syn::File = syn::parse_str(
+        "struct Word;
+         type Wide = Word;
+         fn fifth(w: Wide) -> Wide { w }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&direct, "first"), view_of(&chained, "renamed"));
+    assert_ne!(view_of(&direct, "first"), view_of(&signed, "third"));
+    assert_ne!(view_of(&direct, "first"), view_of(&widened, "fourth"));
+    assert_ne!(view_of(&direct, "first"), view_of(&nominal, "fifth"));
+}
+
+#[test]
+fn aliases_of_imported_primitives_carry_no_evidence() {
+    let imported: syn::File = syn::parse_str(
+        "use core::primitive::u16 as narrow;
+         type Wide = narrow;
+         fn via_import(w: Wide) -> Wide { w }
+         fn direct(w: narrow) -> narrow { w }",
+    )
+    .unwrap();
+    let spellings: syn::File = syn::parse_str(
+        "use core::primitive::u16 as other;
+         fn renamed(w: other) -> other { w }",
+    )
+    .unwrap();
+    let plain: syn::File = syn::parse_str(
+        "type Wide = u16;
+         fn plain(w: Wide) -> Wide { w }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&imported, "direct"), view_of(&spellings, "renamed"));
+    assert_ne!(view_of(&imported, "via_import"), view_of(&plain, "plain"));
+}
+
+#[test]
+fn same_spelling_value_and_type_names_keep_their_evidence_separate() {
+    let value: syn::File = syn::parse_str(
+        "const wide: i8 = 0;
+         type wide = u16;
+         fn first(w: wide) -> wide { w }",
+    )
+    .unwrap();
+    let type_only: syn::File = syn::parse_str(
+        "type wide = u16;
+         fn renamed(w: wide) -> wide { w }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&value, "first"), view_of(&type_only, "renamed"));
+}
+
+#[test]
+fn crate_imports_preserve_qualified_type_identity() {
+    let first: syn::File = syn::parse_str(
+        "use crate as root;
+         mod definitions { pub type Word = u16; pub type Other = bool; }
+         fn first(input: root::definitions::Word) -> root::definitions::Word { input }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "use crate as root;
+         mod definitions { pub type Word = u16; pub type Other = bool; }
+         fn renamed(value: root::definitions::Word) -> root::definitions::Word { value }",
+    )
+    .unwrap();
+    let different: syn::File = syn::parse_str(
+        "use crate as root;
+         mod definitions { pub type Word = u16; pub type Other = bool; }
+         fn different(input: root::definitions::Other) -> root::definitions::Other { input }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&first, "first"), view_of(&renamed, "renamed"));
+    assert_ne!(view_of(&first, "first"), view_of(&different, "different"));
+}
