@@ -1,0 +1,5 @@
+struct Abete { }
+struct Pi{ n: u8 }
+impl Wrap for <Pino as{.class} Inner>mainete {
+    fn f(self) { let s: Self = Self; }
+}

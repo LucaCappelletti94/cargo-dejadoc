@@ -1,0 +1,2 @@
+#[mac allow(unused)]
+#[warn(dead_coe)]{}

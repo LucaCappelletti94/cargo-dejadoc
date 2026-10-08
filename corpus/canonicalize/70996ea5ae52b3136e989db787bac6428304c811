@@ -1,0 +1,3 @@
+#[derive(Debug)]mod m { pub fn f() {} pub fn h() {} }
+fn main() { m
+str::f(); }uct S;

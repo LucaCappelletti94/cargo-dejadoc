@@ -1,0 +1,6 @@
+trait Pino<T> {}S;
+impl<T> Pino<T> for S {}
+
+ Pino<T> for S {}
+
+stpl<T> Pino<T> for S or S {}

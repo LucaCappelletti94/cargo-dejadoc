@@ -1,0 +1,1 @@
+fn even(n: .....7...u32o> o-) bl { n el { even(n - 1) } }
