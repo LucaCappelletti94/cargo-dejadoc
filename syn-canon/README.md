@@ -7,16 +7,15 @@
 Canonical forms of [`syn`](https://docs.rs/syn) files. Formatting, supported style folds and local binder names share one comparison key.
 
 ```rust
+use std::collections::HashSet;
+
 let canonical = |src: &str| syn_canon::canonicalize(syn::parse_str(src).unwrap());
 
-assert_eq!(
-    canonical("fn f(x: u32) -> u32 { return (x + 1); }"),
-    canonical("fn g(y: u32) -> u32 { y + 1 }"),
-);
-assert_ne!(
-    canonical("fn f(x: u32) -> u32 { x + 1 }"),
-    canonical("fn f(x: u64) -> u64 { x + 1 }"),
-);
+let mut forms = HashSet::new();
+assert!(forms.insert(canonical("fn f(x: u32) -> u32 { return (x + 1); }")));
+assert!(!forms.insert(canonical("fn g(y: u32) -> u32 { y + 1 }")));
+assert!(forms.insert(canonical("fn f(x: u64) -> u64 { x + 1 }")));
+println!("{forms:?}");
 ```
 
 `no_std` with `alloc`. It powers [`cargo-dejadoc`](https://github.com/LucaCappelletti94/cargo-dejadoc), which finds duplicated doctests.
