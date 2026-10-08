@@ -8,14 +8,17 @@ extern crate std;
 mod alpha;
 mod blocks;
 mod const_items;
+mod context;
 mod drift;
 mod form;
+mod reference;
+mod scope;
 
 use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
-use quote::ToTokens;
 
 pub use blocks::{Context, ContextKind, ContextWork, contexts};
+pub use context::{FunctionView, SourceContext};
 pub use form::CanonicalForm;
 
 /// The canonical form of compiling syntax.
@@ -30,17 +33,16 @@ pub fn canonicalize_failing(file: syn::File) -> CanonicalForm {
     canonical(file, false)
 }
 
-fn canonical(mut file: syn::File, compiles: bool) -> CanonicalForm {
-    drift::normalize_file(&mut file, compiles);
-    alpha::normalize_file(&mut file);
-    let body_units = match file.items.as_slice() {
-        [syn::Item::Fn(function)] => form::body_units(function.block.to_token_stream()),
-        _ => 0,
-    };
-    let tokens = fold_tokens(file.to_token_stream(), false, false)
-        .into_iter()
-        .collect();
-    CanonicalForm::from_tokens(tokens, body_units)
+fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
+    form::canonical_file_with_options(
+        file,
+        compiles,
+        alpha::Options {
+            seed: None,
+            generics: None,
+            self_canon: None,
+        },
+    )
 }
 
 /// The std macros that accept an optional trailing comma and treat it as nothing.
