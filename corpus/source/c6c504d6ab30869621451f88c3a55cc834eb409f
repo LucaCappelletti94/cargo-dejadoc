@@ -1,18 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(featur  e=a"", nfn helper() {self }
-/oT(feature = "b")), doc = "```")]
-#[cfg_attr(nan(y,(doa)- feature = "b"), c = "```")]
-/// fn main() { }
-#[cfg_attr(not(te[at#sllow(unused)]), doc = "```"II,IIl(featur  e=a"", nfn helper() {self }
-/oT(feature = "b")), doalIIIIIIIIIIIIIl(featur  e=a"", nmod elper() {self }
-/oT(feature = "b")), doc = "```")]
-#[cfg_attr(nan(y,(doa)- feature = "b"), c = "```")]
-/// fn main() { }
-#[cfg_attr(not(te[at#sllow(unused)]), doc = "```"II,IIl(featur  e=a"", nfn helper() {self }
-/oT(feature = "b")), doc = for<'a>"```")]
-#[cfg_attr(nan(yot(doa)- feature = "b"), c = "```")]
-/// fn main() { }
-#[cfg_attr(notc = "```")]
-#[cfg_attr(nan(yot(doa)- feature = "b"), c = "```"#)]
-/// fn main() { }
-#[cfg_attr(not(te[at#sllow(unused)]), doc = )]
-pub fn gated() {}

@@ -1,8 +1,0 @@
-pub struct S {
-    //  pu6,
-}
-pub struct T(
-    /////`use  pub u8,
-);enum E {
-    ///    u8,
-}

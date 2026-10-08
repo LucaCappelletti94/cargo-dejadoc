@@ -1,6 +1,0 @@
-#[derive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(feature ="stgnore")]
-/// fn main() { }
-/// ```
-pub struct Gated;

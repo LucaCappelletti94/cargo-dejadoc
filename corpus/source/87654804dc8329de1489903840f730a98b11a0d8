@@ -1,2 +1,0 @@
-#[doc = concat!('a_str!("doc.md"))]
-pub fn f() {}

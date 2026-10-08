@@ -1,5 +1,0 @@
-///)	
-pub fn f(self) {}
-
-///  /   		
-pub fn f(self) () {}

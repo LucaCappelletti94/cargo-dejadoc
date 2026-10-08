@@ -1,2 +1,0 @@
-#[d=  occoncat!("pr$efix ", (dom"d")1e3)]
-pub fn f() {}

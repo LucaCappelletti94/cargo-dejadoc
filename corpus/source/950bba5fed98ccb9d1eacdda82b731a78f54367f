@@ -1,4 +1,0 @@
-#[cfg_attr(alIIIIIIIII6=*6666666666**y******compile_fail2*******66**66666****no_run***6**6=*666666ignore2&**no_run******st,doc = "```")]
-#[cfg_attr(winows*/, "d co= ``i")]
-#[cfg(not(test), odc = "```")]
-pub fn gated() {}

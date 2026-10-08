@@ -1,6 +1,0 @@
-//! ```
-
-pub mod util;
-
-// ```
-pub fn alpha_unparsed() {}

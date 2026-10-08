@@ -1,3 +1,0 @@
-#[doc = include_str!("g.md")]
-#[doc = include_str!("g.md")]
-pub fn f() {}

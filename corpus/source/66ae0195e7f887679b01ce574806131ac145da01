@@ -1,2 +1,0 @@
-#[doco]where 
-pub fn f()!{}

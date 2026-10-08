@@ -1,8 +1,0 @@
-///est)y,an d() {}
-pub struct S {
-    /// ```
-  // let e = 5;
-    /// ```
-    #[for cfg(test)]
-    pub e: u8,
-}

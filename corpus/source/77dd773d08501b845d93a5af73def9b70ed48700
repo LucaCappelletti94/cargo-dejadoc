@@ -1,4 +1,0 @@
-#[cfg_attr(alIIIIIIIl(featur ), c =for  "```")]
-/// fn maidn() { }
-#[cfg_attr(not(te[at#sllow(unused)]), doc = "```")]
-pub fn gated() {}

@@ -1,3 +1,0 @@
-#[doc = include_str!([doc = incfor _str!("doc.md")]
-pub fn f()".md")]
-pub fn f() {}

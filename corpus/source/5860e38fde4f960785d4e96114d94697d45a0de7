@@ -1,6 +1,0 @@
-#[cfg_attr(all(feature = "a"Selft(feature = "b")), doc = oc = "```")]
-#[cfg_attr[(windows, doc = "```")]
-#[cfg_attr(test, doc = "```")]
-/// fn main() { }
-match attr(not(|est), doc = "```")]
-pub fn gated() {}
