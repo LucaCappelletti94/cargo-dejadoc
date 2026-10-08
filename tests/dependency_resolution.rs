@@ -1,6 +1,6 @@
 //! Original declaration and inherited reference identities.
 
-use syn_canon::SourceContext;
+use syn_canon::{CanonicalForm, SourceContext};
 
 fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
     file.items
@@ -1316,4 +1316,516 @@ fn seeded_self_ids_do_not_capture_free_helpers() {
             impl_method(&context, &source, method)
         );
     }
+}
+
+fn impl_forms<'a>(context: &'a SourceContext, file: &'a syn::File) -> Vec<CanonicalForm> {
+    file.items
+        .iter()
+        .filter_map(|item| match item {
+            syn::Item::Impl(impl_item) => Some(&impl_item.items),
+            _ => None,
+        })
+        .flatten()
+        .filter_map(|item| match item {
+            syn::ImplItem::Fn(function) => Some(
+                context
+                    .function(&function.sig, &function.block)
+                    .unwrap()
+                    .canonicalize(),
+            ),
+            _ => None,
+        })
+        .collect()
+}
+
+#[test]
+fn marked_ident_owners_retain_their_seed_binding() {
+    let source: syn::File = syn::parse_str(
+        "
+        struct A\u{301};
+        impl A\u{301} {
+            fn implicit() -> Self { Self }
+            fn explicit() -> A\u{301} { A\u{301} }
+        }
+    ",
+    )
+    .unwrap();
+    let context = SourceContext::new(core::iter::once((&[][..], &source)));
+    let forms = impl_forms(&context, &source);
+    assert_eq!(forms[0], forms[1]);
+}
+
+#[test]
+fn owner_literal_payloads_keep_distinct_owners_distinct() {
+    let source: syn::File = syn::parse_str(
+        "
+        struct Owner<const S: &'static str>;
+        impl Owner<\" x\"> { fn f() -> Self { Self } }
+        impl Owner<\"x\"> { fn f() -> Self { Self } }
+    ",
+    )
+    .unwrap();
+    let context = SourceContext::new(core::iter::once((&[][..], &source)));
+    let forms = impl_forms(&context, &source);
+    assert_ne!(forms[0], forms[1]);
+}
+
+#[test]
+fn self_type_views_retain_their_original_owner_binding() {
+    let local: syn::File =
+        syn::parse_str("struct S { v: u32 } impl S { fn f(s: Self) -> Self { s } }").unwrap();
+    let imported: syn::File = syn::parse_str(
+        "mod m { pub struct S { v: u32 } } use m::S; impl S { fn f(s: Self) -> Self { s } }",
+    )
+    .unwrap();
+    let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
+    let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
+    assert_ne!(
+        impl_forms(&local_context, &local)[0],
+        impl_forms(&imported_context, &imported)[0],
+    );
+}
+
+#[test]
+fn underscored_self_types_keep_their_seed_binding() {
+    let local: syn::File =
+        syn::parse_str("struct a_b { v: u32 } impl a_b { fn f(s: Self) -> Self { s } }").unwrap();
+    let imported: syn::File = syn::parse_str(
+        "mod m { pub struct a_b { v: u32 } } use m::a_b; impl a_b { fn f(s: Self) -> Self { s } }",
+    )
+    .unwrap();
+    let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
+    let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
+    assert_ne!(
+        impl_forms(&local_context, &local)[0],
+        impl_forms(&imported_context, &imported)[0],
+    );
+}
+
+#[test]
+fn unresolved_self_types_keep_their_injective_owner_text() {
+    let left: syn::File =
+        syn::parse_str("struct W<T>(T); impl<T> W<T> { fn f(s: Self) -> Self { s } }").unwrap();
+    let right: syn::File =
+        syn::parse_str("struct X<T>(T); impl<T> X<T> { fn f(s: Self) -> Self { s } }").unwrap();
+    let left_context = SourceContext::new(core::iter::once((&[][..], &left)));
+    let right_context = SourceContext::new(core::iter::once((&[][..], &right)));
+    assert_ne!(
+        impl_forms(&left_context, &left)[0],
+        impl_forms(&right_context, &right)[0],
+    );
+}
+
+#[test]
+fn dyn_trait_owners_keep_their_boundary_from_nominal_types() {
+    let source: syn::File = syn::parse_str(
+        "
+        trait _Trait {}
+        struct dyn_Trait;
+        impl dyn _Trait { fn f(&self) -> *const Self { self } }
+        impl dyn_Trait { fn f(&self) -> *const Self { self } }
+    ",
+    )
+    .unwrap();
+    let context = SourceContext::new(core::iter::once((&[][..], &source)));
+    let forms = impl_forms(&context, &source);
+    assert_ne!(forms[0], forms[1]);
+}
+
+#[test]
+fn absolute_paths_keep_their_root_under_local_shadows() {
+    let absolute: syn::File = syn::parse_str(
+        "mod std { pub mod mem { pub fn drop(_: u32) {} } } fn f() { ::std::mem::drop(1u32); }",
+    )
+    .unwrap();
+    let relative: syn::File = syn::parse_str(
+        "mod std { pub mod mem { pub fn drop(_: u32) {} } } fn f() { std::mem::drop(1u32); }",
+    )
+    .unwrap();
+    let absolute_context = SourceContext::new(core::iter::once((&[][..], &absolute)));
+    let relative_context = SourceContext::new(core::iter::once((&[][..], &relative)));
+    let absolute_fn = function(&absolute, "f");
+    let relative_fn = function(&relative, "f");
+    assert_ne!(
+        absolute_context
+            .function(&absolute_fn.sig, &absolute_fn.block)
+            .unwrap()
+            .canonicalize(),
+        relative_context
+            .function(&relative_fn.sig, &relative_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn failing_paths_keep_their_root_under_generic_shadows() {
+    let absolute = syn::parse_str("fn f<std>() -> u32 { ::std::primitive::u32::MAX }").unwrap();
+    let relative = syn::parse_str("fn f<std>() -> u32 { std::primitive::u32::MAX }").unwrap();
+    assert_ne!(
+        syn_canon::canonicalize_failing(absolute),
+        syn_canon::canonicalize_failing(relative),
+    );
+}
+
+#[test]
+fn module_items_retain_their_seed_binding() {
+    let pairs = [
+        (
+            "fn drop(_: u32) {} fn f(input: u32) { drop(input) }",
+            "fn f(input: u32) { drop(input) }",
+        ),
+        (
+            "const None: Option<u32> = Some(1); fn f() -> Option<u32> { None }",
+            "fn f() -> Option<u32> { None }",
+        ),
+        (
+            "static None: Option<u32> = Some(1); fn f() -> Option<u32> { None }",
+            "fn f() -> Option<u32> { None }",
+        ),
+        ("struct String; fn f(_: String) {}", "fn f(_: String) {}"),
+        (
+            "union String { value: u32 } fn f(_: String) {}",
+            "fn f(_: String) {}",
+        ),
+        (
+            "enum Option<T> { Some(T), None } fn f(_: Option<u32>) {}",
+            "fn f(_: Option<u32>) {}",
+        ),
+        ("trait Clone {} fn f<T: Clone>() {}", "fn f<T: Clone>() {}"),
+        (
+            "trait Sized = Copy; fn f<T: Sized>() {}",
+            "fn f<T: Sized>() {}",
+        ),
+        (
+            "mod std { pub mod mem { pub fn drop(_: u32) {} } } fn f(input: u32) { std::mem::drop(input) }",
+            "fn f(input: u32) { std::mem::drop(input) }",
+        ),
+        (
+            "macro_rules! println { () => {} } fn f() { println!(); }",
+            "fn f() { println!(); }",
+        ),
+    ];
+    for (defined, undefined) in pairs {
+        let defined: syn::File = syn::parse_str(defined).unwrap();
+        let undefined: syn::File = syn::parse_str(undefined).unwrap();
+        let defined_context = SourceContext::new(core::iter::once((&[][..], &defined)));
+        let undefined_context = SourceContext::new(core::iter::once((&[][..], &undefined)));
+        let defined_fn = function(&defined, "f");
+        let undefined_fn = function(&undefined, "f");
+        assert_ne!(
+            defined_context
+                .function(&defined_fn.sig, &defined_fn.block)
+                .unwrap()
+                .canonicalize(),
+            undefined_context
+                .function(&undefined_fn.sig, &undefined_fn.block)
+                .unwrap()
+                .canonicalize(),
+        );
+    }
+}
+
+#[test]
+fn imported_helpers_retain_their_kind_binding() {
+    let pairs = [
+        (
+            "mod m { pub fn g() -> u32 { 1u32 } } use crate::m::g; fn f() -> u32 { g() }",
+            "fn g() -> u32 { 1u32 } fn f() -> u32 { g() }",
+        ),
+        (
+            "mod m { pub const G: u32 = 1; } use crate::m::G; fn f() -> u32 { G }",
+            "const G: u32 = 1; fn f() -> u32 { G }",
+        ),
+        (
+            "mod m { pub static G: u32 = 1; } use crate::m::G; fn f() -> u32 { G }",
+            "static G: u32 = 1; fn f() -> u32 { G }",
+        ),
+    ];
+    for (imported, local) in pairs {
+        let imported: syn::File = syn::parse_str(imported).unwrap();
+        let local: syn::File = syn::parse_str(local).unwrap();
+        let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
+        let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
+        let imported_fn = function(&imported, "f");
+        let local_fn = function(&local, "f");
+        assert_ne!(
+            imported_context
+                .function(&imported_fn.sig, &imported_fn.block)
+                .unwrap()
+                .canonicalize(),
+            local_context
+                .function(&local_fn.sig, &local_fn.block)
+                .unwrap()
+                .canonicalize(),
+        );
+    }
+}
+
+#[test]
+fn imported_helpers_keep_their_target_spelling() {
+    let fn_mod = "mod m { pub fn g() -> u32 { 1u32 } pub fn h() -> u32 { 1u32 } pub fn j() -> u32 { 1u32 } }";
+    let fn_pairs = [(
+        format!("{fn_mod} use crate::m::h; fn f() -> u32 {{ h() }}"),
+        format!("{fn_mod} use crate::m::j; fn f() -> u32 {{ j() }}"),
+    )];
+    let const_mod = "mod m { pub const G: u32 = 1; pub const H: u32 = 1; pub const J: u32 = 1; }";
+    let const_pairs = [(
+        format!("{const_mod} use crate::m::H; fn f() -> u32 {{ H }}"),
+        format!("{const_mod} use crate::m::J; fn f() -> u32 {{ J }}"),
+    )];
+    let static_mod =
+        "mod m { pub static G: u32 = 1; pub static H: u32 = 1; pub static J: u32 = 1; }";
+    let static_pairs = [(
+        format!("{static_mod} use crate::m::H; fn f() -> u32 {{ H }}"),
+        format!("{static_mod} use crate::m::J; fn f() -> u32 {{ J }}"),
+    )];
+    for (left, right) in fn_pairs.into_iter().chain(const_pairs).chain(static_pairs) {
+        let left: syn::File = syn::parse_str(&left).unwrap();
+        let right: syn::File = syn::parse_str(&right).unwrap();
+        let left_context = SourceContext::new(core::iter::once((&[][..], &left)));
+        let right_context = SourceContext::new(core::iter::once((&[][..], &right)));
+        let left_fn = function(&left, "f");
+        let right_fn = function(&right, "f");
+        assert_ne!(
+            left_context
+                .function(&left_fn.sig, &left_fn.block)
+                .unwrap()
+                .canonicalize(),
+            right_context
+                .function(&right_fn.sig, &right_fn.block)
+                .unwrap()
+                .canonicalize(),
+        );
+    }
+}
+
+#[test]
+fn imported_helpers_differ_from_prelude_names() {
+    let pairs = [
+        (
+            "mod m { pub fn drop(_: u32) {} } use crate::m::drop; fn f(input: u32) { drop(input) }",
+            "fn f(input: u32) { drop(input) }",
+        ),
+        (
+            "mod m { pub const None: Option<u32> = Some(1); } use crate::m::None; fn f() -> Option<u32> { None }",
+            "fn f() -> Option<u32> { None }",
+        ),
+        (
+            "mod m { pub static None: Option<u32> = Some(1); } use crate::m::None; fn f() -> Option<u32> { None }",
+            "fn f() -> Option<u32> { None }",
+        ),
+    ];
+    for (imported, undefined) in pairs {
+        let imported: syn::File = syn::parse_str(imported).unwrap();
+        let undefined: syn::File = syn::parse_str(undefined).unwrap();
+        let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
+        let undefined_context = SourceContext::new(core::iter::once((&[][..], &undefined)));
+        let imported_fn = function(&imported, "f");
+        let undefined_fn = function(&undefined, "f");
+        assert_ne!(
+            imported_context
+                .function(&imported_fn.sig, &imported_fn.block)
+                .unwrap()
+                .canonicalize(),
+            undefined_context
+                .function(&undefined_fn.sig, &undefined_fn.block)
+                .unwrap()
+                .canonicalize(),
+        );
+    }
+}
+
+#[test]
+fn crate_and_self_imports_resolve_to_the_same_item() {
+    let crated: syn::File = syn::parse_str(
+        "mod m { pub struct T { pub v: u32 } } use crate::m::T; fn f(t: T) -> u32 { t.v }",
+    )
+    .unwrap();
+    let selfed: syn::File = syn::parse_str(
+        "mod m { pub struct T { pub v: u32 } } use self::m::T; fn f(t: T) -> u32 { t.v }",
+    )
+    .unwrap();
+    let crated_context = SourceContext::new(core::iter::once((&[][..], &crated)));
+    let selfed_context = SourceContext::new(core::iter::once((&[][..], &selfed)));
+    let crated_fn = function(&crated, "f");
+    let selfed_fn = function(&selfed, "f");
+    assert_eq!(
+        crated_context
+            .function(&crated_fn.sig, &crated_fn.block)
+            .unwrap()
+            .canonicalize(),
+        selfed_context
+            .function(&selfed_fn.sig, &selfed_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn external_import_canons_keep_their_path_depth() {
+    let path = ["external".to_owned(), "a".to_owned(), "b".to_owned()];
+    let keyed: syn::File = syn::parse_str("struct b; fn f(x: b) -> b { x }").unwrap();
+    let imported: syn::File = syn::parse_str("use external::a::b; fn f(x: b) -> b { x }").unwrap();
+    let keyed_context = SourceContext::new(core::iter::once((&path[..], &keyed)));
+    let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
+    let keyed_fn = function(&keyed, "f");
+    let imported_fn = function(&imported, "f");
+    assert_ne!(
+        keyed_context
+            .function(&keyed_fn.sig, &keyed_fn.block)
+            .unwrap()
+            .canonicalize(),
+        imported_context
+            .function(&imported_fn.sig, &imported_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn seed_binding_ids_keep_their_collision_free_identity() {
+    let source: syn::File = syn::parse_str(
+        "
+        struct First;
+        struct Target;
+        struct Owner<T>(T);
+        impl<T> Owner<T> {
+            fn concrete(_: Target) {}
+            fn generic(_: T) {}
+        }
+    ",
+    )
+    .unwrap();
+    let context = SourceContext::new(core::iter::once((&[][..], &source)));
+    let forms = impl_forms(&context, &source);
+    assert_ne!(forms[0], forms[1]);
+}
+
+#[test]
+fn generic_binding_ids_keep_their_collision_free_identity() {
+    let original: syn::File = syn::parse_str(
+        "trait Make { fn new(); } struct a; impl a { fn new() {} } fn g<T: Make>() { a::new(); }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "trait Make { fn new(); } struct a; impl a { fn new() {} } fn g<T: Make>() { T::new(); }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
+    let original_fn = function(&original, "g");
+    let renamed_fn = function(&renamed, "g");
+    assert_ne!(
+        original_context
+            .function(&original_fn.sig, &original_fn.block)
+            .unwrap()
+            .canonicalize(),
+        renamed_context
+            .function(&renamed_fn.sig, &renamed_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn seed_item_ids_keep_their_collision_free_identity() {
+    let original: syn::File = syn::parse_str(
+        "struct X { v: u32 } struct Y { v: u32 } fn f(a: X, b: Y) -> u32 { a.v + b.v }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "struct X { v: u32 } struct Z { v: u32 } fn f(a: X, b: Z) -> u32 { a.v + b.v }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
+    let original_fn = function(&original, "f");
+    let renamed_fn = function(&renamed, "f");
+    assert_ne!(
+        original_context
+            .function(&original_fn.sig, &original_fn.block)
+            .unwrap()
+            .canonicalize(),
+        renamed_context
+            .function(&renamed_fn.sig, &renamed_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn type_generic_ids_keep_their_collision_free_identity() {
+    let original: syn::File = syn::parse_str(
+        "struct W<T, U>(T, U); struct X { v: u32 }
+         impl<T, U> W<T, U> { fn f(x: X) -> u32 { x.v } }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "struct W<T, U>(T, U); struct Y { v: u32 }
+         impl<T, U> W<T, U> { fn f(x: Y) -> u32 { x.v } }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
+    let original_fn = &impl_forms(&original_context, &original)[0];
+    let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
+    assert_ne!(original_fn, renamed_fn,);
+}
+
+#[test]
+fn type_generic_ids_keep_their_successor_identity() {
+    let original: syn::File = syn::parse_str(
+        "struct W<T, U>(T, U); fn take<T>() -> u32 { 0u32 }
+         impl<T, U> W<T, U> { fn f(t: T, u: U) -> u32 { take::<U>() } }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "struct W<T, U>(T, U); fn take<T>() -> u32 { 0u32 }
+         impl<T, U> W<T, U> { fn f(t: T, u: U) -> u32 { take::<T>() } }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
+    let original_fn = &impl_forms(&original_context, &original)[0];
+    let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
+    assert_ne!(original_fn, renamed_fn,);
+}
+
+#[test]
+fn const_generic_ids_keep_their_collision_free_identity() {
+    let original: syn::File = syn::parse_str(
+        "struct W<const N: u32, const M: u32>; struct X { v: u32 }
+         impl<const N: u32, const M: u32> W<N, M> { fn f(x: X) -> u32 { x.v } }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "struct W<const N: u32, const M: u32>; struct Y { v: u32 }
+         impl<const N: u32, const M: u32> W<N, M> { fn f(x: Y) -> u32 { x.v } }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
+    let original_fn = &impl_forms(&original_context, &original)[0];
+    let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
+    assert_ne!(original_fn, renamed_fn,);
+}
+
+#[test]
+fn const_generic_ids_keep_their_successor_identity() {
+    let original: syn::File = syn::parse_str(
+        "struct W<const N: u32, const M: u32>; fn take<T>() -> u32 { 0u32 }
+         impl<const N: u32, const M: u32> W<N, M> { fn f() -> u32 { take::<W<N, M>>() } }",
+    )
+    .unwrap();
+    let renamed: syn::File = syn::parse_str(
+        "struct W<const N: u32, const M: u32>; fn take<T>() -> u32 { 0u32 }
+         impl<const N: u32, const M: u32> W<N, M> { fn f() -> u32 { take::<W<M, N>>() } }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
+    let original_fn = &impl_forms(&original_context, &original)[0];
+    let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
+    assert_ne!(original_fn, renamed_fn,);
 }
