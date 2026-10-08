@@ -382,3 +382,25 @@ fn module_aliases_preserve_binding_identity_under_derive_uncertainty() {
         syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
     );
 }
+
+#[test]
+fn self_array_lengths_preserve_renamed_local_bindings() {
+    let source = "trait Pass: Sized { fn pass(input: Self) -> Self; }
+        impl Pass for [u32; { let first = 1u32; let second = 2u32; (first | second) as usize }] {
+            fn pass(input: Self) -> Self { input }
+        }";
+    let renamed = source
+        .replace("input", "argument")
+        .replace("first", "low")
+        .replace("second", "high");
+    let different = source.replace("2u32", "4u32");
+    let form = syn_canon::canonicalize(syn::parse_str(source).unwrap());
+    assert_eq!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+    );
+    assert_ne!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+    );
+}

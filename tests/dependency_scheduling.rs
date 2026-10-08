@@ -381,3 +381,134 @@ fn nested_closure_inputs_have_distinct_lexical_origins() {
     );
     assert_eq!(form(original), form(&scheduled));
 }
+
+#[test]
+fn equal_literal_producers_match_ordered_opaque_consumer_ports() {
+    let source = |reversed| {
+        let declarations = if reversed {
+            "let d=1u32; let c=1u32; let b=1u32; let a=1u32;"
+        } else {
+            "let a=1u32; let b=1u32; let c=1u32; let d=1u32;"
+        };
+        format!("fn f()->u32 {{{declarations} std::hint::black_box((a, b, c, d)); 0u32}}")
+    };
+    let original = source(false);
+    assert_eq!(
+        form(&original),
+        form(&source(true)),
+        "a regular port graph schedules canonically"
+    );
+    let skewed = original.replace("black_box((a, b, c, d))", "black_box((a, a, c, d))");
+    assert_ne!(
+        form(&original),
+        form(&skewed),
+        "the consumer port graph is tracked"
+    );
+}
+
+#[test]
+fn assigned_mutable_producers_keep_their_reassignment_region_in_source_order() {
+    for assignment in ["first = 3u32;", "first += 3u32;"] {
+        let source = |reversed| {
+            let declarations = if reversed {
+                "let second=2u32; let mut first=1u32;"
+            } else {
+                "let mut first=1u32; let second=2u32;"
+            };
+            format!("fn f()->(u32,u32){{{declarations}{assignment}(first,second)}}")
+        };
+        assert_ne!(
+            form(&source(false)),
+            form(&source(true)),
+            "a reassignment keeps the region in source order"
+        );
+    }
+}
+
+#[test]
+fn statement_level_non_assignment_binaries_keep_their_region_live() {
+    let source = |reversed| {
+        let declarations = if reversed {
+            "let second=input>>4; let first=input&15u32;"
+        } else {
+            "let first=input&15u32; let second=input>>4;"
+        };
+        format!("fn f(input:u32)->(u32,u32){{{declarations} first^second; (first,second)}}")
+    };
+    assert_eq!(
+        form(&source(false)),
+        form(&source(true)),
+        "a non-assignment statement keeps the region live"
+    );
+}
+
+#[test]
+fn qualified_static_assignments_keep_the_same_spelled_value_region_live() {
+    let source = |reversed| {
+        let declarations = if reversed {
+            "let high=input>>4; let m=input&15u32;"
+        } else {
+            "let m=input&15u32; let high=input>>4;"
+        };
+        format!(
+            "mod m {{ pub static mut GLOBAL: u32 = 0; }} fn f(input:u32)->(u32,u32){{\n// SAFETY: This single-threaded fixture creates no references to `GLOBAL`.\nunsafe {{ {declarations} m::GLOBAL = 1; (m,high) }} }}"
+        )
+    };
+    assert_eq!(
+        form(&source(false)),
+        form(&source(true)),
+        "a qualified assignment does not target the value"
+    );
+}
+
+#[test]
+fn local_producer_format_width_and_precision_keep_their_capture_schedule() {
+    let source = |reversed| {
+        let declarations = if reversed {
+            "let p=1u32; let w=1u32; let low_x=1u32;"
+        } else {
+            "let low_x=1u32; let w=1u32; let p=1u32;"
+        };
+        format!(
+            "fn f()->u32 {{{declarations} println!(\"{{low_x:w$.p$}}\", w=w as usize, p=p as usize); 0u32}}"
+        )
+    };
+    let original = source(false);
+    assert_eq!(
+        form(&original),
+        form(&source(true)),
+        "producer width and precision keep their captures"
+    );
+    let swapped = original.replace("{low_x:w$.p$}", "{low_x:p$.w$}");
+    assert_ne!(
+        form(&original),
+        form(&swapped),
+        "the width and precision names are tracked"
+    );
+}
+
+#[test]
+fn edition_2024_let_chain_conditions_keep_the_source_order_invariance() {
+    let source = |reversed| {
+        let declarations = if reversed {
+            "let b=input>>4; let a=input&15u32;"
+        } else {
+            "let a=input&15u32; let b=input>>4;"
+        };
+        format!(
+            "fn f(input:u32)->(u32,u32){{{declarations} while let limit=a && let guard=b && limit>guard {{ break; }} (a,b)}}"
+        )
+    };
+    let original = source(false);
+    assert_eq!(
+        form(&original),
+        form(&source(true)),
+        "a let chain condition schedules canonically"
+    );
+    let plain = original.replace("let limit=a && let guard=b && limit>guard", "a>b");
+    assert_ne!(
+        form(&original),
+        form(&plain),
+        "the let chain condition is labeled"
+    );
+}

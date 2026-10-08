@@ -165,3 +165,62 @@ fn projected_future_nodes_over_the_cap_retain_the_entire_region() {
     };
     assert_ne!(form(&source(false)), form(&source(true)));
 }
+
+/// A future tree connected to the preceding producer region.
+fn balanced_future_region(reversed: bool, nodes: usize) -> String {
+    let declarations = if reversed {
+        "let second=2u32; let first=1u32;"
+    } else {
+        "let first=1u32; let second=2u32;"
+    };
+    let mut source = format!("fn f()->(u32,u32){{{declarations} println!(\"barrier\");");
+    for index in (0..nodes).rev() {
+        let left = 2 * index + 1;
+        let right = left + 1;
+        if right < nodes {
+            write!(source, "let v{index}=v{left} ^ v{right};").unwrap();
+        } else if left < nodes {
+            write!(source, "let v{index}=v{left} ^ 1u32;").unwrap();
+        } else {
+            write!(source, "let v{index}={index}u32;").unwrap();
+        }
+    }
+    source.push_str("let last=first^v0; (second,last)}");
+    source
+}
+
+#[test]
+fn a_balanced_future_tree_straddling_the_projection_cap_schedules_canonically() {
+    let a = balanced_future_region(false, 8200);
+    let b = balanced_future_region(true, 8200);
+    assert_eq!(
+        form(&a),
+        form(&b),
+        "the cap-straddling region keeps canonical order"
+    );
+}
+
+fn linear_future_region(reversed: bool, nodes: usize, seed: u32) -> String {
+    let declarations = if reversed {
+        "let second=2u32; let first=1u32;"
+    } else {
+        "let first=1u32; let second=2u32;"
+    };
+    let mut source = format!("fn f()->(u32,u32){{{declarations} println!(\"barrier\");");
+    for index in (0..nodes).rev() {
+        if index + 1 == nodes {
+            write!(source, "let v{index}={seed}u32;").unwrap();
+        } else {
+            write!(source, "let v{index}=v{}^1u32;", index + 1).unwrap();
+        }
+    }
+    source.push_str("let last=first^v0; (second,last)}");
+    source
+}
+
+#[test]
+fn linear_future_regions_preserve_their_unique_dependency_order() {
+    let original = form(&linear_future_region(false, 8200, 8199));
+    assert_eq!(original, form(&linear_future_region(true, 8200, 8199)));
+    assert_ne!(original, form(&linear_future_region(false, 8200, 8200)));
+}

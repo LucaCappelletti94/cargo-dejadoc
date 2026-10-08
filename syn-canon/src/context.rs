@@ -870,7 +870,7 @@ fn index_scope<'a>(
                 }
             }
             syn::Item::Impl(i) => {
-                let text = type_text(&i.self_ty);
+                let text = i.self_ty.to_token_stream().to_string();
                 let owner = if i.trait_.is_some() {
                     Owner::Trait(text)
                 } else {
@@ -983,11 +983,6 @@ fn index_fn<'a>(
             generics: facts.generics,
         },
     );
-}
-
-/// The owner type's tokens with opaque payloads intact.
-fn type_text(ty: &syn::Type) -> String {
-    ty.to_token_stream().to_string()
 }
 
 /// Whether `meta` takes part in the comparison. `cfg`, the hints that
