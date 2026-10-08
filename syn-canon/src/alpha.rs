@@ -282,16 +282,18 @@ impl<'env> Renamer<'env> {
         renamer.compiles = compiles;
         renamer.prim_fallback = options.prim_fallback;
         renamer.observed = options.observed;
-        if let Some(frame) = options.seed {
-            renamer.seed = Some(frame);
-            renamer.next_id = renamer.next_id.max(frame.next_id());
-        }
-        if let Some(frame) = options.generics {
-            renamer.generics = Some(frame);
-            renamer.next_id = renamer.next_id.max(frame.next_id());
-        }
+        renamer.seed = options.seed;
+        renamer.generics = options.generics;
         if let Some(canon) = options.self_canon {
-            let id = BindingId(renamer.next_id);
+            let id = BindingId(
+                renamer
+                    .seed
+                    .into_iter()
+                    .chain(renamer.generics)
+                    .map(Frame::next_id)
+                    .max()
+                    .unwrap_or(0),
+            );
             let mut frame = Frame::default();
             frame.bind(
                 Ns::Type,
