@@ -2,7 +2,6 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
@@ -33,19 +32,11 @@ impl Owner {
             Self::Free => return None,
             Self::Inherent(text) | Self::Trait(text) => text,
         };
-        if let Some(name) = single_ident(text)
-            && let Some(binding) = seed.lookup(Ns::Type, name)
-        {
+        if let Some(binding) = seed.lookup(Ns::Type, unraw(text)) {
             return Some(binding.canon.clone());
         }
         Some(mangle_owner(text))
     }
-}
-
-/// The unraw text when it is one identifier, `r#` dropped.
-fn single_ident(text: &str) -> Option<&str> {
-    let name = unraw(text);
-    (name.chars().all(|c| c.is_alphanumeric() || c == '_') && !name.is_empty()).then_some(name)
 }
 
 /// A valid-identifier spelling of `text`, injective over its bytes.
@@ -292,18 +283,6 @@ impl<'a> ModuleScope<'a> {
         }
     }
 
-    fn inline_mod(&self, name: &str) -> Option<ModuleScope<'a>> {
-        for item in self.items() {
-            if let syn::Item::Mod(mod_item) = item
-                && mod_item.ident == name
-                && let Some((_, inner)) = &mod_item.content
-            {
-                return Some(ModuleScope::Inline(inner));
-            }
-        }
-        None
-    }
-
     fn shadows_primitive_crate(&self, name: &str) -> bool {
         let raw = if name == "core" { "r#core" } else { "r#std" };
         let matches = |ident: &syn::Ident| ident == name || ident == raw;
@@ -347,7 +326,7 @@ fn qualified_name(module: &[String], name: &str) -> String {
     out
 }
 
-fn qualified_part(out: &mut String, part: &str) {
+pub(crate) fn qualified_part(out: &mut String, part: &str) {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     out.push('_');
     for byte in part.bytes() {
@@ -356,54 +335,106 @@ fn qualified_part(out: &mut String, part: &str) {
     }
 }
 
+#[derive(Clone)]
+struct ImportedTarget {
+    canon: String,
+    prim: Option<PrimTy>,
+}
+
 /// One resolved `use` target.
-enum UseTarget<'a> {
-    /// An external path: `std`, `core`, or a leading `::`.
+enum UseTarget {
+    /// An external path.
     External,
-    /// A crate item the context resolved, an alias's target and siblings
-    /// for the prim chain.
-    Item {
-        name: String,
-        alias: Option<&'a syn::ItemType>,
-        siblings: &'a [syn::Item],
-        value_only: bool,
-    },
-    /// A name the context could not resolve, its prim stays unproven.
+    /// An indexed item's name and occupied namespaces.
+    Item(ImportedTarget, [bool; 5]),
+    /// A name the context could not resolve.
     Unresolved,
 }
 
-/// The module map, declaration frame, and identity cursor for imported names.
+const IMPORT_NAMESPACES: [Ns; 3] = [Ns::Value, Ns::Type, Ns::Macro];
+
+#[derive(Default)]
+enum UnknownImport {
+    #[default]
+    None,
+    Unique(ImportedTarget),
+    Ambiguous,
+}
+
+#[derive(Default)]
+struct ImportedName {
+    resolved: [Option<ImportedTarget>; 5],
+    unknown: UnknownImport,
+}
+
 struct UseBinder<'a> {
     scopes: &'a BTreeMap<Vec<String>, ModuleScope<'a>>,
     from: &'a [String],
     leading_colon: bool,
-    frame: &'a mut Frame,
-    visited: &'a mut BTreeSet<String>,
-    next_id: &'a mut usize,
+    imports: &'a mut BTreeMap<String, ImportedName>,
 }
 
-/// Bind every explicit local name in one import tree.
-fn seed_use_bindings(
-    scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
-    from: &[String],
-    tree: &syn::UseTree,
-    leading_colon: bool,
+fn import_slots(
+    slots: &mut [Option<ImportedTarget>; 5],
+    namespaces: [bool; 5],
+    target: ImportedTarget,
+) {
+    let mut active = namespaces
+        .into_iter()
+        .enumerate()
+        .filter_map(|(index, present)| present.then_some(index))
+        .peekable();
+    while let Some(index) = active.next() {
+        if active.peek().is_some() {
+            slots[index] = Some(target.clone());
+        } else {
+            slots[index] = Some(target);
+            break;
+        }
+    }
+}
+
+fn bind_imports(
     frame: &mut Frame,
+    from: &[String],
+    imports: BTreeMap<String, ImportedName>,
     next_id: &mut usize,
 ) {
-    let mut visited = BTreeSet::new();
-    use_tree_bindings(
-        &mut UseBinder {
-            scopes,
-            from,
-            leading_colon,
-            frame,
-            visited: &mut visited,
-            next_id,
-        },
-        &[],
-        tree,
-    );
+    for (alias, mut imported) in imports {
+        let unknown = match imported.unknown {
+            UnknownImport::None => None,
+            UnknownImport::Unique(target) => Some(target),
+            UnknownImport::Ambiguous => Some(ImportedTarget {
+                canon: qualified_name(from, &alias),
+                prim: None,
+            }),
+        };
+        if let Some(target) = unknown {
+            let mut unclaimed = [false; 5];
+            for ns in IMPORT_NAMESPACES {
+                unclaimed[ns as usize] =
+                    imported.resolved[ns as usize].is_none() && frame.lookup(ns, &alias).is_none();
+            }
+            import_slots(&mut imported.resolved, unclaimed, target);
+        }
+        for ns in IMPORT_NAMESPACES {
+            if let Some(target) = imported.resolved[ns as usize].take() {
+                frame.bind(
+                    ns,
+                    &alias,
+                    Binding {
+                        id: BindingId(*next_id),
+                        canon: target.canon,
+                        origin: Origin::Use,
+                        prim: if ns == Ns::Type { target.prim } else { None },
+                        target: None,
+                        raw: false,
+                    },
+                );
+                *next_id += 1;
+            }
+        }
+    }
 }
 
 fn use_tree_bindings(binder: &mut UseBinder<'_>, prefix: &[String], tree: &syn::UseTree) {
@@ -432,69 +463,54 @@ fn use_tree_bindings(binder: &mut UseBinder<'_>, prefix: &[String], tree: &syn::
     }
 }
 
-/// Bind one imported name, the path it came from and the alias it lands on.
 fn bind_use_name(binder: &mut UseBinder<'_>, path: &[String], alias: &str) {
-    if !binder.visited.insert(alias.to_string()) {
-        return;
-    }
-    let (canon, prim, value_only) =
-        match resolve_use(binder.scopes, binder.from, path, binder.leading_colon) {
-            UseTarget::External => (
-                qualified_name(&path[..path.len() - 1], &path[path.len() - 1]),
-                external_prim(path),
-                false,
-            ),
-            UseTarget::Item {
-                name,
-                alias: type_alias,
-                siblings,
-                value_only,
-            } => {
-                let prim_fallback = scope_primitives_known(siblings);
-                (
-                    name,
-                    type_alias.and_then(|a| alias_chain_prim(a, siblings, prim_fallback, 0)),
-                    value_only,
-                )
-            }
-            UseTarget::Unresolved => (qualified_name(binder.from, alias), None, false),
-        };
-    let prim = if value_only { None } else { prim };
-    let binding = Binding {
-        id: BindingId(*binder.next_id),
-        canon,
-        origin: Origin::Use,
-        target: None,
-        raw: false,
-        prim,
+    let target = resolve_use(binder.scopes, binder.from, path, binder.leading_colon);
+    let imported = if let Some(imported) = binder.imports.get_mut(alias) {
+        imported
+    } else {
+        binder.imports.entry(alias.to_string()).or_default()
     };
-    *binder.next_id += 1;
-    binder.frame.bind(Ns::Value, alias, binding.clone());
-    binder.frame.bind(Ns::Type, alias, binding.clone());
-    binder.frame.bind(Ns::Macro, alias, binding);
+    let target = match target {
+        UseTarget::Item(target, namespaces) => {
+            import_slots(&mut imported.resolved, namespaces, target);
+            return;
+        }
+        UseTarget::External => ImportedTarget {
+            canon: qualified_name(&path[..path.len() - 1], &path[path.len() - 1]),
+            prim: external_prim(path).filter(|_| {
+                scope_primitives_known(
+                    binder
+                        .scopes
+                        .get(binder.from)
+                        .expect("indexed importing module")
+                        .items(),
+                )
+            }),
+        },
+        UseTarget::Unresolved => ImportedTarget {
+            canon: qualified_name(binder.from, alias),
+            prim: None,
+        },
+    };
+    imported.unknown = match imported.unknown {
+        UnknownImport::None => UnknownImport::Unique(target),
+        UnknownImport::Unique(_) | UnknownImport::Ambiguous => UnknownImport::Ambiguous,
+    };
 }
 
 /// Resolve a use path against the module map, `from` the importing module.
-fn resolve_use<'a>(
-    scopes: &BTreeMap<Vec<String>, ModuleScope<'a>>,
+fn resolve_use(
+    scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
     from: &[String],
     path: &[String],
     leading_colon: bool,
-) -> UseTarget<'a> {
-    if path.is_empty() {
-        return UseTarget::Unresolved;
-    }
-    let first = unraw(&path[0]);
+) -> UseTarget {
+    let first = unraw(path.first().expect("a nonempty import path"));
     if leading_colon {
         return UseTarget::External;
     }
-    let Some(local) = scopes.get(from) else {
-        return UseTarget::Unresolved;
-    };
-    if matches!(first, "std" | "core")
-        && scope_primitives_known(local.items())
-        && !local.shadows_primitive_crate(first)
-    {
+    let local = scopes.get(from).expect("indexed importing module");
+    if matches!(first, "std" | "core") && !local.shadows_primitive_crate(first) {
         return UseTarget::External;
     }
     let (mut base, rest) = match first {
@@ -520,10 +536,7 @@ fn resolve_use<'a>(
         }
         let mut next_path = base.clone();
         next_path.push(name.to_string());
-        let next = scopes
-            .get(&next_path)
-            .copied()
-            .or_else(|| scope.inline_mod(name));
+        let next = scopes.get(&next_path).copied();
         base.push(name.to_string());
         scope = match next {
             Some(scope) => scope,
@@ -533,31 +546,51 @@ fn resolve_use<'a>(
     UseTarget::Unresolved
 }
 
-fn resolve_item<'a>(items: &'a [syn::Item], module: &[String], name: &str) -> UseTarget<'a> {
-    let item = items
-        .iter()
-        .find(|item| match item {
-            syn::Item::Fn(i) => ident_name(&i.sig.ident) == name,
-            syn::Item::Const(i) => ident_name(&i.ident) == name,
-            syn::Item::Static(i) => ident_name(&i.ident) == name,
-            _ => false,
-        })
-        .or_else(|| {
-            items.iter().find(|item| {
-                alpha::type_item_ident(item).is_some_and(|ident| ident_name(ident) == name)
-            })
+fn resolve_item(items: &[syn::Item], module: &[String], name: &str) -> UseTarget {
+    let mut namespaces = [false; 5];
+    for item in items {
+        let value = match item {
+            syn::Item::Fn(item) => Some(&item.sig.ident),
+            syn::Item::Const(item) => Some(&item.ident),
+            syn::Item::Static(item) => Some(&item.ident),
+            _ => None,
+        };
+        if value.is_some_and(|ident| ident_name(ident) == name) {
+            namespaces[Ns::Value as usize] = true;
+        }
+        if alpha::type_item_ident(item).is_some_and(|ident| ident_name(ident) == name) {
+            namespaces[Ns::Type as usize] = true;
+            if let syn::Item::Struct(item) = item
+                && !matches!(item.fields, syn::Fields::Named(_))
+            {
+                namespaces[Ns::Value as usize] = true;
+            }
+        }
+        if let syn::Item::Macro(item) = item
+            && item
+                .ident
+                .as_ref()
+                .is_some_and(|ident| ident_name(ident) == name)
+        {
+            namespaces[Ns::Macro as usize] = true;
+        }
+    }
+    if namespaces.iter().any(|present| *present) {
+        let prim = items.iter().find_map(|item| match item {
+            syn::Item::Type(alias) if ident_name(&alias.ident) == name => {
+                alias_chain_prim(alias, items, scope_primitives_known(items), 0)
+            }
+            _ => None,
         });
-    let (alias, value_only) = match item {
-        Some(syn::Item::Type(alias)) => (Some(alias), false),
-        Some(syn::Item::Fn(_) | syn::Item::Const(_) | syn::Item::Static(_)) => (None, true),
-        Some(_) => (None, false),
-        None => return UseTarget::Unresolved,
-    };
-    UseTarget::Item {
-        name: qualified_name(module, name),
-        alias,
-        siblings: items,
-        value_only,
+        UseTarget::Item(
+            ImportedTarget {
+                canon: qualified_name(module, name),
+                prim,
+            },
+            namespaces,
+        )
+    } else {
+        UseTarget::Unresolved
     }
 }
 
@@ -676,6 +709,7 @@ fn seed_frame(
 ) -> Frame {
     let mut frame = Frame::default();
     let mut next_id = 0usize;
+    let mut imports = BTreeMap::new();
     for item in scope.items() {
         if let Some((ns, ident, origin, prim)) = item_seed(item, scope.items(), prim_fallback) {
             bind_item_ident(&mut frame, path, ns, ident, origin, prim, &mut next_id);
@@ -683,13 +717,15 @@ fn seed_frame(
         }
         match item {
             syn::Item::Use(use_item) => {
-                seed_use_bindings(
-                    scopes,
-                    path,
+                use_tree_bindings(
+                    &mut UseBinder {
+                        scopes,
+                        from: path,
+                        leading_colon: use_item.leading_colon.is_some(),
+                        imports: &mut imports,
+                    },
+                    &[],
                     &use_item.tree,
-                    use_item.leading_colon.is_some(),
-                    &mut frame,
-                    &mut next_id,
                 );
             }
             syn::Item::Macro(i) => {
@@ -708,6 +744,7 @@ fn seed_frame(
             _ => {}
         }
     }
+    bind_imports(&mut frame, path, imports, &mut next_id);
     frame
 }
 
@@ -948,19 +985,9 @@ fn index_fn<'a>(
     );
 }
 
-/// The whole type as written, `Foo<u8>` and `a::Foo` telling apart types
-/// one last segment would merge.
+/// The owner type's tokens with opaque payloads intact.
 fn type_text(ty: &syn::Type) -> String {
-    let printed = ty.to_token_stream().to_string();
-    let word = |c: Option<char>| c.is_some_and(|c| c.is_alphanumeric() || c == '_');
-    let mut out = String::with_capacity(printed.len());
-    let mut chars = printed.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c != ' ' || (word(out.chars().last()) && word(chars.peek().copied())) {
-            out.push(c);
-        }
-    }
-    out
+    ty.to_token_stream().to_string()
 }
 
 /// Whether `meta` takes part in the comparison. `cfg`, the hints that

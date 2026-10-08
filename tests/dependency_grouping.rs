@@ -97,6 +97,19 @@ fn dependency_text_fallback_keeps_literal_distinctions_and_site_identity() {
 }
 
 #[test]
+fn dependency_text_fallback_filters_by_original_word_count() {
+    let sites = [
+        site("first", "let value=@;", &["compile_fail"]),
+        site("second", "let value=@;", &["compile_fail"]),
+    ];
+    let included = group(&sites, 2, 2);
+    assert_eq!(members(&included), vec![vec!["first", "second"]]);
+    assert!(included.groups[0].unparsed);
+    assert_eq!(included.groups[0].tokens, 2);
+    assert_eq!(members(&group(&sites, 2, 3)), Vec::<Vec<&str>>::new());
+}
+
+#[test]
 fn dependency_nesting_fallback_cannot_merge_with_the_parsed_form() {
     let deep = format!("let value = {}1u32{};", "(".repeat(256), ")".repeat(256));
     let sites = [

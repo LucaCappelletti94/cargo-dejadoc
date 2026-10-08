@@ -1259,3 +1259,91 @@ fn trait_default_bodies_keep_their_own_self_association() {
         body_of(&name_ref, "Foo::make")
     );
 }
+
+/// The canonical view of one indexed declaration, by its written name.
+fn view_of(file: &syn::File, name: &str) -> syn_canon::CanonicalForm {
+    let context = syn_canon::SourceContext::new(core::iter::once((&[][..], file)));
+    let target = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(f) if f.sig.ident == name => Some((&f.sig, f.block.as_ref())),
+            syn::Item::Impl(imp) => imp.items.iter().find_map(|member| match member {
+                syn::ImplItem::Fn(f) if f.sig.ident == name => Some((&f.sig, &f.block)),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{name} fixture"));
+    context.function(target.0, target.1).unwrap().canonicalize()
+}
+
+#[test]
+fn body_references_keep_unresolved_canonical_spellings_apart() {
+    let (a, _) = sites("fn first(x: i32) { consume(x) }");
+    let (b, _) = sites("fn renamed(y: i32) { consume(y) }");
+    let (c, _) = sites("fn third() { consume(_iv0) }");
+    assert_eq!(body_of(&a, "first"), body_of(&b, "renamed"));
+    assert_ne!(body_of(&a, "first"), body_of(&c, "third"));
+}
+
+#[test]
+fn closure_references_keep_unresolved_canonical_spellings_apart() {
+    let (a, _) = sites("fn first(x: i32) { let f = || consume(x); consume(f) }");
+    let (b, _) = sites("fn renamed(y: i32) { let f = || consume(y); consume(f) }");
+    let (c, _) = sites("fn third() { let f = || consume(_iv0); consume(f) }");
+    assert_eq!(
+        forms_of(&a, ContextKind::Closure)[0],
+        forms_of(&b, ContextKind::Closure)[0]
+    );
+    assert_ne!(
+        forms_of(&a, ContextKind::Closure)[0],
+        forms_of(&c, ContextKind::Closure)[0]
+    );
+}
+
+#[test]
+fn arm_references_keep_unresolved_canonical_spellings_apart() {
+    let (a, _) = sites("fn first(x: i32) -> i32 { match w { _ => consume(x) } }");
+    let (b, _) = sites("fn renamed(y: i32) -> i32 { match w { _ => consume(y) } }");
+    let (c, _) = sites("fn third() -> i32 { match w { _ => consume(_iv0) } }");
+    assert_eq!(
+        forms_of(&a, ContextKind::Arm)[0],
+        forms_of(&b, ContextKind::Arm)[0]
+    );
+    assert_ne!(
+        forms_of(&a, ContextKind::Arm)[0],
+        forms_of(&c, ContextKind::Arm)[0]
+    );
+}
+
+#[test]
+fn view_absolute_and_relative_roots_stay_apart_for_bound_items() {
+    let file: syn::File = syn::parse_str(
+        "struct Thing;
+         struct Widget;
+         impl Widget {
+             fn first() -> ::Thing {}
+             fn renamed() -> ::Thing {}
+             fn local() -> Thing {}
+         }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&file, "first"), view_of(&file, "renamed"));
+    assert_ne!(view_of(&file, "first"), view_of(&file, "local"));
+}
+
+#[test]
+fn view_absolute_and_relative_roots_stay_apart_for_generic_parameters() {
+    let file: syn::File = syn::parse_str(
+        "struct Pair;
+         impl<T> Pair {
+             fn first() -> ::T {}
+             fn renamed() -> ::T {}
+             fn local() -> T {}
+         }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&file, "first"), view_of(&file, "renamed"));
+    assert_ne!(view_of(&file, "first"), view_of(&file, "local"));
+}
