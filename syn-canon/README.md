@@ -26,7 +26,7 @@ println!("{forms:?}");
 
 Indexed imports bind only their declared namespaces. Ambiguous unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
 
-Comparison keys retain proven fixed-width scalar types through resolved aliases in the type namespace. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
+Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit integer types through resolved type aliases. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
 
 Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 block levels or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
 

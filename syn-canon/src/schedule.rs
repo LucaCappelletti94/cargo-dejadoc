@@ -440,7 +440,7 @@ fn total_op(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<(char, PrimT
             return None;
         };
         return match right {
-            Lbl::Int(count, _) if *count < u128::from(width) => Some((op, prim)),
+            Lbl::Int(count, _) if *count < u128::from(width.bits()) => Some((op, prim)),
             _ => None,
         };
     }
