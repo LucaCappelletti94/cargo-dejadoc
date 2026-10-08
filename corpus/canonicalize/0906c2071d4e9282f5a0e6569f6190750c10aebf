@@ -1,4 +1,0 @@
-# extern crate foo;
-# extern crate bar;
-e();
-qux::c();

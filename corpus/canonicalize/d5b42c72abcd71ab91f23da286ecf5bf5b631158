@@ -1,1 +1,0 @@
-;;;fn f() -> u8 { 'zz: loop { let d: &dyn fo;;;; break 'zz 1;;;;;;;; } ;;;;;;;;};;;?;;;;;;;!-A0l1dr##

@@ -1,2 +1,0 @@
-const PINO: u8 = 1;
-PINO + 1

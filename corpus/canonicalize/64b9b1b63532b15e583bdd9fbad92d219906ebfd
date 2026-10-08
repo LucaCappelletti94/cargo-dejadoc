@@ -1,3 +1,0 @@
-if let Some(pino) = pick() {
-    use_it(pino)
-}

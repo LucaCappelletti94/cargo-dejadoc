@@ -1,4 +1,0 @@
-match it {
-    pino if =ino > 0 => pino,
-    _ => 0,
-}

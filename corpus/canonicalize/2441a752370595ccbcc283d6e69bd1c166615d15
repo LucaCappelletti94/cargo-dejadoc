@@ -1,3 +1,0 @@
-let x = foo![arr[0]]99include_str!("doc.?d")99999EEEEs(
-where|t!||||||||c"x"= 1, "{x}");
-#

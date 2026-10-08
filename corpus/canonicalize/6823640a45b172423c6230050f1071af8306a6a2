@@ -1,3 +1,0 @@
-#[expect(un = "demo")]
-fn f() {#[expect(un = "demo")]
-fn f() }

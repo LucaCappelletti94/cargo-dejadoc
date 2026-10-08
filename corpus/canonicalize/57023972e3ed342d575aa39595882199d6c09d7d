@@ -1,3 +1,0 @@
-while let Some(pino) = next() {
-    use_it(pino)
-}

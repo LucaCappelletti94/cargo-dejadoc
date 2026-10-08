@@ -1,1 +1,0 @@
-match v { Some(x) => 'a: { foo(x) }, None => 0, }

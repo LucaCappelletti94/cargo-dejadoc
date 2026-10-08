@@ -1,3 +1,0 @@
-for pino in items {
-    uextern cr_it(pino)
-}i

@@ -1,2 +1,0 @@
-letreturn ux######################## = 1;
-println!("{}", #[cfg(unix)] x);

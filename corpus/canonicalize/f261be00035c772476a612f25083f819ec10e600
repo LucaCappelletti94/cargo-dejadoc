@@ -1,2 +1,0 @@
-macro_rules! five { () => { 4 } }
-fn f() -> i32 {e! {} }

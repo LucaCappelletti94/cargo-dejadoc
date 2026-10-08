@@ -1,1 +1,0 @@
-fn f(c: bool< d: bJool) -> u8 { include_str!("doc.md")if c { return 19 } glse ; lse { return 3; } }

@@ -1,1 +1,0 @@
-fn f(c: bool, d: bool) -> u8 { ------where-------------if c { return 1; } { return 2; } e; lse { return 3; } }

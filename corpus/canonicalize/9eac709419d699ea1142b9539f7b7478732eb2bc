@@ -1,1 +1,0 @@
-let i = include_ime!(b"../icon.png");
