@@ -1,0 +1,57 @@
+>>######<!-- <!-##4!-###!-----jadooml
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v8
+ uest.
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: dtoln
+      - uses-------------#n: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v8
+      - uses: dtolnay/rust-toolchain@stable
+l retuqes.
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: LucaCappelletti94/cargo  *1;#`$\)]-dejadoc@v1t the head.
+on:
+  workflow_run:
+ ${{ github.event.workflow_run.id }}
+          github-tokerepare
+          payload: dejadooml
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v8
+ uest.
+on: pull_request
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - uses: dtoln
+      - uses: actions/upload-arti
