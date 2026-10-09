@@ -1829,3 +1829,853 @@ fn const_generic_ids_keep_their_successor_identity() {
     let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
     assert_ne!(original_fn, renamed_fn,);
 }
+
+#[test]
+fn imported_primitive_facts_select_the_named_alias() {
+    let form = |width: &str, alias: &str, parameter: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "mod types {{ pub type Unrelated = u8; pub type Word = {width}; }}
+             use types::Word as {alias};
+             fn value({parameter}: {alias}) -> {alias} {{ {parameter} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        function_form(&context, function(&source, "value"))
+    };
+    let original = form("u32", "Word", "input");
+    assert_eq!(original, form("u32", "Scalar", "argument"));
+    assert_ne!(original, form("u64", "Word", "input"));
+}
+
+#[test]
+fn owner_observers_keep_methods_distinct_from_unobserved_bodies() {
+    for owner in ["impl Bag", "trait Bag", "mod bag"] {
+        for (result, initializer) in [
+            ("u8", "3u8"),
+            ("u16", "3u16"),
+            ("u32", "3u32"),
+            ("u64", "3u64"),
+            ("u128", "3u128"),
+            ("i8", "3i8"),
+            ("i16", "3i16"),
+            ("i32", "3i32"),
+            ("i64", "3i64"),
+            ("i128", "3i128"),
+            ("bool", "true"),
+            ("u32", "3u32 << 1"),
+            ("u32", "3u32 >> 1"),
+            ("u32", "3u32 & 1u32"),
+            ("u32", "3u32 | 1u32"),
+            ("u32", "3u32 ^ 1u32"),
+            ("u32", "3u32 & 1"),
+            ("u32", "3 & 1u32"),
+            ("bool", "true & false"),
+            ("bool", "true | false"),
+            ("bool", "true ^ false"),
+        ] {
+            let form = |attribute: &str, binding: &str| {
+                let prefix = if owner.starts_with("impl") {
+                    "struct Bag;"
+                } else {
+                    ""
+                };
+                let source: syn::File = syn::parse_str(&format!(
+                    "{prefix} {attribute} {owner} {{
+                         fn value() -> {result} {{
+                             let {binding} = {initializer}; {binding}
+                         }}
+                     }}"
+                ))
+                .unwrap();
+                let context = SourceContext::new(core::iter::once((&[][..], &source)));
+                if owner.starts_with("impl") {
+                    impl_forms(&context, &source).remove(0)
+                } else if owner.starts_with("trait") {
+                    let syn::Item::Trait(item) = &source.items[0] else {
+                        unreachable!()
+                    };
+                    let syn::TraitItem::Fn(method) = &item.items[0] else {
+                        unreachable!()
+                    };
+                    context
+                        .function(&method.sig, method.default.as_ref().unwrap())
+                        .unwrap()
+                        .canonicalize()
+                } else {
+                    let syn::Item::Mod(item) = &source.items[0] else {
+                        unreachable!()
+                    };
+                    let syn::Item::Fn(function) = &item.content.as_ref().unwrap().1[0] else {
+                        unreachable!()
+                    };
+                    context
+                        .function(&function.sig, &function.block)
+                        .unwrap()
+                        .canonicalize()
+                }
+            };
+            let plain = form("", "value");
+            assert_eq!(plain, form("#[allow(dead_code)]", "renamed"));
+            let observed = form("#[observer::inspect]", "value");
+            assert_eq!(observed, form("#[observer::inspect]", "renamed"));
+            assert_ne!(plain, observed, "{owner} {initializer}");
+        }
+    }
+}
+
+#[test]
+fn owner_observers_keep_standard_macro_bodies_distinct() {
+    for body in [
+        "std::print!(\"{}\", 3u32);",
+        "std::println!(\"{}\", 3u32);",
+        "std::eprint!(\"{}\", 3u32);",
+        "std::eprintln!(\"{}\", 3u32);",
+        "std::format!(\"{}\", 3u32);",
+        "std::format_args!(\"{}\", 3u32);",
+        "std::assert!(true);",
+        "std::assert_eq!(3u32, 3u32);",
+        "std::assert_ne!(3u32, 5u32);",
+        "std::debug_assert!(true);",
+        "std::debug_assert_eq!(3u32, 3u32);",
+        "std::debug_assert_ne!(3u32, 5u32);",
+        "std::panic!(\"stop\");",
+        "std::todo!(\"stop\");",
+        "std::unimplemented!(\"stop\");",
+        "std::unreachable!(\"stop\");",
+    ] {
+        let form = |attribute: &str| {
+            let source: syn::File = syn::parse_str(&format!(
+                "struct Bag; {attribute} impl Bag {{ fn value() {{ {body} }} }}"
+            ))
+            .unwrap();
+            let context = SourceContext::new(core::iter::once((&[][..], &source)));
+            impl_forms(&context, &source).remove(0)
+        };
+        let plain = form("");
+        assert_eq!(plain, form("#[allow(dead_code)]"));
+        assert_ne!(plain, form("#[observer::inspect]"), "{body}");
+    }
+}
+
+#[test]
+fn anonymous_type_expansions_block_builtin_primitive_assumptions() {
+    let form = |expansion: &str, parameter: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "macro_rules! declare_width {{ () => {{
+                 #[allow(non_camel_case_types)] type u32 = u64;
+             }}; }}
+             {expansion}
+             fn value({parameter}: u32) -> u32 {{ {parameter} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        function_form(&context, function(&source, "value"))
+    };
+    let original = form("", "input");
+    assert_eq!(original, form("", "argument"));
+    let expanded = form("declare_width!();", "input");
+    assert_eq!(expanded, form("declare_width!();", "argument"));
+    assert_ne!(original, expanded);
+}
+
+#[test]
+fn owner_observers_keep_total_tails_distinct() {
+    for (result, tail) in [
+        ("u32", "3u32"),
+        ("bool", "true"),
+        ("u32", "3u32 << 1"),
+        ("u32", "3u32 & 1"),
+        ("(u32, u64)", "(3u32, 5u64)"),
+    ] {
+        let form = |attribute: &str| {
+            let source: syn::File = syn::parse_str(&format!(
+                "struct Bag; {attribute} impl Bag {{ fn value() -> {result} {{ {tail} }} }}"
+            ))
+            .unwrap();
+            let context = SourceContext::new(core::iter::once((&[][..], &source)));
+            impl_forms(&context, &source).remove(0)
+        };
+        let plain = form("");
+        assert_eq!(plain, form("#[allow(dead_code)]"));
+        assert_ne!(plain, form("#[observer::inspect]"), "{tail}");
+    }
+}
+
+#[test]
+fn owner_observers_keep_transparent_scalar_groups_distinct() {
+    let form = |attribute: &str| {
+        let mut source: syn::File = syn::parse_str(&format!(
+            "struct Bag; {attribute} impl Bag {{ fn value() -> u32 {{ 3u32 }} }}"
+        ))
+        .unwrap();
+        let syn::Item::Impl(item) = &mut source.items[1] else {
+            unreachable!()
+        };
+        let syn::ImplItem::Fn(method) = &mut item.items[0] else {
+            unreachable!()
+        };
+        let syn::Stmt::Expr(expression, None) = &mut method.block.stmts[0] else {
+            unreachable!()
+        };
+        *expression = syn::Expr::Group(syn::ExprGroup {
+            attrs: Vec::new(),
+            group_token: syn::token::Group::default(),
+            expr: Box::new(expression.clone()),
+        });
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).remove(0)
+    };
+    let plain = form("");
+    assert_eq!(plain, form("#[allow(dead_code)]"));
+    assert_ne!(plain, form("#[observer::inspect]"));
+}
+
+#[test]
+fn owner_observers_keep_item_shaped_observations_distinct() {
+    let form = |attribute: &str| {
+        let mut source: syn::File = syn::parse_str(&format!(
+            "struct Bag; {attribute} impl Bag {{ fn value() {{ std::println!(\"{{}}\", 3u32); }} }}"
+        ))
+        .unwrap();
+        let syn::Item::Impl(item) = &mut source.items[1] else {
+            unreachable!()
+        };
+        let syn::ImplItem::Fn(method) = &mut item.items[0] else {
+            unreachable!()
+        };
+        let syn::Stmt::Macro(statement) = &method.block.stmts[0] else {
+            unreachable!()
+        };
+        method.block.stmts[0] = syn::Stmt::Item(syn::Item::Macro(syn::ItemMacro {
+            attrs: statement.attrs.clone(),
+            ident: None,
+            mac: statement.mac.clone(),
+            semi_token: statement.semi_token,
+        }));
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).remove(0)
+    };
+    let plain = form("");
+    assert_eq!(plain, form("#[allow(dead_code)]"));
+    assert_ne!(plain, form("#[observer::inspect]"));
+}
+
+#[test]
+fn parameter_shadows_preserve_renamed_local_proofs() {
+    let form = |body: &str| {
+        let source: syn::File =
+            syn::parse_str(&format!("fn value(input: u32) -> u32 {{ {body} }}")).unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        function_form(&context, function(&source, "value"))
+    };
+    assert_eq!(
+        form("let input = input; let copied = input; copied"),
+        form("let local = input; let copied = local; copied"),
+    );
+    assert_eq!(
+        form("let mut input = input; let copied = input; copied"),
+        form("let mut local = input; let copied = local; copied"),
+    );
+}
+
+#[test]
+fn unrelated_bindings_preserve_renamed_producer_proofs() {
+    let form = |binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "fn value() -> u32 {{ let {binding} = 3u32; let other = (); {binding} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        function_form(&context, function(&source, "value"))
+    };
+    assert_eq!(form("value"), form("xyzzy"));
+}
+
+#[test]
+fn observed_owners_drop_the_bool_parameter_proof() {
+    let source = |attribute: &str| {
+        format!("struct S; {attribute} impl S {{ fn m(x: bool) {{ let y = x; let _ = y; }} }}")
+    };
+    let method_form = |source: &str| {
+        let file: syn::File = syn::parse_str(source).unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &file)));
+        let syn::Item::Impl(impl_item) = &file.items[1] else {
+            unreachable!()
+        };
+        let syn::ImplItem::Fn(method) = &impl_item.items[0] else {
+            unreachable!()
+        };
+        context
+            .function(&method.sig, &method.block)
+            .unwrap()
+            .canonicalize()
+    };
+    assert_ne!(
+        method_form(&source("#[observer::inspect]")),
+        method_form(&source("")),
+    );
+}
+
+#[test]
+fn nested_scalar_proofs_preserve_the_owner_observer_boundary() {
+    let form = |attribute: &str, binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "struct Bag; {attribute} impl Bag {{
+                 fn value() -> u32 {{
+                     {}let {binding} = 3u32; {binding}{}
+                 }}
+             }}",
+            "{".repeat(63),
+            "}".repeat(63),
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).remove(0)
+    };
+    let plain = form("", "value");
+    assert_eq!(plain, form("", "renamed"));
+    assert_eq!(plain, form("#[allow(dead_code)]", "value"));
+    assert_ne!(plain, form("#[observer::inspect]", "value"));
+}
+
+#[test]
+fn qualified_assignments_do_not_invalidate_same_named_local_proofs() {
+    let form = |binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "mod storage {{ pub static mut VALUE: u32 = 0; }}
+             unsafe fn value() -> u32 {{
+                 let {binding} = 3u32;
+                 storage::VALUE = 5u32;
+                 {binding}
+             }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        function_form(&context, function(&source, "value"))
+    };
+    assert_eq!(form("storage"), form("local"));
+    assert_eq!(form("storage"), form("xyzzy"));
+}
+
+#[test]
+fn borrowed_loop_patterns_preserve_shadowed_producer_identity() {
+    for (declaration, input, pattern) in [
+        ("", "&[u32]", "value"),
+        ("", "&[(u32, u32)]", "(value, _)"),
+        ("", "&[((u32, u32), u32)]", "((value, _), _)"),
+        ("struct Record(u32);", "&[Record]", "Record(value)"),
+        (
+            "struct Record { field: u32 }",
+            "&[Record]",
+            "Record { field: value }",
+        ),
+        ("", "&[[u32; 2]]", "[value, ..]"),
+        ("", "&[u32]", "&value"),
+    ] {
+        let form = |binding: &str| {
+            let source: syn::File = syn::parse_str(&format!(
+                "{declaration} fn f(input: {input}) -> u32 {{
+                     let {binding} = 3u32;
+                     for {pattern} in input {{ let _ = &value; }}
+                     {binding}
+                 }}"
+            ))
+            .unwrap();
+            let context = SourceContext::new(core::iter::once((&[][..], &source)));
+            function_form(&context, function(&source, "f"))
+        };
+        assert_eq!(form("value"), form("result"), "{pattern}");
+        assert_eq!(form("value"), form("xyzzy"), "{pattern}");
+    }
+}
+
+#[test]
+fn borrowed_match_patterns_preserve_shadowed_producer_identity() {
+    for pattern in [
+        "Choice::First(value) if *value > 0",
+        "Choice::First(value) | Choice::Second(value)",
+    ] {
+        let form = |binding: &str| {
+            let source: syn::File = syn::parse_str(&format!(
+                "enum Choice {{ First(u32), Second(u32) }}
+                 fn f(input: &Choice) -> u32 {{
+                     let {binding} = 3u32;
+                     match input {{ {pattern} => {{ let _ = &value; }}, _ => {{}} }}
+                     {binding}
+                 }}"
+            ))
+            .unwrap();
+            let context = SourceContext::new(core::iter::once((&[][..], &source)));
+            function_form(&context, function(&source, "f"))
+        };
+        assert_eq!(form("value"), form("result"), "{pattern}");
+        assert_eq!(form("value"), form("xyzzy"), "{pattern}");
+    }
+}
+
+#[test]
+fn borrowed_closure_patterns_preserve_shadowed_producer_identity() {
+    for (pattern, argument) in [("value: u32", "7u32"), ("(value, _)", "(7u32, 9u32)")] {
+        let form = |binding: &str| {
+            let source: syn::File = syn::parse_str(&format!(
+                "fn f() -> u32 {{
+                     let {binding} = 3u32;
+                     let calculate = |{pattern}| {{ let _ = &value; }};
+                     calculate({argument});
+                     {binding}
+                 }}"
+            ))
+            .unwrap();
+            let context = SourceContext::new(core::iter::once((&[][..], &source)));
+            function_form(&context, function(&source, "f"))
+        };
+        assert_eq!(form("value"), form("result"), "{pattern}");
+        assert_eq!(form("value"), form("xyzzy"), "{pattern}");
+    }
+}
+
+#[test]
+fn unproven_shadowing_locals_invalidate_the_previous_primitive_proof() {
+    let form = |binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "fn helper() -> u32 {{ 7u32 }}
+             fn value() -> u32 {{
+                 let {binding} = 3u32;
+                 let value = helper();
+                 value
+             }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        function_form(&context, function(&source, "value"))
+    };
+    assert_eq!(form("value"), form("unused"));
+    assert_eq!(form("value"), form("xyzzy"));
+}
+
+#[test]
+fn mixed_primitive_overloads_keep_their_unproven_owner_tails() {
+    for (implementation, tail) in [
+        (
+            "impl std::ops::BitAnd<Scalar> for u32 {
+                 type Output = u32;
+                 fn bitand(self, rhs: Scalar) -> u32 {
+                     std::println!(\"{self}\");
+                     self & rhs.0
+                 }
+             }",
+            "1u32 & argument",
+        ),
+        (
+            "impl std::ops::BitAnd<u32> for Scalar {
+                 type Output = u32;
+                 fn bitand(self, rhs: u32) -> u32 {
+                     std::println!(\"{rhs}\");
+                     self.0 & rhs
+                 }
+             }",
+            "argument & 1u32",
+        ),
+    ] {
+        let form = |attribute: &str, body: &str, parameter: &str| {
+            let source: syn::File = syn::parse_str(&format!(
+                "struct Scalar(u32);
+                 struct Bag;
+                 impl Copy for Scalar {{}}
+                 impl Clone for Scalar {{ fn clone(&self) -> Self {{ *self }} }}
+                 {implementation}
+                 {attribute} impl Bag {{
+                     fn value({parameter}: Scalar) -> impl Copy {{ {body} }}
+                 }}"
+            ))
+            .unwrap();
+            let context = SourceContext::new(core::iter::once((&[][..], &source)));
+            impl_forms(&context, &source).pop().unwrap()
+        };
+        let plain = form("", tail, "argument");
+        assert_eq!(plain, form("#[allow(dead_code)]", tail, "argument"));
+        assert_eq!(plain, form("#[observer::inspect]", tail, "argument"));
+        assert_eq!(plain, form("", &tail.replace("argument", "input"), "input"));
+        assert_ne!(
+            form("", "3u32", "argument"),
+            form("#[observer::inspect]", "3u32", "argument")
+        );
+    }
+}
+
+#[test]
+fn storage_observations_keep_proof_prefix_owner_tails_opaque() {
+    let form = |attribute: &str, body: &str, binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "fn consume<T>(_: T) {{}}
+             struct Holder<'a> {{ field: &'a u32 }}
+             struct Bag;
+             {attribute} impl Bag {{ fn value() {{ let {binding} = 3u32; {body} }} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for body in [
+        "consume(&value);",
+        "let _ = *(&value);",
+        "let _ = { &value };",
+        "if true { let _ = &value; }",
+        "for _ in [()] { let _ = &value; }",
+        "while false { let _ = &value; }",
+        "match () { () => { let _ = &value; } }",
+        "let _ = (&value,);",
+        "let _ = [&value];",
+        "let _ = [&value; 2];",
+        "let _ = &value..&value;",
+        "let _ = [&value][0];",
+        "let _ = (&value,).0;",
+        "let _ = Holder { field: &value };",
+        "let _ = unsafe { &value };",
+        "let _ = async { let _ = &value; };",
+        "let _ = &raw const value;",
+        "let _ = value.wrapping_add(0u32);",
+        "let _ = || { let _ = &value; };",
+        "if let reference = &value { let _ = reference; }",
+        "#[allow(unused_parens)] (&value);",
+        "let _ = vec![&value];",
+        "let _ = || { consume(return &value); };",
+        "let _ = loop { consume(break &value); };",
+        "let _ = || { consume(Ok::<_, ()>(value)?); Ok::<(), ()>(()) };",
+        "let _ = async { consume(async { &value }.await); };",
+    ] {
+        let plain = form("", body, "value");
+        assert_eq!(plain, form("#[allow(dead_code)]", body, "value"), "{body}");
+        assert_eq!(plain, form("#[observer::inspect]", body, "value"), "{body}");
+        assert_eq!(
+            plain,
+            form("", &body.replace("value", "input"), "input"),
+            "{body}"
+        );
+    }
+    assert_ne!(
+        form("", "consume(value);", "value"),
+        form("#[observer::inspect]", "consume(value);", "value")
+    );
+}
+
+#[test]
+fn overflowing_literal_shifts_keep_their_unproven_owner_tails() {
+    let form = |attribute: &str, count: u32, owner: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "struct {owner}; {attribute} impl {owner} {{
+                 #[allow(arithmetic_overflow)]
+                 fn value() -> impl Copy {{ 1u32 << {count}u32 }}
+             }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for count in [32, 33] {
+        let plain = form("", count, "Bag");
+        assert_eq!(plain, form("#[allow(dead_code)]", count, "Bag"));
+        assert_eq!(plain, form("#[observer::inspect]", count, "Bag"));
+        assert_eq!(plain, form("", count, "Parcel"));
+    }
+    assert_ne!(form("", 31, "Bag"), form("#[observer::inspect]", 31, "Bag"));
+}
+
+#[test]
+fn primitive_parameter_tails_preserve_owner_proof_boundaries() {
+    let form = |prefix: &str, ty: &str, attribute: &str, binding: &str, grouped: bool| {
+        let mut source: syn::File = syn::parse_str(&format!(
+            "{prefix} struct Bag; {attribute} impl Bag {{
+                 fn value({binding}: {ty}) -> impl Copy {{ {binding} }}
+             }}"
+        ))
+        .unwrap();
+        if grouped {
+            let syn::Item::Impl(item) = source.items.last_mut().unwrap() else {
+                unreachable!()
+            };
+            let syn::ImplItem::Fn(function) = &mut item.items[0] else {
+                unreachable!()
+            };
+            let syn::FnArg::Typed(parameter) = function.sig.inputs.first_mut().unwrap() else {
+                unreachable!()
+            };
+            let elem = core::mem::replace(
+                &mut *parameter.ty,
+                syn::Type::Verbatim(proc_macro2::TokenStream::new()),
+            );
+            *parameter.ty = syn::Type::Group(syn::TypeGroup {
+                attrs: Vec::new(),
+                group_token: syn::token::Group::default(),
+                elem: Box::new(elem),
+            });
+        }
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for (prefix, ty) in [
+        ("", "u32"),
+        ("", "bool"),
+        ("type Width = u32;", "Width"),
+        ("type Width = bool;", "Width"),
+        ("type Width = u32; use Width as Input;", "Input"),
+        ("", "::std::primitive::u32"),
+    ] {
+        for grouped in [false, true] {
+            let plain = form(prefix, ty, "", "argument", grouped);
+            assert_eq!(
+                plain,
+                form(prefix, ty, "#[allow(dead_code)]", "argument", grouped)
+            );
+            assert_eq!(plain, form(prefix, ty, "", "input", grouped));
+            assert_ne!(
+                plain,
+                form(prefix, ty, "#[observer::inspect]", "argument", grouped)
+            );
+        }
+    }
+    let scalar = "struct Scalar(u32); impl Copy for Scalar {}
+                  impl Clone for Scalar { fn clone(&self) -> Self { *self } }";
+    assert_eq!(
+        form(scalar, "Scalar", "", "argument", false),
+        form(scalar, "Scalar", "#[observer::inspect]", "argument", false)
+    );
+}
+
+#[test]
+fn unmodeled_macro_calls_keep_owner_bodies_opaque() {
+    let form = |prefix: &str, body: &str, attribute: &str, binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "{prefix} struct Bag; {attribute} impl Bag {{
+                 fn value() -> impl Copy {{ let {binding} = 3u32; {body} }}
+             }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for (prefix, body) in [
+        ("extern crate observer;", "observer::passthrough!(value)"),
+        ("", "observer::passthrough!(value)"),
+        ("", "std::thread_local! { static SLOT: u32 = 4u32; } value"),
+        (
+            "macro_rules! inspect { ($v:expr) => { $v } }",
+            "inspect!(value)",
+        ),
+        (
+            "macro_rules! print { ($v:expr) => { $v } }",
+            "print!(value)",
+        ),
+        (
+            "mod std { macro_rules! capture { ($v:expr) => { $v } }
+             pub(crate) use capture as print; }",
+            "std::print!(value)",
+        ),
+        (
+            "mod core { macro_rules! capture { ($v:expr) => { $v } }
+             pub(crate) use capture as print; }",
+            "core::print!(value)",
+        ),
+    ] {
+        let plain = form(prefix, body, "", "value");
+        assert_eq!(plain, form(prefix, body, "#[allow(dead_code)]", "value"));
+        assert_eq!(plain, form(prefix, body, "#[observer::inspect]", "value"));
+        assert_eq!(
+            plain,
+            form(prefix, &body.replace("value", "input"), "", "input")
+        );
+    }
+    assert_ne!(
+        form("", "print!(\"\"); value", "", "value"),
+        form("", "print!(\"\"); value", "#[observer::inspect]", "value")
+    );
+}
+
+#[test]
+fn non_scalar_bindings_and_storage_uses_keep_owner_proofs_opaque() {
+    let form = |attribute: &str, body: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "fn consume<T>(_: T) {{}} struct Bag;
+             {attribute} impl Bag {{ fn value() {{ {body} }} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for body in [
+        "let ref mut value = 3u32; consume(value);",
+        "let value @ other = 3u32; consume(value); consume(other);",
+        "let value = 3u32; let value @ other = 4u64; let _ = &value; let _ = other;",
+        "let mut value = 3u32; value = 4u32;",
+        "let mut value = 3u32; value += 4u32;",
+        "let value = 3u32; let _ = (&value) as *const u32;",
+        "let value = 3u32; let _ = const {
+             #[allow(non_upper_case_globals)] const value: u32 = 4u32;
+             let _ = &value;
+         };",
+    ] {
+        let plain = form("", body);
+        assert_eq!(plain, form("#[allow(dead_code)]", body), "{body}");
+        assert_eq!(plain, form("#[observer::inspect]", body), "{body}");
+        assert_eq!(plain, form("", &body.replace("value", "input")), "{body}");
+    }
+    for body in [
+        "let value = 3u32; value + 0u32;",
+        "let value = 3u32; let _ = |value: u32| consume(&value);",
+    ] {
+        let plain = form("", body);
+        assert_eq!(plain, form("#[allow(dead_code)]", body), "{body}");
+        assert_eq!(plain, form("", &body.replace("value", "input")), "{body}");
+        assert_ne!(plain, form("#[observer::inspect]", body), "{body}");
+    }
+}
+
+#[test]
+fn deep_owner_blocks_stop_primitive_proofs() {
+    let form = |attribute: &str, depth: usize, owner: &str| {
+        let mut body = String::with_capacity(depth * 4 + 4);
+        for _ in 0..depth {
+            body.push_str("{ ");
+        }
+        body.push_str("3u32");
+        for _ in 0..depth {
+            body.push_str(" }");
+        }
+        let source: syn::File = syn::parse_str(&format!(
+            "struct {owner}; {attribute} impl {owner} {{
+                 fn value() -> impl Copy {{ {body} }}
+             }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    let plain = form("", 70, "Bag");
+    assert_eq!(plain, form("#[allow(dead_code)]", 70, "Bag"));
+    assert_eq!(plain, form("#[observer::inspect]", 70, "Bag"));
+    assert_eq!(plain, form("", 70, "Parcel"));
+    assert_ne!(form("", 1, "Bag"), form("#[observer::inspect]", 1, "Bag"));
+}
+
+#[test]
+fn sibling_owner_blocks_keep_their_depth_independent() {
+    let form = |attribute: &str, owner: &str| {
+        let body = "{}; ".repeat(70);
+        let source: syn::File = syn::parse_str(&format!(
+            "struct {owner}; {attribute} impl {owner} {{
+                 fn value() {{ {body} {{ 3u32 }}; }}
+             }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    let plain = form("", "Bag");
+    assert_eq!(plain, form("#[allow(dead_code)]", "Bag"));
+    assert_eq!(plain, form("", "Parcel"));
+    assert_ne!(plain, form("#[observer::inspect]", "Bag"));
+}
+
+#[test]
+fn qualified_associated_constants_do_not_observe_local_storage() {
+    let form = |attribute: &str, binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "struct Holder; impl Holder {{
+                 #[allow(non_upper_case_globals)] const value: u32 = 4u32;
+             }}
+             struct Bag; {attribute} impl Bag {{ fn value() {{
+                 let {binding} = 3u32;
+                 let _ = &<Holder>::value;
+             }} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    let plain = form("", "value");
+    assert_eq!(plain, form("#[allow(dead_code)]", "value"));
+    assert_eq!(plain, form("", "input"));
+    assert_ne!(plain, form("#[observer::inspect]", "value"));
+}
+
+#[test]
+fn local_aliases_preserve_nested_parameter_proof_boundaries() {
+    let form = |attribute: &str, aliases: &str, input: &str, binding: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "struct Bag; {attribute} impl Bag {{ fn value() {{
+                 {aliases}
+                 fn inner({binding}: {input}) -> impl Copy {{ {binding} }}
+                 inner(3u32);
+             }} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for (aliases, input) in [
+        ("type Width = u32;", "Width"),
+        ("type Width = u32; type Input = Width;", "Input"),
+        ("#[allow(dead_code)] type Width = u32;", "Width"),
+    ] {
+        let plain = form("", aliases, input, "argument");
+        assert_eq!(
+            plain,
+            form("#[allow(dead_code)]", aliases, input, "argument")
+        );
+        assert_eq!(plain, form("", aliases, input, "value"));
+        assert_ne!(
+            plain,
+            form("#[observer::inspect]", aliases, input, "argument")
+        );
+    }
+    for import in [
+        "use std::primitive::u32 as Width;",
+        "use std::primitive::{u32 as Width};",
+        "#[cfg(all())] type Width = u32;",
+        "#[cfg_attr(all(), allow(dead_code))] type Width = u32;",
+    ] {
+        let plain = form("", import, "Width", "argument");
+        assert_eq!(
+            plain,
+            form("#[allow(dead_code)]", import, "Width", "argument")
+        );
+        assert_eq!(plain, form("", import, "Width", "value"));
+        assert_eq!(
+            plain,
+            form("#[observer::inspect]", import, "Width", "argument")
+        );
+    }
+}
+
+#[test]
+fn primitive_free_control_boundaries_preserve_owner_proof_distinctions() {
+    let form = |attribute: &str, result: &str, body: &str, owner: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "fn condition() -> bool {{ std::hint::black_box(true) }}
+             struct {owner}; {attribute} impl {owner} {{ fn value() {result} {{ {body} }} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &source)));
+        impl_forms(&context, &source).pop().unwrap()
+    };
+    for (result, body) in [
+        ("", "return; condition();"),
+        ("", "loop { break; condition(); }"),
+        (
+            "-> Result<(), ()>",
+            "let result: Result<(), ()> = Ok(()); result?; Ok(())",
+        ),
+    ] {
+        let plain = form("", result, body, "Bag");
+        assert_eq!(plain, form("#[allow(dead_code)]", result, body, "Bag"));
+        assert_eq!(
+            plain,
+            form("", result, &body.replace("result", "output"), "Parcel")
+        );
+        assert_ne!(plain, form("#[observer::inspect]", result, body, "Bag"));
+    }
+    assert_eq!(
+        form("", "", "condition();", "Bag"),
+        form("#[observer::inspect]", "", "condition();", "Bag")
+    );
+}
