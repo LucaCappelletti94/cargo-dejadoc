@@ -1,0 +1,2 @@
+let x = 1;
+write!(out,(/*ERROR*/), x + 1).unwrap();

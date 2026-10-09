@@ -1,0 +1,1 @@
+fn f() -> u8 { 'zz: { let d: &enum } }
