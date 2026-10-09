@@ -35,6 +35,18 @@ jobs:
         with:
           name: dependency-witnesses
           path: ${{ runner.temp }}/dependency-witnesses.json
+      - name: Verify checked constant witnesses
+        id: dependency_constants_witnesses
+        run: >-
+          python3 -B tests/dependency_constants_witnesses.py
+          --request-id "DG-CI-M2-${{ github.run_id }}-${{ github.run_attempt }}"
+          --output "${{ runner.temp }}/dependency-constants-witnesses.json"
+          --timeout 600
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.dependency_constants_witnesses.outcome != 'skipped'
+        with:
+          name: dependency-constants-witnesses
+          path: ${{ runner.temp }}/dependency-constants-witnesses.json
       - run: cargo clippy --workspace --lib --no-default-features -- -D warnings
       - run: cargo test --workspace --lib --no-default-features
       - run: cargo clippy -p dejadoc --all-targets --no-default-features --features std -- -D warnings

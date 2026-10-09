@@ -101,7 +101,7 @@ pub fn check_functions(report: &dejadoc::Report) {
     assert_eq!(report.functions % 2, 0);
 }
 
-/// Legal typed schedules group together while a changed operand remains distinct.
+/// Checked literal folds and legal schedules group apart from a changed operand.
 pub fn check_dependency_schedules(data: &[u8]) {
     let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
     let mask = byte(0);
@@ -113,19 +113,27 @@ pub fn check_dependency_schedules(data: &[u8]) {
         ("r#type", "r#loop")
     };
     let statements = [
-        format!("let {first} = input & {mask}u32;"),
-        format!("let {second} = input >> {shift}u32;"),
+        format!("let {first} = input & ({mask}u32 + {bias}u32);"),
+        format!("let {second} = input >> ({shift}u32 + 0u32);"),
         format!("let left = {first} ^ {bias}u32;"),
         format!("let right = {second} | 1u32;"),
     ];
-    let source = |order: [usize; 4]| {
+    let source = |order: [usize; 4], folded: bool| {
+        let folded_first = folded.then(|| format!("let {first} = input & {}u32;", mask + bias));
+        let folded_second = folded.then(|| format!("let {second} = input >> {shift}u32;"));
+        let statements = [
+            folded_first.as_ref().unwrap_or(&statements[0]),
+            folded_second.as_ref().unwrap_or(&statements[1]),
+            &statements[2],
+            &statements[3],
+        ];
         format!(
             "fn f(input:u32)->(u32,u32){{ {} {} {} {} (left,right) }}",
             statements[order[0]], statements[order[1]], statements[order[2]], statements[order[3]],
         )
     };
-    let original = source([0, 1, 2, 3]);
-    let scheduled = source([1, 3, 0, 2]);
+    let original = source([0, 1, 2, 3], false);
+    let scheduled = source([1, 3, 0, 2], true);
     let changed = original.replace(&format!("^ {bias}u32"), &format!("^ {}u32", bias + 1));
     let site = |item: &str, code: String| DocTest {
         file: format!("src/{item}.rs"),

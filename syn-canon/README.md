@@ -30,6 +30,20 @@ Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit 
 
 Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving lexical value identities and distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 block levels or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
 
+Passing-mode comparison evaluates closed fixed-width integer literal operations before dependency scheduling, checking every intermediate result and retaining the result's type. Compatible suffixes or a resolved immediate declaration establish the type, with signed minima and Rust's truncating left shifts preserved. Overflow, zero divisors, signed minimum division or remainder by `-1`, unresolved inference, pointer-sized arithmetic and syntax-observed regions retain their operations.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+assert_eq!(
+    form("fn f() -> u8 { (2u8 + 3u8) * 4u8 }"),
+    form("fn f() -> u8 { 20u8 }"),
+);
+assert_ne!(
+    form("fn f() -> u8 { (255u8 + 1u8) - 1u8 }"),
+    form("fn f() -> u8 { 255u8 }"),
+);
+```
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.
