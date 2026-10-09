@@ -214,3 +214,193 @@ fn qualified_module_steps_ignore_same_spelling_functions() {
         assert_eq!(canonicalize(first.clone()), canonicalize(renamed.clone()));
     }
 }
+
+#[test]
+fn local_aliases_preserve_binding_identity_across_resolution_paths() {
+    for source in [
+        "fn f(input: u16) -> u16 { type Word = Storage; type Storage = u16; let output: Word = input ^ 1; output }",
+        "fn f(input: u16) -> u16 { use core::primitive::u16 as Number; type Word = Number; let output: Word = input ^ 1; output }",
+        "fn f(input: u16) -> u16 { use core::primitive::*; type Word = u16; let output: Word = input ^ 1; output }",
+        "fn f(input: u16) -> u16 { #[cfg_attr(all(), allow(dead_code))] type Word = u16; let output: Word = input ^ 1; output }",
+    ] {
+        let renamed = source
+            .replace("f(", "g(")
+            .replace("input", "source")
+            .replace("output", "result")
+            .replace("Word", "Scalar")
+            .replace("Storage", "Base")
+            .replace("Number", "Imported");
+        let different = source.replace("output }", "input }");
+        let form = syn_canon::canonicalize(syn::parse_str(source).unwrap());
+        assert_eq!(
+            form,
+            syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+            "{source}",
+        );
+        assert_ne!(
+            form,
+            syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+            "{source}",
+        );
+    }
+}
+
+#[test]
+fn invisible_parameter_type_groups_preserve_binding_identity() {
+    let form = |source: &str| {
+        let mut file: syn::File = syn::parse_str(source).unwrap();
+        let syn::Item::Fn(function) = &mut file.items[0] else {
+            panic!("function fixture");
+        };
+        let syn::FnArg::Typed(mut input) = function.sig.inputs.pop().unwrap() else {
+            panic!("parameter fixture");
+        };
+        input.ty = Box::new(syn::Type::Group(syn::TypeGroup {
+            attrs: Vec::new(),
+            group_token: syn::token::Group::default(),
+            elem: input.ty,
+        }));
+        function.sig.inputs.push(syn::FnArg::Typed(input));
+        syn_canon::canonicalize(file)
+    };
+    assert_eq!(
+        form("fn f(input: u16) -> u16 { let result = input ^ 1; result << 1 }"),
+        form("fn g(source: u16) -> u16 { let value = source ^ 1; value << 1 }"),
+    );
+    assert_ne!(
+        form("fn f(input: u16) -> u16 { let result = input ^ 1; result << 1 }"),
+        form("fn f(input: u16) -> u16 { let result = input ^ 1; input << 1 }"),
+    );
+}
+
+#[test]
+fn computed_documentation_preserves_grouped_import_binding_identity() {
+    let source = "#[doc = concat!(\"local\", \" imports\")]
+        fn f(input: u16) -> u16 {
+            use {core::primitive::u16 as Imported, core::mem::size_of as measure};
+            type Word = u16;
+            let output: Word = input ^ 1;
+            let _: Imported = output;
+            let _ = measure::<Word>();
+            output
+        }";
+    let renamed = source
+        .replace("f(", "g(")
+        .replace("input", "source")
+        .replace("output", "result")
+        .replace("Imported", "Scalar")
+        .replace("measure", "size")
+        .replace("Word", "Storage");
+    let different = source.replace("            output", "            input");
+    let form = syn_canon::canonicalize(syn::parse_str(source).unwrap());
+    assert_eq!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+    );
+    assert_ne!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+    );
+}
+
+#[test]
+fn long_local_alias_chains_preserve_binding_identity() {
+    use std::fmt::Write;
+
+    let mut source = String::from("fn f(input: u16) -> u16 {");
+    for index in 0..32 {
+        write!(source, "type Alias{index} = Alias{};", index + 1).unwrap();
+    }
+    source.push_str("type Alias32 = u16; let output: Alias0 = input ^ 1; output }");
+    let renamed = source
+        .replace("f(", "g(")
+        .replace("Alias", "Word")
+        .replace("input", "source")
+        .replace("output", "result");
+    let different = source.replace("input ^ 1", "input ^ 2");
+    let form = syn_canon::canonicalize(syn::parse_str(&source).unwrap());
+    assert_eq!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+    );
+    assert_ne!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+    );
+}
+
+#[test]
+fn derived_array_types_preserve_nested_import_binding_identity() {
+    let source = "#[derive(Clone)]
+        struct Owner([u8; {
+            fn f(input: u16) -> u16 {
+                use {core::primitive::u16 as Word, core::mem::size_of as measure};
+                let value: Word = input ^ 1;
+                let _ = measure::<Word>();
+                value
+            }
+            1
+        }]);";
+    let renamed = source
+        .replace("f(", "g(")
+        .replace("input", "source")
+        .replace("Word", "Scalar")
+        .replace("measure", "size")
+        .replace("value", "result");
+    let different = source.replace("input ^ 1", "input ^ 2");
+    let form = syn_canon::canonicalize(syn::parse_str(source).unwrap());
+    assert_eq!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+    );
+    assert_ne!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+    );
+}
+
+#[test]
+fn module_aliases_preserve_binding_identity_under_derive_uncertainty() {
+    let source = "mod types {
+            #[derive(Clone)] struct Marker(u8);
+            type Word = u16;
+            fn f(input: Word) -> Word { let value = input ^ 1; value }
+        }";
+    let renamed = source
+        .replace("f(", "g(")
+        .replace("input", "source")
+        .replace("Word", "Storage")
+        .replace("value", "result");
+    let different = source.replace("input ^ 1", "input ^ 2");
+    let form = syn_canon::canonicalize(syn::parse_str(source).unwrap());
+    assert_eq!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+    );
+    assert_ne!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+    );
+}
+
+#[test]
+fn self_array_lengths_preserve_renamed_local_bindings() {
+    let source = "trait Pass: Sized { fn pass(input: Self) -> Self; }
+        impl Pass for [u32; { let first = 1u32; let second = 2u32; (first | second) as usize }] {
+            fn pass(input: Self) -> Self { input }
+        }";
+    let renamed = source
+        .replace("input", "argument")
+        .replace("first", "low")
+        .replace("second", "high");
+    let different = source.replace("2u32", "4u32");
+    let form = syn_canon::canonicalize(syn::parse_str(source).unwrap());
+    assert_eq!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&renamed).unwrap()),
+    );
+    assert_ne!(
+        form,
+        syn_canon::canonicalize(syn::parse_str(&different).unwrap()),
+    );
+}

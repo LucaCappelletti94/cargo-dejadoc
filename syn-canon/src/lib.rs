@@ -11,6 +11,7 @@ mod const_items;
 mod context;
 mod drift;
 mod form;
+mod proof;
 mod reference;
 mod scope;
 
@@ -41,6 +42,8 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
             seed: None,
             generics: None,
             self_canon: None,
+            prim_fallback: true,
+            observed: false,
         },
     )
 }

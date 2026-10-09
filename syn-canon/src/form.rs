@@ -6,7 +6,8 @@ use proc_macro2::{Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
 use syn::visit::{self, Visit};
 
-use crate::reference::{ReferenceFacts, Resolution};
+use crate::reference::{ReferenceFacts, ReferenceKind, Resolution};
+use crate::scope::PrimTy;
 
 /// An opaque comparison key with canonical leaf and body sizes.
 pub struct CanonicalForm {
@@ -104,7 +105,7 @@ pub(crate) fn canonical_file_with_options(
     options: crate::alpha::Options<'_>,
 ) -> CanonicalForm {
     crate::drift::normalize_file(&mut file, compiles);
-    let facts = crate::alpha::normalize_file(&mut file, options);
+    let facts = crate::alpha::normalize_file(&mut file, compiles, options);
     from_node(&file, &facts)
 }
 
@@ -132,16 +133,40 @@ struct ReferenceEncoding<'a> {
 impl ReferenceEncoding<'_> {
     fn resolution(&mut self, resolution: Resolution) {
         self.out.push('r');
-        self.out.push(match resolution {
-            Resolution::Unresolved => '0',
-            Resolution::Owned => '1',
-            Resolution::Inherited => '2',
+        self.out.push(match resolution.kind {
+            ReferenceKind::Unresolved => '0',
+            ReferenceKind::Owned => '1',
+            ReferenceKind::Inherited => '2',
         });
+        self.out.push(' ');
+        self.primitive(resolution.prim);
+    }
+
+    fn primitive(&mut self, primitive: Option<PrimTy>) {
+        self.out.push('t');
+        self.out.push_str(primitive.map_or("_", PrimTy::suffix));
         self.out.push(' ');
     }
 }
 
 impl<'ast> Visit<'ast> for ReferenceEncoding<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        if let Some(proof) = self.facts.blocks.get(&core::ptr::from_ref(block)) {
+            write!(self.out, "b {} ", proof.statements.len())
+                .expect("writing to a string succeeds");
+            for (&role, &primitive) in proof.statements.iter().zip(&proof.types) {
+                self.out.push(char::from(role));
+                self.primitive(primitive);
+            }
+            write!(self.out, "o {} ", proof.tail_types.len())
+                .expect("writing to a string succeeds");
+            for &primitive in &proof.tail_types {
+                self.primitive(primitive);
+            }
+        }
+        visit::visit_block(self, block);
+    }
+
     fn visit_path(&mut self, path: &'ast syn::Path) {
         self.resolution(
             self.facts
