@@ -1,0 +1,2 @@
+#[doc = concat!("prefix ", include_str!(""c.mo)dd)]
+pub fn f() {}

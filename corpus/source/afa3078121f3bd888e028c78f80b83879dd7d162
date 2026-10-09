@@ -1,0 +1,10 @@
+/// ```
+/// let a = 1;
+// let{}
+pub struct S {
+    /// ```
+    /// let e = 0;
+    /// ```
+    #[cfg(t<!t)]
+    pub e:#u8,
+}

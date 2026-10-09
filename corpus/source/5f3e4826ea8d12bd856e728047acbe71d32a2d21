@@ -1,0 +1,25 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+  /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+                fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: {
+            /// ``{}
+      cfg_at  },
+b: {
+            /// ```
+            /// let g ``
+            fn fb() } {
+       },
+    };
+}

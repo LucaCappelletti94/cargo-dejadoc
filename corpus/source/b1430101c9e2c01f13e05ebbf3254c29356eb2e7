@@ -1,0 +1,1 @@
+#[doc = concat!("pre", include_str!(l#[allow(uused)]elper)1e3)]pub fn f() {}

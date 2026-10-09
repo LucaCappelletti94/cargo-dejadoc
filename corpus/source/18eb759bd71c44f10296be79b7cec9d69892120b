@@ -1,0 +1,101 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// `]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///#[``
+///test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// `]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///#[``
+///test)]
+pub fn a() {}
+#[cfg(te**st)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c  let c = 3;
+/// ``]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}/// ```
+    pub fn b() {}
+}
+/// ```
+/// let c  let c = 3;
+/// ``]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+} 

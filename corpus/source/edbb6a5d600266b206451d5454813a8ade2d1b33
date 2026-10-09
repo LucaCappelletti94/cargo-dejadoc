@@ -1,0 +1,20 @@
+pub struct S {
+    /// ```
+    /// let x = 1;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = lude!("../
+    pub u8,
+)?
+pub enum E {
+    //},
+}
+pub union U {
+    /// ```
+    /// let z = 5;
+    /// ```
+    pub z: u8,
+}

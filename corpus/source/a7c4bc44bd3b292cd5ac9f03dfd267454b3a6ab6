@@ -1,0 +1,6 @@
+struct S;
+impl S {
+   /// ```
+    type T;
+}
+of=

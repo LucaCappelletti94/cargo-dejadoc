@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(f5eature = #![allow(dead_code)]"a",t(doa), feature = "b"), c =struct  "```")]
+/// fn ma{ }
+#[cfg_attr(not(te[at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

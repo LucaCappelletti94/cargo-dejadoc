@@ -1,0 +1,2 @@
+#[cfg_attr(a, doc = "```")]
+#[cfg_attr] fn gated() {}

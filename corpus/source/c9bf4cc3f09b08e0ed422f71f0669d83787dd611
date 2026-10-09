@@ -1,0 +1,8 @@
+pub fn outer() {
+    /// write!(f, "{}", ```
+    /// let a /// ```
+    f? inner() {}
+    lIiIIIo,|| {
+        /{}
+    }
+}

@@ -1,0 +1,23 @@
+///ub fn f() {}
+
+/// let
+pub fn f() {}
+
+/// 	
+pub fn f() {}
+//   + let x= 0x //<><!--@ Beta c{}
+
+///  HHHHHHH	HH
+pub fn f() {}
+
+///   	
+pub fn f() {}
+
+///   +
+pub fn f() {}
+
+///   + let x= 0;
+///x  o
+
+///<><!--@
+pub fn f() {}

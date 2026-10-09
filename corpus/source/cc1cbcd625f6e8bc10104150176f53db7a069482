@@ -1,0 +1,18 @@
+extern "C" {
+    //`}
+    /// `    f() /// ```
+    type T
+
+; type T;
+
+    ///format!(x:``
+       /// ```
+    type T
+
+;    ///format!("{x:``
+    type T;
+
+   /!//format!("{x:?}")
+    /// ```
+    type T;
+}

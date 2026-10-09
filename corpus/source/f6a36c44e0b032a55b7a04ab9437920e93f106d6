@@ -1,0 +1,3 @@
+/// ```rust,min rustc.14 5
+/// fnain`
+pub fn f() {}

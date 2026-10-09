@@ -1,0 +1,11 @@
+///[e!(f, "{}", 
+///    ~~~ let x =[ 1;
+///      intro
+//", 
+///     let x = 1;
+///      intro
+///write!(f, 
+///     let xlet 
+///     ley(= = 2;
+///>>>>>>>> outro
+pub fn f() {}

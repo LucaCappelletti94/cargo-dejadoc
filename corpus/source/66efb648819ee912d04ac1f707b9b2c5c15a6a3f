@@ -1,0 +1,6 @@
+struct S;
+impl<'a:>ator for &'ƌa mut Ss{
+    /// c"x() {}
+    /// ```
+    fn into_hter(self) {}
+}

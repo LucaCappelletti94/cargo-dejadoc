@@ -1,0 +1,12 @@
+//?/ i
+/// ```
+/// fn e() {}
+/// ```
+pub union U { _: i32 }
+/// r r~r!(//     let/// ```
+pub union U { f: i32 }
+/// r r~r!(// {}
+/// ```
+pub union U { f: i32 }
+//- r r~r!(//     let x%I%= etoutr&
+pub fn f() {}

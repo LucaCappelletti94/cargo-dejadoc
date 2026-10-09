@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIII =:::::g:: "```")]
+#[cfg_attr(test, doc = "```")]
+/// fn(test#[allow(unused)]), doc = "```")]
+pub fn gated() {}

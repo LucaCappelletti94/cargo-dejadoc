@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+   loop {       /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+      static          /// let e = 5;
+                  ///     fn fb() {}
+        },
+    };
+}

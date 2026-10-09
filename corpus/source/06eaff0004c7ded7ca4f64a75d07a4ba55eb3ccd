@@ -1,0 +1,4 @@
+// ```
+trait T {
+ udr!("dd"ignoreself);
+}

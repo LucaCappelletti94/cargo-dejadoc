@@ -1,0 +1,2 @@
+#[doc =t!(" ",for lude_rs!t("doc."))]
+pub fn f() {}

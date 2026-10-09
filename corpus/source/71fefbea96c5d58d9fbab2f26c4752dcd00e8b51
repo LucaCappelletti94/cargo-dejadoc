@@ -1,0 +1,6 @@
+trait T {
+    ///``
+    const C: i32=
+    ///#[doi() {}
+ 0type Out;
+}

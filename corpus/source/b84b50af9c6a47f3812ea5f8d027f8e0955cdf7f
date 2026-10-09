@@ -1,0 +1,3 @@
+#[doc = docstr!()]
+#[doc = i!("g.md")]
+pub fn f() {}

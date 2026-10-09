@@ -1,0 +1,3 @@
+extern "C" { static S: i32 = 1;
+/// `ype T;
+}

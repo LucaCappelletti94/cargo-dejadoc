@@ -1,0 +1,7 @@
+/// ```
+/// fn  {}
+/// `
+/// let d = 5;
+/// ```
+#[cf=l(|l(not(test), any(doct,et,s feature = "x")))]
+pub fn d

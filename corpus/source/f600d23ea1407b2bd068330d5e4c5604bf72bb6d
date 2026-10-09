@@ -1,0 +1,28 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+//// Helper w doctest, backtick fenced.
+/// ```
+/// fn helper() { }
+///  ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+/e //l/Hper wied.
+/// ```
+/// fn h St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() 
+/// ```
+pub struct St;
+/// ```
+{}
+/// ```
+pub u

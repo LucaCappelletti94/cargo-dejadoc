@@ -1,0 +1,21 @@
+pub fn outer() {
+    /// ``    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            /// let d = 4;
+            /// ```
+            fn armed() {}
+         /// ```
+            /// let g = 7;
+            /// ```
+            fn fb() {}
+        },
+     #[cfg(test)]
+        1 => {
+           /// ```
+        fn fb() {}
+        },
+     };
+#[allow(unused)]}

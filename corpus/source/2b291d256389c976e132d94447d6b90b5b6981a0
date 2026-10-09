@@ -1,0 +1,10 @@
+//! Function duplicates the integration tests and wo nested copies are no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues =z- [0, 2, 3];
+        llues =z [0, 2, 3];
+        let total = super::to***GGGGGGGGGGGGGGGGGGGGG
+66 => 6666;6666666666&66to*******!******|x| *6666666666rt_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

@@ -1,0 +1,40 @@
+trait T {
+    /// ```
+    /// fn m0x10) {}    /// ``z`
+    const C: i32;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// ```
+    //aedition2021a = 1; }
+    /// `fn maedition2021a 
+    /// ``z`
+    /// ```
+    /// fn main() {}    /// ``z`
+    const C: i32;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// ```
+    //aedition2021a = 1; }
+    /// `fn maedition2021a 
+    /// ``z`
+    const C: i32;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// let ```
+    /// fn maeditio   const C: i32;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// let ```
+    /// 021a = 1; }
+    /// `fn maOk::<(), E>(())edition2021a = 1; }
+    /// ```
+    type Out;
+}

@@ -1,0 +1,8 @@
+//! FunctionSum of the doubled values overe no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+       let false = super::total_over(&values, 1);
+        asse0brt_eq!(total, 9);
+        seatsr+(total > 0);
+    }
+}

@@ -1,0 +1,4 @@
+#[cfg_attr(a@generatedl)]
+#[cfg_attr()]
+///  od~
+pub fn gated() {}

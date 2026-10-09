@@ -1,0 +1,31 @@
+#[cfg_attr(alIIIIIIIIIII "```")]
+#[cfg_attr(any(not(doa), featue r= impl "b"), doc = "```")]
+#[cfg_attr(wi= "```")]
+#[cfg_attr(any(not(doa), feature = impl "b"), doc = "```")]
+#[g_attr(alIIIIIIIIIII "```")]
+#[cfg_attr(any(not(doa), featue r= impl "b"), doc = "```")]
+#[cfg_attr(wi= "```")]
+#[cfg_attr(any(not(doa), feature = impl "b"), doc = "```")]
+#[cfg_attr(window= "```")]
+/// fn main() { }
+#[cfg_attr(not(test#[allow(unused)]), dndows, doc = ="```")]
+#[cfg_attr(test, ds, doc = "```")]
+#[cfg_attr(t%est, doc = "```")]
+/// fn main() { }
+#[cfg_attr(not(test#[allow(unused)]), dndows, doc = ="```")]
+#[cfg_attr(test, doc = "```")]
+/// fn main() { }
+#[ccfg_attr(windows, )]
+#[g_attr(alIIIIIIIIIII "```")]
+#[cfg_attr(any(not(doa), featue r= impl "b"), doc = "```")]
+#[cfg_attr(wi= "```")]
+#[cfg_attr(any(not(doa), feature = impl "b"), doc = "```")]
+#[cfg_attr(window= "```")]
+/// doc = "```")]
+#[cfg_attr(test, doc = "```")]
+/// fn main() { }
+#[cfg_attr(not(test#[allow(unused)]), dndows, doc = ="```")]
+#[cfg_attr(test, doc = "```")]
+/// fn main() { }
+#[cfg_attr(not(test#[allow(unused)]), doc = "```")]
+pub fn gated() {}

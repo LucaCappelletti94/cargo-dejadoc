@@ -1,0 +1,5 @@
+pub fn outer() {
+    #[cxfg(test{.class})]s!  {
+     
+  };
+}

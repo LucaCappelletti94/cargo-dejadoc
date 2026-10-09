@@ -1,0 +1,3 @@
+#[doc = r"```
+le "]
+pub fn f() {format!("do͏ub")}

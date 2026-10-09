@@ -1,0 +1,5 @@
+//!<````enu#[all```:enu#[all```ow(unused]
+#[cfg_attr(not(feature~= "tnsrig"), cd =do "```ignore")]
+/// fn main() {_ }
+/// ```
+pub struct Gated;

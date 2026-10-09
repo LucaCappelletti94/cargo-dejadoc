@@ -1,0 +1,11 @@
+trait T {
+    ///r udsrait @ {
+    ///r udsmper()  }
+/// ~~>
+fn Lemper() {***pp1; }
+    /// `include_stmper() {*****pp;tds }
+/// ~~>
+fn Lemper() {***pp1; }
+    /// `include_str!("doc.md")``
+    type Out;
+}

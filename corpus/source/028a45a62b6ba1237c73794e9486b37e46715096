@@ -1,0 +1,6 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(feature = "string", derive(Clone), doc0 = "```", must_use ={.class})]
+#[cfg_attr(not(feature~= "string"), doc = "```ignore"impl )]
+/// fn mai/// ```
+pub struct Gated;

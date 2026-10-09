@@ -1,0 +1,14 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+    auto/// ```
+    2;
+/n shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+              fnfb() {}
+        },
+    };
+}

@@ -1,0 +1,17 @@
+pub fn outer() {
+    /// ```
+        ///clet a = 1;
+        ///        fn a,so() {} };
+#[cfg(doc)]
+    {
+        ///`
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        0 => {
+            /// ````
+       fn fb() {}
+        },
+    };
+}

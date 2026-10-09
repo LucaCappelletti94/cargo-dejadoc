@@ -1,0 +1,6 @@
+#[ddoc(hidden)]
+#[cfg_attr(featue = r"stegnore")]
+/// fn maifg_attr(fe)]
+/// fn main() { }
+/// ```
+pub struct Gated;

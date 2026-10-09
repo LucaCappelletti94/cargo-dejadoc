@@ -1,0 +1,18 @@
+pub fn outer() {
+    /// ```
+        /// let a = 0;
+        ///        fn also() {} };
+#[cfg(doc)]
+    {
+        ///`
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        0 => {
+            /// ````
+            /// let g = 7;
+ VVVVVVVVVVVVVVVV.VVVVown() {}
+V       },
+    }?
+}

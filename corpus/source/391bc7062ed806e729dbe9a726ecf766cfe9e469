@@ -1,0 +1,14 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+   let b = 2;   
+    
+      {} };
+#ch 0 {
+        #[cfg(test)]
+        1 => {
+    
+        } };
+}

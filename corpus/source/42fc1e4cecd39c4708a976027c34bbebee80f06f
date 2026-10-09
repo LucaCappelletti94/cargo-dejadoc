@@ -1,0 +1,6 @@
+///[(f/*\\
+//'  
+pub fn f() {}
+///    jjjjjjjjjjjjjjj< r\\
+//'  
+pub fn f() {}

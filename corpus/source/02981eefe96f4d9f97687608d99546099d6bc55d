@@ -1,0 +1,2 @@
+#[doc = concat!(#"pre"dm)]
+pub fn f() {}

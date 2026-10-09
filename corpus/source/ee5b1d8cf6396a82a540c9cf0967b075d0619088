@@ -1,0 +1,9 @@
+/// ```
+///{
+#[cf=l(al(not(test), any(doctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e =     #[c(gftest)]
+    pub e: u8,
+}

@@ -1,0 +1,14 @@
+extern "C" {
+    /// ```
+    /// fn main() {}
+    /// ```
+  static S: i72;
+    /// ```
+    /// fn/// fn main() {}
+    /// ```
+    /// fn main() {}
+   /// ```
+    static S: i32;
+  /// ``// fn/ /// ```
+    type T;
+}

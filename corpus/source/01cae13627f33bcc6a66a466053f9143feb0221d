@@ -1,0 +1,4 @@
+struct S;
+impl<'a> IntraZor for & * mut  test_harness{
+S {}
+}

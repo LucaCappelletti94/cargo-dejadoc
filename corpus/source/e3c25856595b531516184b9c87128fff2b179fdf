@@ -1,0 +1,31 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+////```
+/// fn helper() { }
+///  ```bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+//fenced.
+/// 
+/// ```
+/// fn/// fn helper() { }
+///bbbbb
+/// fn a() {}
+/// ```
+pub const C: i16 = 1;
+/// `@`
+//// Helper with a doctest, backtick fenced. {}
+/// ```
+pub const C: i16 = 1;
+/// ```
+//// Helper with a doctest, backtick fenced.
+/// `// ```
+pub union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ``````
+pub fn helper()

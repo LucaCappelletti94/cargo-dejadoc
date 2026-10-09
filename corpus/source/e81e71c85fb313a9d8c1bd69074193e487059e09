@@ -1,0 +1,23 @@
+extern "C" {
+    //n "C" {
+    //`}
+    /// `o
+pub fn b() ;
+///
+/// out?/
+///  0   ltro//it f()  {}
+//   type T;
+
+    ///format!("{x:?}")
+    /// ``}
+    /// `o
+pub fn b() ;
+///
+/// out?/
+///  0   ltro//it f()  {}
+//   type T;
+
+    ///format!("{x:?}")
+    /// ```
+    type T;
+}

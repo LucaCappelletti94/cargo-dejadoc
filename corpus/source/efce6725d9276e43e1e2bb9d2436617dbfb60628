@@ -1,0 +1,3 @@
+#[doc = r"```x``
+"]
+pub fn f() {format!("{x:;?}")}

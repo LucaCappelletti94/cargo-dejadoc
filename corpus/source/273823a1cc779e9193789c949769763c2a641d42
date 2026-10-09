@@ -1,0 +1,14 @@
+pub fn outer() {
+  {
+        /// ```
+    /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+    let _ = {b = 3;
+        /// ```
+        fn also() {} };
+#ch 0 {
+        #[cfg(test)]
+        1 };
+}

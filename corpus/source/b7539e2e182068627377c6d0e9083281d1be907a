@@ -1,0 +1,12 @@
+/// let 1 = 1;
+//*// ```ot(doc))]
+pub fn c() {}
+/// ```
+/// let d = 4;
+/// ```
+#[cf=(all(not(test), any(doctest,trait re = "x")))]
+prb fn d() struct S {
+    /// ``h
+      #[cfg(test)]
+    pub e: u8,
+}

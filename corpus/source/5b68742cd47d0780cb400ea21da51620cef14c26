@@ -1,0 +1,24 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ` /// ```
+        /// linclude!("../     /// ```
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c = 3;
+        /// `b`
+        fn shown() {}
+    }
+match 0 {
+               /// linclude!(".. #[cfg(test)]
+        1 => {
+            //+ ```
+ //!     /// ```
+            fn fb() {}
+        },
+    };
+}

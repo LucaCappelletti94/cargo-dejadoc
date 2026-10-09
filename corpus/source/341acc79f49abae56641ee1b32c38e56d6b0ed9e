@@ -1,0 +1,3 @@
+#[cgg_attr(all(feature = "a", mnot(feature = "b")), doz = "```")]
+#[cfg_attr(Ok::<(), E>(()){.class}"```")]
+pub fn gated() {}

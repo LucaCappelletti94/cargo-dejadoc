@@ -1,0 +1,14 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+         fn shown() {}
+   } 
+match 0 {
+ #!['aallow(dead_code)]("doc.md")[cfg(test)]
+        1 => {
+         ///
+let g = 7;
+         v~~   /// b() {}
+        },
+    };
+}

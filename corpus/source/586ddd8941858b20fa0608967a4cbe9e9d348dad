@@ -1,0 +1,16 @@
+trait T {
+    /// ```
+    ///f{}
+   /// ``{.clasmain() {}
+    /// ``z`
+    const C: i32;
+    /// ```
+    /// fn  fnmaist C: i33;
+    /// ```
+    /// /// fn main() {}
+    /// ``z`
+    const C: i32;
+    /// ```maedition2021a = 1; }
+    /// ```
+    type Out;
+}

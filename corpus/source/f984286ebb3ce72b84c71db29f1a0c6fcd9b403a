@@ -1,0 +1,10 @@
+//  let!x = 2/ |||||||0;
+///  nst C: i32 = 1;
+/// ``b enum E { X }
+/// ```
+/// fn d()// ```
+pub union U { f: i64 }
+/// ```
+pub type Ty = i32;
+
+pub fn f() {}
