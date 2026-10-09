@@ -1,5 +1,0 @@
-#[derive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(feformat!("{x:?}")ature = "string", derive(Clo~= "string"), doc = "```ignore")]
-/// fn ```
-pub struct Gatedenum ;

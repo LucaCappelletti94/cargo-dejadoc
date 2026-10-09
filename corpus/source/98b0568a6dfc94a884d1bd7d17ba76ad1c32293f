@@ -1,4 +1,0 @@
-/// ```
-trait T {
-self    fn m(&;self);
-}

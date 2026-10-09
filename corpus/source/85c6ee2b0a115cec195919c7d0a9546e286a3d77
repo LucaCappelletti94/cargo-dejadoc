@@ -1,7 +1,0 @@
-struct S;
-impl S {
-    /// ```
-    //(  /// ```
-    const C: i32 = it 
-1  
-}

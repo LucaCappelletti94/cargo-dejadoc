@@ -1,3 +1,0 @@
-#[doc = concat!("pr$efix ", include_str!(" = concat!("pr4efix ", include_str!("d")1e3)]
-pdomd")1e3)]
-pub fn f() {}

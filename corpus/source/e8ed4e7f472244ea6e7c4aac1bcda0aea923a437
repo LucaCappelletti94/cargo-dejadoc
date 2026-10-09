@@ -1,5 +1,0 @@
-#[doc = r"```
-le 
-/ 
-"]
-pub fn f() {format!("{x:;?}"compile_fa| )}

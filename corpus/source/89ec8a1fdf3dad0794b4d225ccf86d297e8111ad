@@ -1,8 +1,0 @@
-pub fn outer() {
-    #[cfg(test)]
-   loop {       ///  5;
-            ///                /// let g = 7;
-            /// ```
-            fn fb() {}
-        ignore };
-}

@@ -1,9 +1,0 @@
-#[ddoc(hidden)]
-#[cfg_attr(featue = r"stgnore")]
-/// fn main() { }
-/// erive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(fe)]
-/// fn main() { }
-/// ```
-pub struct Gated;

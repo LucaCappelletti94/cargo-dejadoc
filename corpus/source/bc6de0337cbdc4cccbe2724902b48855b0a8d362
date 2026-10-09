@@ -1,2 +1,0 @@
-#[doc = "10*  "]
-pub fn f() {----become-}

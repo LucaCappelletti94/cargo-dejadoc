@@ -1,2 +1,0 @@
-#[derive(impl Dgbug)]fn main() { }
-//assed;

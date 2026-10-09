@@ -1,6 +1,0 @@
-#[doc = r"```
-le 
- /x/t = z1;
-```
-"]
-pub fn f() {format!("{x:;?}r#"compile_fail)}
