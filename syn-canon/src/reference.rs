@@ -1,4 +1,4 @@
-//! Resolution provenance and conservative block proof facts.
+//! Resolution provenance and block scheduling facts.
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -32,4 +32,16 @@ pub(crate) struct ReferenceFacts {
     pub(crate) paths: BTreeMap<*const syn::Path, Resolution>,
     pub(crate) macros: BTreeMap<*const syn::Macro, Vec<Resolution>>,
     pub(crate) blocks: BTreeMap<*const syn::Block, BlockProof>,
+}
+
+impl ReferenceFacts {
+    /// Keep statement roles and scalar types aligned with a permutation step.
+    pub(crate) fn swap_block(&mut self, block: &syn::Block, left: usize, right: usize) {
+        let proof = self
+            .blocks
+            .get_mut(&core::ptr::from_ref(block))
+            .expect("an analyzed block");
+        proof.statements.swap(left, right);
+        proof.types.swap(left, right);
+    }
 }

@@ -1,4 +1,5 @@
-//! Shared alpha-renaming for whole files, lexical contexts, and seeded views.
+//! Shared alpha-renaming for whole files, lexical contexts, and seeded
+//! views, with the dependency scheduler embedded in its block visits.
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
@@ -16,8 +17,10 @@ use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
 use crate::reference::{ReferenceFacts, ReferenceKind, Resolution};
+use crate::schedule;
 use crate::scope::{
-    Binding, BindingId, Domain, FirstSeg, Frame, Inherited, Ns, Origin, PrimTy, Target, TargetSeg,
+    Binding, BindingId, Domain, FirstSeg, Frame, FreeKey, Inherited, Ns, Origin, PrimTy, Target,
+    TargetSeg,
 };
 
 /// The normalization options of a file pass.
@@ -169,7 +172,7 @@ static EMPTY_MOD_FRAMES: BTreeMap<BindingId, Frame> = BTreeMap::new();
 /// The canonicalizer, one mutable traversal per pass.
 #[expect(
     clippy::struct_excessive_bools,
-    reason = "Normalization mode, syntax positions, token opacity and proof scope are independent"
+    reason = "Normalization mode, syntax positions and token opacity are independent"
 )]
 pub(crate) struct Renamer<'env> {
     /// The scope stack of the pass, the base frame first.
@@ -206,7 +209,7 @@ pub(crate) struct Renamer<'env> {
     after_bare_qself: bool,
     /// Raw-involved identifiers in macro input keep their token spelling.
     opaque_tokens: bool,
-    /// A passing doctest: the proof analysis runs on its function blocks.
+    /// A passing doctest: the scheduling analysis runs on its function blocks.
     compiles: bool,
     /// Unresolved type names may still spell a primitive, when no glob
     /// import can shadow them.
@@ -215,14 +218,14 @@ pub(crate) struct Renamer<'env> {
     observed: bool,
     /// The block nesting level of the traversal.
     depth: usize,
-    /// The frozen flag of every function scope open in the traversal.
-    proof_scopes: Vec<bool>,
-    /// The proven types of producer patterns, one map per analyzed block.
-    proof_prims: Vec<BTreeMap<*const syn::Pat, PrimTy>>,
+    /// The scheduler scope state of every function open in the traversal.
+    pub(crate) scopes: Vec<schedule::ScopeState>,
+    /// The scheduler facts of every analyzed block open in the traversal.
+    block_facts: Vec<schedule::BlockFacts>,
     /// The resolutions collected for the macro arguments being rewritten.
     macro_origins: Option<Vec<Resolution>>,
-    /// The reference provenance the pass recorded.
-    facts: ReferenceFacts,
+    /// The reference provenance and block facts the pass recorded.
+    pub(crate) facts: ReferenceFacts,
 }
 
 impl<'env> Renamer<'env> {
@@ -249,8 +252,8 @@ impl<'env> Renamer<'env> {
             prim_fallback: false,
             observed: false,
             depth: 0,
-            proof_scopes: Vec::new(),
-            proof_prims: Vec::new(),
+            scopes: Vec::new(),
+            block_facts: Vec::new(),
             macro_origins: None,
             facts: ReferenceFacts::default(),
         }
@@ -300,6 +303,8 @@ impl<'env> Renamer<'env> {
                     canon,
                     origin: Origin::SelfTy,
                     prim: None,
+                    port: 0,
+                    value_port: None,
                     target: None,
                     raw: false,
                 },
@@ -345,6 +350,22 @@ impl<'env> Renamer<'env> {
         canon
     }
 
+    /// Assign the producer's canonical position before the permutation
+    /// moves its declaration.
+    fn local_canon_offset(&mut self, ns: Ns, offset: isize) -> String {
+        let position = self
+            .counter
+            .checked_add_signed(offset)
+            .expect("a producer permutation preserves its binding range");
+        let canon = if self.context {
+            local_name(ns, position)
+        } else {
+            format!("_canon_{position}")
+        };
+        self.counter += 1;
+        canon
+    }
+
     /// Bind `name` in the current frame and return the new binding.
     fn bind(&mut self, ns: Ns, name: &str, origin: Origin) -> Binding {
         self.bind_proven(ns, name, origin, None)
@@ -352,13 +373,37 @@ impl<'env> Renamer<'env> {
 
     /// Bind `name` with its proven scalar type.
     fn bind_proven(&mut self, ns: Ns, name: &str, origin: Origin, prim: Option<PrimTy>) -> Binding {
+        self.bind_full(ns, name, origin, prim, 0, None)
+    }
+
+    /// Bind `name` in the current frame, consuming the scheduler's plan of
+    /// the original pattern when one was recorded.
+    fn bind_full(
+        &mut self,
+        ns: Ns,
+        name: &str,
+        origin: Origin,
+        prim: Option<PrimTy>,
+        port: usize,
+        plan: Option<schedule::BindingPlan>,
+    ) -> Binding {
+        let (prim, offset, value_port) = plan.map_or((prim, 0, None), |plan| {
+            (plan.prim, plan.offset, Some(plan.port))
+        });
+        let value_port = if origin == Origin::Closure {
+            Some(schedule::Port::Closure(self.counter))
+        } else {
+            value_port
+        };
         let id = self.alloc_id();
-        let canon = self.local_canon(ns);
+        let canon = self.local_canon_offset(ns, offset);
         let binding = Binding {
             id,
             canon: canon.clone(),
             origin,
             prim,
+            port,
+            value_port,
             target: None,
             raw: false,
         };
@@ -381,12 +426,17 @@ impl<'env> Renamer<'env> {
             canon: canon.clone(),
             origin,
             prim: None,
+            port: 0,
+            value_port: None,
             target,
             raw: false,
         };
         self.local_canons.insert(id, canon);
         self.top_bind(Ns::Value, name, binding.clone());
         self.top_bind(Ns::Type, name, binding.clone());
+        if origin == Origin::Use {
+            self.top_bind(Ns::Macro, name, binding.clone());
+        }
         binding
     }
 
@@ -709,32 +759,57 @@ impl<'env> Renamer<'env> {
             || self.lookup(&[Ns::Macro], name).is_some()
     }
 
-    /// Whether a type-namespace binder resolves `name`.
-    pub(crate) fn type_shadowed(&self, name: &str) -> bool {
-        self.lookup(&[Ns::Type], name).is_some()
-    }
-
-    /// Whether the innermost function scope is frozen by an unknown
-    /// observer.
-    pub(crate) fn proof_frozen(&self) -> bool {
-        *self.proof_scopes.last().expect("a function scope")
-    }
-
     /// The block nesting level of the traversal.
     pub(crate) fn depth(&self) -> usize {
         self.depth
     }
 
-    /// Pass every visible value binding into the proof's value
+    pub(crate) fn push_facts(&mut self, facts: schedule::BlockFacts) {
+        self.block_facts.push(facts);
+    }
+
+    /// The identity of a type reference, for the scheduler's cast labels.
+    pub(crate) fn type_identity(&self, name: &str) -> FreeKey {
+        match self.lookup(&[Ns::Type], name) {
+            Some(resolved) => FreeKey::Resolved(self.identity(&resolved)),
+            None => FreeKey::Unresolved(crate::scope::unraw(name).to_string()),
+        }
+    }
+
+    /// The canonical identity the resolver names a resolved binding by.
+    fn identity(&self, resolved: &Resolved) -> String {
+        match resolved.domain {
+            Domain::Local => self
+                .local_canons
+                .get(&resolved.id)
+                .expect("a local binding")
+                .clone(),
+            Domain::Inherited => self.inherited_binding(resolved.id).canon.clone(),
+        }
+    }
+
+    /// Pass every visible value binding into the scheduler's value
     /// environment, a nearer name masking a farther one.
-    pub(crate) fn proof_env(&self, env: &mut BTreeMap<String, crate::proof::Value>) {
-        for frame in self.frames.iter().rev() {
+    pub(crate) fn frame_env(&self, env: &mut BTreeMap<String, schedule::Value>) {
+        let frames = self
+            .self_frame
+            .iter()
+            .chain(self.generics)
+            .chain(self.seed)
+            .chain(self.inherited.frames.iter());
+        for frame in self.frames.iter().rev().chain(frames) {
             for (name, binding) in frame.bindings(Ns::Value) {
-                env.entry(name.clone())
-                    .or_insert_with(|| crate::proof::Value {
-                        producer: None,
-                        prim: binding.prim,
-                    });
+                let port = match binding.origin {
+                    Origin::Parameter => schedule::Port::Param(binding.port),
+                    _ => binding.value_port.as_ref().map_or_else(
+                        || schedule::Port::Free(FreeKey::Resolved(binding.canon.clone())),
+                        Clone::clone,
+                    ),
+                };
+                env.entry(name.clone()).or_insert_with(|| schedule::Value {
+                    port,
+                    prim: binding.prim,
+                });
             }
         }
     }
@@ -770,6 +845,8 @@ impl<'env> Renamer<'env> {
                 canon: String::new(),
                 origin: Origin::Use,
                 prim: None,
+                port: 0,
+                value_port: None,
                 target: None,
                 raw: false,
             },
@@ -781,14 +858,10 @@ impl<'env> Renamer<'env> {
         self.frames.last_mut().expect("a scope frame").glob = true;
     }
 
-    /// Bind every block-local use into a temporary frame, source
-    /// untouched, so an imported macro name is uncertain before the
-    /// body's own visit would bind it.
+    /// Bind block imports into the caller's temporary pre-scan frame.
     fn prebind_block_uses(&mut self, block: &syn::Block) {
-        self.push();
         let mut binder = BlockUseBinder { renamer: self };
         syn::visit::visit_block(&mut binder, block);
-        self.pop();
     }
 
     /// Visit the attribute list of an item or function.
@@ -1143,16 +1216,24 @@ impl<'env> Renamer<'env> {
         })
     }
 
-    /// Bind every name `pat` binds, then visit and rewrite it.
+    /// Bind every name `pat` binds, then visit and rewrite it. The
+    /// scheduler's plan of the original pattern picks the canonical
+    /// name offset, the proven prim and the sealed value port, the block
+    /// not yet permuted.
     fn bind_pat(&mut self, pat: &mut syn::Pat) {
-        let prim = self
-            .proof_prims
-            .last()
-            .and_then(|pats| pats.get(&core::ptr::from_ref(pat)).copied());
         let mut names = Vec::new();
         pattern_names(pat, &mut names);
+        let mut plan = self
+            .block_facts
+            .last()
+            .and_then(|facts| facts.plan(pat))
+            .map(|plan| schedule::BindingPlan {
+                offset: plan.offset,
+                prim: plan.prim,
+                port: plan.port.clone(),
+            });
         for name in &names {
-            self.bind_proven(Ns::Value, name, Origin::Let, prim);
+            self.bind_full(Ns::Value, name, Origin::Let, None, 0, plan.take());
         }
         syn::visit_mut::visit_pat_mut(self, pat);
         rewrite_pat_bindings(self, pat);
@@ -1173,9 +1254,12 @@ impl<'env> Renamer<'env> {
         {
             self.push();
             self.prebind_block_uses(block);
-            let frozen = crate::proof::unknown_macro_reaches(self, block) || self.observed;
+            let frozen = schedule::unknown_macro_reaches(self, block) || self.observed;
             self.pop();
-            self.proof_scopes.push(frozen);
+            self.scopes.push(schedule::ScopeState {
+                frozen,
+                ..Default::default()
+            });
             true
         } else {
             false
@@ -1183,13 +1267,13 @@ impl<'env> Renamer<'env> {
         begin_generics(self, &mut sig.generics);
         self.visit_attrs(attrs);
         self.push();
-        for input in &mut sig.inputs {
+        for (port, input) in sig.inputs.iter_mut().enumerate() {
             if let syn::FnArg::Typed(pat_type) = input {
                 let prim = self.param_prim(&pat_type.ty);
                 let mut names = Vec::new();
                 pattern_names(&mut pat_type.pat, &mut names);
                 for name in &names {
-                    self.bind_proven(Ns::Value, name, Origin::Parameter, prim);
+                    self.bind_full(Ns::Value, name, Origin::Parameter, prim, port, None);
                 }
             }
         }
@@ -1201,7 +1285,7 @@ impl<'env> Renamer<'env> {
         self.pop();
         self.pop();
         if scoped {
-            self.proof_scopes.pop().expect("a fn scope");
+            self.scopes.pop().expect("a fn scope");
         }
         self.observed = observed;
     }
@@ -1714,6 +1798,7 @@ fn bind_let(renamer: &mut Renamer<'_>, let_expr: &mut syn::ExprLet) {
 enum TypeResolution {
     Path(Resolution),
     Macro(Vec<Resolution>),
+    Block(Option<crate::reference::BlockProof>),
 }
 
 fn type_resolutions(facts: &ReferenceFacts, ty: &syn::Type) -> Vec<TypeResolution> {
@@ -1742,6 +1827,13 @@ fn type_resolutions(facts: &ReferenceFacts, ty: &syn::Type) -> Vec<TypeResolutio
                     .unwrap_or_default(),
             ));
             syn::visit::visit_macro(self, mac);
+        }
+
+        fn visit_block(&mut self, block: &'ast syn::Block) {
+            self.resolutions.push(TypeResolution::Block(
+                self.facts.blocks.get(&core::ptr::from_ref(block)).cloned(),
+            ));
+            syn::visit::visit_block(self, block);
         }
     }
     let mut collect = Collect {
@@ -1777,6 +1869,18 @@ fn restore_type(facts: &mut ReferenceFacts, ty: &syn::Type, resolutions: &[TypeR
                 .insert(core::ptr::from_ref(mac), resolutions.clone());
             syn::visit::visit_macro(self, mac);
         }
+
+        fn visit_block(&mut self, block: &'ast syn::Block) {
+            let Some(TypeResolution::Block(proof)) = self.resolutions.next() else {
+                unreachable!("cloned types preserve block traversal");
+            };
+            if let Some(proof) = proof {
+                self.facts
+                    .blocks
+                    .insert(core::ptr::from_ref(block), proof.clone());
+            }
+            syn::visit::visit_block(self, block);
+        }
     }
     let mut restore = Restore {
         facts,
@@ -1788,6 +1892,7 @@ fn restore_type(facts: &mut ReferenceFacts, ty: &syn::Type, resolutions: &[TypeR
 impl VisitMut for Renamer<'_> {
     fn visit_file_mut(&mut self, file: &mut syn::File) {
         self.observed |= crate::context::live_attr(&file.attrs);
+        self.prim_fallback &= crate::context::scope_primitives_known(&file.items);
         let items: Vec<&syn::Item> = file.items.iter().collect();
         prebind(self, &items);
         syn::visit_mut::visit_file_mut(self, file);
@@ -1805,18 +1910,16 @@ impl VisitMut for Renamer<'_> {
             .collect();
         prebind(self, &items);
         self.depth += 1;
-        let analyzed =
-            self.compiles && !self.proof_scopes.is_empty() && self.macro_origins.is_none();
+        let analyzed = self.compiles && !self.scopes.is_empty() && self.macro_origins.is_none();
         if analyzed {
-            let (proof, pats) = crate::proof::analyze(self, block);
-            self.facts.blocks.insert(core::ptr::from_ref(block), proof);
-            self.proof_prims.push(pats);
+            schedule::analyze(self, block);
         }
         syn::visit_mut::visit_block_mut(self, block);
         self.depth -= 1;
         self.pop();
         if analyzed {
-            self.proof_prims.pop().expect("an analyzed block");
+            let facts = self.block_facts.pop().expect("an analyzed block");
+            facts.finish(block, &mut self.facts);
         }
     }
 
@@ -1887,6 +1990,8 @@ impl VisitMut for Renamer<'_> {
                 canon,
                 origin: Origin::SelfTy,
                 prim: None,
+                port: 0,
+                value_port: None,
                 target: None,
                 raw: false,
             },
@@ -1923,6 +2028,8 @@ impl VisitMut for Renamer<'_> {
                     canon,
                     origin: Origin::SelfTy,
                     prim: None,
+                    port: 0,
+                    value_port: None,
                     target: None,
                     raw: false,
                 },
@@ -2002,11 +2109,17 @@ impl VisitMut for Renamer<'_> {
         self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
             let frame = self.mod_frames.remove(&id).unwrap_or_default();
+            let primitive = self.prim_fallback;
+            self.prim_fallback = crate::context::scope_primitives_known(items);
+            let observed = self.observed;
+            self.observed |= crate::context::live_attr(&item.attrs);
             self.frames.push(frame);
             for sub_item in items.iter_mut() {
                 syn::visit_mut::visit_item_mut(self, sub_item);
             }
             let frame = self.frames.pop().expect("a scope frame");
+            self.prim_fallback = primitive;
+            self.observed = observed;
             self.mod_frames.insert(id, frame);
         }
     }
@@ -2024,7 +2137,7 @@ impl VisitMut for Renamer<'_> {
             let mut names = Vec::new();
             pattern_names(input, &mut names);
             for name in &names {
-                self.bind_proven(Ns::Value, name, Origin::Closure, prim);
+                self.bind_full(Ns::Value, name, Origin::Closure, prim, 0, None);
             }
         }
         for input in &mut closure.inputs {

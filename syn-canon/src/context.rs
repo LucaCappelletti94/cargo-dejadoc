@@ -429,6 +429,8 @@ fn bind_imports(
                         prim: if ns == Ns::Type { target.prim } else { None },
                         target: None,
                         raw: false,
+                        port: 0,
+                        value_port: None,
                     },
                 );
                 *next_id += 1;
@@ -659,6 +661,8 @@ fn bind_item_ident(
         target: None,
         raw: false,
         prim,
+        port: 0,
+        value_port: None,
     };
     frame.bind(ns, &name, binding);
     *next_id += 1;
@@ -760,6 +764,8 @@ fn bind_generic_param(
         target: None,
         raw: false,
         prim: None,
+        port: 0,
+        value_port: None,
     };
     frame.bind(ns, &name, binding);
     *next_id += 1;
@@ -807,6 +813,8 @@ fn generics_frame(
                     target: None,
                     raw: false,
                     prim: None,
+                    port: 0,
+                    value_port: None,
                 };
                 frame.bind(Ns::Value, &name, binding.clone());
                 frame.bind(Ns::Type, &name, binding);
