@@ -390,6 +390,25 @@ fn alias_chain(count: usize) -> String {
     format!("{out} fn f(x: a0) -> a0 {{ x }}")
 }
 
+fn chained_alias_swap_source(count: usize, swapped: bool) -> String {
+    let mut out = String::new();
+    for hop in 0..count {
+        let name = format!("a{hop}");
+        let target = if hop + 1 == count {
+            "u32".to_owned()
+        } else {
+            format!("a{}", hop + 1)
+        };
+        write!(out, "type {name} = {target};").unwrap();
+    }
+    let body = if swapped {
+        "let high = x >> 4; let low = x & 15u32; (low, high)"
+    } else {
+        "let low = x & 15u32; let high = x >> 4; (low, high)"
+    };
+    format!("{out} fn f(x: a0) -> (a0, a0) {{ {body} }}")
+}
+
 #[test]
 fn alias_chains_stop_at_the_sixteen_hop_bound() {
     let long: syn::File = syn::parse_str(&alias_chain(18)).unwrap();
@@ -1059,4 +1078,179 @@ fn grouped_block_imports_preserve_renamed_bindings_and_targets() {
     let other = source.replace("hint::black_box", "convert::identity");
     assert_eq!(form(source), form(&renamed));
     assert_ne!(form(source), form(&other));
+}
+
+#[test]
+fn chained_alias_parameters_schedule_past_decoy_siblings() {
+    let source = |body| {
+        format!("type C = S; struct S; type A = B; type B = u32; fn f(x: A) -> (A, A) {{ {body} }}")
+    };
+    assert_eq!(
+        form(&source(
+            "let low = x & 15u32; let high = x >> 4; (low, high)"
+        )),
+        form(&source(
+            "let high = x >> 4; let low = x & 15u32; (low, high)"
+        )),
+    );
+}
+
+#[test]
+fn unrelated_imports_do_not_block_chained_alias_schedules() {
+    let source = |body| {
+        format!(
+            "mod m {{ pub struct other; }} use m::other; type A = B; type B = u32; fn f(x: A) -> (A, A) {{ {body} }}"
+        )
+    };
+    assert_eq!(
+        form(&source(
+            "let low = x & 15u32; let high = x >> 4; (low, high)"
+        )),
+        form(&source(
+            "let high = x >> 4; let low = x & 15u32; (low, high)"
+        )),
+    );
+}
+
+#[test]
+fn sibling_structs_do_not_block_chained_alias_schedules() {
+    let source =
+        |body| format!("struct S; type A = B; type B = u32; fn f(x: A) -> (A, A) {{ {body} }}");
+    assert_eq!(
+        form(&source(
+            "let low = x & 15u32; let high = x >> 4; (low, high)"
+        )),
+        form(&source(
+            "let high = x >> 4; let low = x & 15u32; (low, high)"
+        )),
+    );
+}
+
+#[test]
+fn direct_alias_parameters_schedule_their_bodies() {
+    let source = |body| format!("type A = u32; fn f(x: A) -> (A, A) {{ {body} }}");
+    assert_eq!(
+        form(&source(
+            "let low = x & 15u32; let high = x >> 4; (low, high)"
+        )),
+        form(&source(
+            "let high = x >> 4; let low = x & 15u32; (low, high)"
+        )),
+    );
+}
+
+#[test]
+fn seventeen_hop_alias_chains_schedule_their_parameters() {
+    assert_eq!(
+        form(&chained_alias_swap_source(17, false)),
+        form(&chained_alias_swap_source(17, true)),
+    );
+}
+
+#[test]
+fn eighteen_hop_alias_chains_lose_their_parameter_schedule() {
+    assert_ne!(
+        form(&chained_alias_swap_source(18, false)),
+        form(&chained_alias_swap_source(18, true)),
+    );
+}
+
+#[test]
+fn cyclic_alias_chains_lose_their_primitives() {
+    let failing = |source| syn_canon::canonicalize_failing(syn::parse_str(source).unwrap());
+    assert_eq!(
+        failing("type A = B; type B = A; fn f(x: A) -> A { x }"),
+        failing("type C = D; type D = C; fn f(y: C) -> C { y }"),
+    );
+}
+
+#[test]
+fn single_segment_qself_parameters_lack_primitive_evidence() {
+    let source = |body| {
+        format!(
+            "trait U {{ type u32: Copy + core::ops::BitAnd<u32, Output = u32> + core::ops::Shr<u32, Output = u32>; }}
+             fn f<T: U>(input: <T>::u32) -> (u32, u32) {{ {body} }}"
+        )
+    };
+    let qself = form(&source(
+        "let low = input & 15u32; let high = input >> 4; (low, high)",
+    ));
+    let swapped = form(&source(
+        "let high = input >> 4; let low = input & 15u32; (low, high)",
+    ));
+    assert_ne!(qself, swapped);
+    let plain = |body: &str| form(&format!("fn f(input: u32) -> (u32, u32) {{ {body} }}"));
+    assert_eq!(
+        plain("let low = input & 15u32; let high = input >> 4; (low, high)"),
+        plain("let high = input >> 4; let low = input & 15u32; (low, high)"),
+    );
+}
+
+#[test]
+fn observed_owners_drop_the_bool_parameter_proof() {
+    let source = |attribute: &str| {
+        format!("struct S; {attribute} impl S {{ fn m(x: bool) {{ let y = x; let _ = y; }} }}")
+    };
+    let method_form = |source: &str| {
+        let file: syn::File = syn::parse_str(source).unwrap();
+        let context = SourceContext::new(core::iter::once((&[][..], &file)));
+        let syn::Item::Impl(impl_item) = &file.items[1] else {
+            unreachable!()
+        };
+        let syn::ImplItem::Fn(method) = &impl_item.items[0] else {
+            unreachable!()
+        };
+        context
+            .function(&method.sig, &method.block)
+            .unwrap()
+            .canonicalize()
+    };
+    assert_ne!(
+        method_form(&source("#[observer::inspect]")),
+        method_form(&source("")),
+    );
+}
+
+#[test]
+fn disabled_block_aliases_keep_closure_operations_unproven() {
+    for attribute in ["#[cfg(any())]", "#[cfg_attr(all(), cfg(any()))]"] {
+        let source = |body: &str| {
+            format!(
+                "struct Scalar(u32);
+                 impl Copy for Scalar {{}}
+                 impl Clone for Scalar {{
+                     fn clone(&self) -> Self {{ *self }}
+                 }}
+                 impl core::ops::BitAnd<u32> for Scalar {{
+                     type Output = u32;
+                     fn bitand(self, rhs: u32) -> u32 {{ self.0 & rhs }}
+                 }}
+                 impl core::ops::Shr<u32> for Scalar {{
+                     type Output = u32;
+                     fn shr(self, rhs: u32) -> u32 {{ self.0 >> rhs }}
+                 }}
+                 type Word = Scalar;
+                 fn value(input: Word) -> (u32, u32) {{
+                     {attribute} type Word = u32;
+                     let calculate = |argument: Word| {{ {body} }};
+                     calculate(input)
+                 }}"
+            )
+        };
+        let original = form(&source(
+            "let low = argument & 15u32; let high = argument >> 4; (low, high)",
+        ));
+        assert_ne!(
+            original,
+            form(&source(
+                "let high = argument >> 4; let low = argument & 15u32; (low, high)",
+            ))
+        );
+        assert_eq!(
+            original,
+            form(&source(
+                "let first = argument & 15u32; let second = argument >> 4; (first, second)",
+            ))
+        );
+    }
 }

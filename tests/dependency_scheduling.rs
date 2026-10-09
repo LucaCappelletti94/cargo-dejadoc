@@ -7,6 +7,30 @@ fn form(source: &str) -> String {
     syn_canon::canonicalize(syn::parse_str(source).unwrap()).to_string()
 }
 
+fn renamed(source: &str, names: &[(&str, &str)]) -> String {
+    fn tokens(input: proc_macro2::TokenStream, names: &[(&str, &str)]) -> proc_macro2::TokenStream {
+        input
+            .into_iter()
+            .map(|token| match token {
+                proc_macro2::TokenTree::Ident(mut ident) => {
+                    if let Some((_, replacement)) = names.iter().find(|(name, _)| ident == *name) {
+                        ident = proc_macro2::Ident::new(replacement, ident.span());
+                    }
+                    proc_macro2::TokenTree::Ident(ident)
+                }
+                proc_macro2::TokenTree::Group(group) => {
+                    let mut renamed =
+                        proc_macro2::Group::new(group.delimiter(), tokens(group.stream(), names));
+                    renamed.set_span(group.span());
+                    proc_macro2::TokenTree::Group(renamed)
+                }
+                token => token,
+            })
+            .collect()
+    }
+    tokens(source.parse().unwrap(), names).to_string()
+}
+
 fn scheduled(id: &str) {
     let case = support::cases()
         .iter()
@@ -511,4 +535,357 @@ fn edition_2024_let_chain_conditions_keep_the_source_order_invariance() {
         form(&plain),
         "the let chain condition is labeled"
     );
+}
+
+#[test]
+fn qualified_diverging_macros_keep_their_boundary_proofs() {
+    for path in [
+        "core::assert",
+        "std::assert",
+        "::core::assert",
+        "::std::assert",
+    ] {
+        let source =
+            |body: &str| format!("fn f(input: u32) -> (u32, u32) {{ {path}!(input > 0); {body} }}");
+        let original = form(&source(
+            "let low = input & 15u32; let high = input >> 4; (low, high)",
+        ));
+        assert_eq!(
+            original,
+            form(&source(
+                "let high = input >> 4; let low = input & 15u32; (low, high)",
+            ))
+        );
+        assert_eq!(
+            original,
+            form(&source(
+                "let first = input & 15u32; let second = input >> 4; (first, second)",
+            ))
+        );
+    }
+}
+
+#[test]
+fn foreign_macro_heads_keep_their_unproven_regions() {
+    let source = |body: &str| {
+        format!("fn f(input: u32) -> (u32, u32) {{ plugin::assert!(input > 0); {body} }}")
+    };
+    let original = form(&source(
+        "let low = input & 15u32; let high = input >> 4; (low, high)",
+    ));
+    assert_ne!(
+        original,
+        form(&source(
+            "let high = input >> 4; let low = input & 15u32; (low, high)",
+        ))
+    );
+    assert_eq!(
+        original,
+        form(&source(
+            "let first = input & 15u32; let second = input >> 4; (first, second)",
+        ))
+    );
+}
+
+#[test]
+fn resolved_module_heads_keep_their_macro_regions_unproven() {
+    let source = |body: &str| {
+        format!(
+            "mod core {{ pub use std::assert; }}
+             fn f(input: u32) -> (u32, u32) {{ core::assert!(input > 0); {body} }}"
+        )
+    };
+    let original = form(&source(
+        "let low = input & 15u32; let high = input >> 4; (low, high)",
+    ));
+    assert_ne!(
+        original,
+        form(&source(
+            "let high = input >> 4; let low = input & 15u32; (low, high)",
+        ))
+    );
+    assert_eq!(
+        original,
+        form(&source(
+            "let first = input & 15u32; let second = input >> 4; (first, second)",
+        ))
+    );
+}
+
+#[test]
+fn type_named_macros_keep_their_observer_proofs() {
+    let source = |body: &str| {
+        format!("struct eprintln; fn f(input: u32) -> u32 {{ {body} eprintln!(); 0u32 }}")
+    };
+    assert_eq!(
+        form(&source("let low = input & 15u32; let high = input >> 4;")),
+        form(&source("let high = input >> 4; let low = input & 15u32;"))
+    );
+}
+
+#[test]
+fn underscored_captures_keep_their_producer_ports() {
+    let source =
+        |body: &str| format!("fn f(input: u32) -> u32 {{ {body} println!(\"{{low_x}}\"); 0u32 }}");
+    let original = source("let low_x = input >> 4; let high_x = input >> 4;");
+    assert_eq!(
+        form(&original),
+        form(&source("let high_x = input >> 4; let low_x = input >> 4;"))
+    );
+    assert_eq!(
+        form(&original),
+        form(
+            &original
+                .replace("low_x", "first_value")
+                .replace("high_x", "second_value")
+        )
+    );
+    assert_ne!(
+        form(&original),
+        form(&original.replace("{low_x}", "{low_x:x}"))
+    );
+}
+
+#[test]
+fn left_shifts_keep_their_proven_totals() {
+    let source = |body: &str| format!("fn f(input: u32) -> (u32, u32) {{ {body} }}");
+    let original = form(&source(
+        "let left = input << 1u32; let high = input >> 4u32; (left, high)",
+    ));
+    assert_eq!(
+        original,
+        form(&source(
+            "let high = input >> 4u32; let left = input << 1u32; (left, high)",
+        ))
+    );
+    assert_eq!(
+        original,
+        form(&source(
+            "let first = input << 1u32; let second = input >> 4u32; (first, second)",
+        ))
+    );
+}
+
+#[test]
+fn unsuffixed_literal_operands_keep_their_proven_totals() {
+    let source = |body: &str| format!("fn f(input: u32) -> (u32, u32) {{ {body} }}");
+    for (original, reordered, renamed) in [
+        (
+            "let low = input & 15; let high = input >> 4; (low, high)",
+            "let high = input >> 4; let low = input & 15; (low, high)",
+            "let first = input & 15; let second = input >> 4; (first, second)",
+        ),
+        (
+            "let low = 15 & input; let high = 7 ^ input; (low, high)",
+            "let high = 7 ^ input; let low = 15 & input; (low, high)",
+            "let first = 15 & input; let second = 7 ^ input; (first, second)",
+        ),
+    ] {
+        assert_eq!(form(&source(original)), form(&source(reordered)));
+        assert_eq!(form(&source(original)), form(&source(renamed)));
+    }
+}
+
+#[test]
+fn parenthesized_initializers_keep_their_proven_totals() {
+    let source = |body: &str| format!("fn f(input: u32) -> (u32, u32) {{ {body} }}");
+    assert_eq!(
+        form(&source(
+            "let low = (input & 15u32); let high = input >> 4u32; (low, high)",
+        )),
+        form(&source(
+            "let high = input >> 4u32; let low = (input & 15u32); (low, high)",
+        ))
+    );
+}
+
+#[test]
+fn nested_regions_retain_the_scheduled_identity_of_outer_producers() {
+    let source = |outer_reversed: bool, inner_reversed: bool| {
+        let outer = if outer_reversed {
+            "let high = input >> 4; let low = input & 15u32;"
+        } else {
+            "let low = input & 15u32; let high = input >> 4;"
+        };
+        let inner = if inner_reversed {
+            "let right = high & 7u32; let left = low & 7u32;"
+        } else {
+            "let left = low & 7u32; let right = high & 7u32;"
+        };
+        format!("fn f(input: u32) -> (u32, u32) {{ {outer} {{ {inner} (left, right) }} }}")
+    };
+    let original = source(false, false);
+    for (outer, inner) in [(true, false), (false, true), (true, true)] {
+        assert_eq!(form(&original), form(&source(outer, inner)));
+    }
+    assert_eq!(
+        form(&original),
+        form(&renamed(
+            &original,
+            &[
+                ("low", "lower"),
+                ("high", "upper"),
+                ("left", "first"),
+                ("right", "second")
+            ],
+        ))
+    );
+    assert_ne!(
+        form(&original),
+        form(&original.replace("(left, right)", "(right, left)"))
+    );
+}
+
+#[test]
+fn nested_storage_observations_preserve_producer_declaration_order() {
+    let source = |body: &str, reversed: bool| {
+        let declarations = if reversed {
+            "let high = 5u32; let low = 3u32;"
+        } else {
+            "let low = 3u32; let high = 5u32;"
+        };
+        format!(
+            "fn consume<T>(_: T) {{}}
+             struct Holder<'a> {{ field: &'a u32 }}
+             fn f(flag: bool) {{ {declarations} {body} }}"
+        )
+    };
+    assert_eq!(
+        form(&source("consume(low);", false)),
+        form(&source("consume(low);", true))
+    );
+    for body in [
+        "let _ = *(&low);",
+        "#[allow(unused_parens)] (&low);",
+        "let _ = { &low };",
+        "if flag { let _ = &low; }",
+        "for _ in [()] { let _ = &low; }",
+        "while flag { let _ = &low; break; }",
+        "loop { let _ = &low; break; }",
+        "match () { () => { let _ = &low; } }",
+        "let _ = [&low];",
+        "let _ = [&low; 2];",
+        "let _ = &low..&high;",
+        "let _ = [&low][0];",
+        "let _ = (&low,).0;",
+        "let _ = Holder { field: &low };",
+        "let _ = std::assert_eq!(&low, &3u32);",
+        "return consume(&low);",
+        "let _ = loop { break &low; };",
+        "let _ = unsafe { &low };",
+        "let _ = async { let _ = &low; };",
+    ] {
+        let original = source(body, false);
+        assert_ne!(form(&original), form(&source(body, true)), "{body}");
+        assert_eq!(
+            form(&original),
+            form(&renamed(&original, &[("low", "first"), ("high", "second")])),
+            "{body}"
+        );
+    }
+}
+
+#[test]
+fn control_flow_payload_borrows_preserve_producer_declaration_order() {
+    let source = |body: &str, reversed: bool| {
+        let declarations = if reversed {
+            "let high = 5u32; let low = 3u32;"
+        } else {
+            "let low = 3u32; let high = 5u32;"
+        };
+        format!(
+            "fn consume<T>(_: T) -> Result<(), ()> {{ Ok(()) }}
+             fn f() -> Result<(), ()> {{ {declarations} {body} }}"
+        )
+    };
+    for body in [
+        "return consume(&low); consume(())",
+        "consume(&low)?; Ok(())",
+    ] {
+        let original = source(body, false);
+        assert_ne!(form(&original), form(&source(body, true)), "{body}");
+        assert_eq!(
+            form(&original),
+            form(&renamed(&original, &[("low", "first"), ("high", "second")])),
+            "{body}"
+        );
+    }
+    assert_eq!(
+        form(&source("consume(low)?; Ok(())", false)),
+        form(&source("consume(low)?; Ok(())", true))
+    );
+}
+
+#[test]
+fn awaited_borrows_preserve_producer_declaration_order() {
+    let source = |borrowed: bool, reversed: bool| {
+        let declarations = if reversed {
+            "let high = 5u32; let low = 3u32;"
+        } else {
+            "let low = 3u32; let high = 5u32;"
+        };
+        let value = if borrowed { "&low" } else { "low" };
+        format!("async fn f() {{ {declarations} let _ = async {{ {value} }}.await; }}")
+    };
+    let original = source(true, false);
+    assert_ne!(form(&original), form(&source(true, true)));
+    assert_eq!(
+        form(&original),
+        form(&renamed(&original, &[("low", "first"), ("high", "second")]))
+    );
+    assert_eq!(form(&source(false, false)), form(&source(false, true)));
+}
+
+#[test]
+fn mixed_primitive_overloads_preserve_observable_operator_order() {
+    for (implementation, first, second) in [
+        (
+            "impl std::ops::BitAnd<Scalar> for u32 {
+                 type Output = u32;
+                 fn bitand(self, rhs: Scalar) -> u32 {
+                     std::println!(\"{self}\");
+                     self & rhs.0
+                 }
+             }",
+            "1u32 & argument",
+            "2u32 & argument",
+        ),
+        (
+            "impl std::ops::BitAnd<u32> for Scalar {
+                 type Output = u32;
+                 fn bitand(self, rhs: u32) -> u32 {
+                     std::println!(\"{rhs}\");
+                     self.0 & rhs
+                 }
+             }",
+            "argument & 1u32",
+            "argument & 2u32",
+        ),
+    ] {
+        let source = |reversed: bool| {
+            let declarations = if reversed {
+                format!("let second = {second}; let first = {first};")
+            } else {
+                format!("let first = {first}; let second = {second};")
+            };
+            format!(
+                "struct Scalar(u32);
+                 impl Copy for Scalar {{}}
+                 impl Clone for Scalar {{ fn clone(&self) -> Self {{ *self }} }}
+                 {implementation}
+                 fn f(argument: Scalar) -> (u32, u32) {{ {declarations} (first, second) }}"
+            )
+        };
+        let original = source(false);
+        assert_ne!(form(&original), form(&source(true)));
+        assert_eq!(
+            form(&original),
+            form(
+                &original
+                    .replace("argument", "input")
+                    .replace("first", "left")
+                    .replace("second", "right")
+            )
+        );
+    }
 }
