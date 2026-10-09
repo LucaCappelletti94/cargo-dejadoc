@@ -1,4 +1,0 @@
-struct S;
-trait;
-p{}
-impl T for (S) {}

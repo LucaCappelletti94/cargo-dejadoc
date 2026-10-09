@@ -1,1 +1,0 @@
-match v { #[expect(unuses)] Some(_) => {}, None => {} }
