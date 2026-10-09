@@ -1,5 +1,4 @@
-//! A doctest body through `group`. Two copies at different sites must land
-//! in one group, so the canonical form is the same each time it is computed.
+//! Canonical grouping across typed schedules and source-site metadata.
 
 #![no_main]
 
@@ -7,25 +6,34 @@ use dejadoc::{DocTest, group};
 use libfuzzer_sys::fuzz_target;
 
 fuzz_target!(|data: &[u8]| {
-    let Ok(code) = std::str::from_utf8(data) else {
-        return;
-    };
-    let site = |line| DocTest {
-        file: "src/lib.rs".into(),
-        line,
-        end: None,
-        item: "c::f".into(),
-        info: Vec::new(),
-        code: code.into(),
-        allow: false,
-        self_type: None,
-        public: false,
-    };
-    let report = group(&[site(1), site(2)], 1, 0);
-    assert_eq!(report.total, 2);
-    assert_eq!(
-        report.groups.len(),
-        1,
-        "two copies of one body canonicalized apart"
-    );
+    let data = data.to_vec();
+    dejadoc_fuzz::on_large_stack(move || {
+        dejadoc_fuzz::check_dependency_schedules(&data);
+        let Ok(code) = std::str::from_utf8(&data) else {
+            return;
+        };
+        let site = |item: &str| DocTest {
+            file: format!("src/{item}.rs"),
+            line: 1,
+            end: None,
+            item: format!("c::{item}"),
+            info: Vec::new(),
+            code: code.into(),
+            allow: false,
+            self_type: None,
+            public: false,
+        };
+        let report = group(&[site("first"), site("second")], 1, 0);
+        let mut members: Vec<_> = report
+            .groups
+            .iter()
+            .map(|group| {
+                let mut sites: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
+                sites.sort_unstable();
+                sites
+            })
+            .collect();
+        members.sort_unstable();
+        assert_eq!(members, [vec!["c::first", "c::second"]]);
+    });
 });

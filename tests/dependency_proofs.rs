@@ -656,6 +656,32 @@ fn self_imports_claim_their_parent_name() {
 }
 
 #[test]
+fn alias_parameters_schedule_like_their_primitive() {
+    let original: syn::File = syn::parse_str(
+        "type Word = u32; struct S; fn f(input: Word) -> (Word, Word) { let low = input & 15u32; let high = input >> 4; (low, high) }",
+    )
+    .unwrap();
+    let swapped: syn::File = syn::parse_str(
+        "type Word = u32; struct S; fn f(input: Word) -> (Word, Word) { let high = input >> 4; let low = input & 15u32; (low, high) }",
+    )
+    .unwrap();
+    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
+    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
+    let original_fn = function(&original, "f");
+    let swapped_fn = function(&swapped, "f");
+    assert_eq!(
+        original_context
+            .function(&original_fn.sig, &original_fn.block)
+            .unwrap()
+            .canonicalize(),
+        swapped_context
+            .function(&swapped_fn.sig, &swapped_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
 fn cfg_attributed_modules_block_primitive_facts() {
     let body = "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }";
     let attributed: syn::File = syn::parse_str(&format!("#[cfg(unix)] mod m {{}} {body}")).unwrap();
@@ -762,70 +788,6 @@ fn raw_shadows_block_primitive_crate_imports() {
             .canonicalize(),
         plain_context
             .function(&plain_fn.sig, &plain_fn.block)
-            .unwrap()
-            .canonicalize(),
-    );
-}
-
-#[test]
-fn qself_paths_keep_their_non_primitive_identity() {
-    let associated: syn::File = syn::parse_str(
-        "trait U { type u32; } struct Wrap; impl U for Wrap { type u32 = core::primitive::u32; } fn f(input: <Wrap as U>::u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }",
-    )
-    .unwrap();
-    let plain: syn::File = syn::parse_str(
-        "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }",
-    )
-    .unwrap();
-    let associated_context = SourceContext::new(core::iter::once((&[][..], &associated)));
-    let plain_context = SourceContext::new(core::iter::once((&[][..], &plain)));
-    let associated_fn = function(&associated, "f");
-    let plain_fn = function(&plain, "f");
-    assert_ne!(
-        associated_context
-            .function(&associated_fn.sig, &associated_fn.block)
-            .unwrap()
-            .canonicalize(),
-        plain_context
-            .function(&plain_fn.sig, &plain_fn.block)
-            .unwrap()
-            .canonicalize(),
-    );
-}
-
-#[test]
-fn grouped_block_imports_preserve_renamed_bindings_and_targets() {
-    let source = "fn f(input: u32) -> u32 { use std::{hint::black_box as observe, primitive::u32 as Word}; observe(input as Word) }";
-    let renamed = source
-        .replace("input", "argument")
-        .replace("observe", "consume")
-        .replace("Word", "Scalar");
-    let other = source.replace("hint::black_box", "convert::identity");
-    assert_eq!(form(source), form(&renamed));
-    assert_ne!(form(source), form(&other));
-}
-
-#[test]
-fn alias_parameters_schedule_like_their_primitive() {
-    let original: syn::File = syn::parse_str(
-        "type Word = u32; struct S; fn f(input: Word) -> (Word, Word) { let low = input & 15u32; let high = input >> 4; (low, high) }",
-    )
-    .unwrap();
-    let swapped: syn::File = syn::parse_str(
-        "type Word = u32; struct S; fn f(input: Word) -> (Word, Word) { let high = input >> 4; let low = input & 15u32; (low, high) }",
-    )
-    .unwrap();
-    let original_context = SourceContext::new(core::iter::once((&[][..], &original)));
-    let swapped_context = SourceContext::new(core::iter::once((&[][..], &swapped)));
-    let original_fn = function(&original, "f");
-    let swapped_fn = function(&swapped, "f");
-    assert_eq!(
-        original_context
-            .function(&original_fn.sig, &original_fn.block)
-            .unwrap()
-            .canonicalize(),
-        swapped_context
-            .function(&swapped_fn.sig, &swapped_fn.block)
             .unwrap()
             .canonicalize(),
     );
@@ -1078,6 +1040,44 @@ fn group_wrapped_parameters_keep_their_primitive() {
         syn_canon::canonicalize(grouped)
     });
     assert_eq!(forms[0], forms[1]);
+}
+
+#[test]
+fn qself_paths_keep_their_non_primitive_identity() {
+    let associated: syn::File = syn::parse_str(
+        "trait U { type u32; } struct Wrap; impl U for Wrap { type u32 = core::primitive::u32; } fn f(input: <Wrap as U>::u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }",
+    )
+    .unwrap();
+    let plain: syn::File = syn::parse_str(
+        "fn f(input: u32) -> (u32, u32) { let low = input & 15u32; let high = input >> 4; (low, high) }",
+    )
+    .unwrap();
+    let associated_context = SourceContext::new(core::iter::once((&[][..], &associated)));
+    let plain_context = SourceContext::new(core::iter::once((&[][..], &plain)));
+    let associated_fn = function(&associated, "f");
+    let plain_fn = function(&plain, "f");
+    assert_ne!(
+        associated_context
+            .function(&associated_fn.sig, &associated_fn.block)
+            .unwrap()
+            .canonicalize(),
+        plain_context
+            .function(&plain_fn.sig, &plain_fn.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+#[test]
+fn grouped_block_imports_preserve_renamed_bindings_and_targets() {
+    let source = "fn f(input: u32) -> u32 { use std::{hint::black_box as observe, primitive::u32 as Word}; observe(input as Word) }";
+    let renamed = source
+        .replace("input", "argument")
+        .replace("observe", "consume")
+        .replace("Word", "Scalar");
+    let other = source.replace("hint::black_box", "convert::identity");
+    assert_eq!(form(source), form(&renamed));
+    assert_ne!(form(source), form(&other));
 }
 
 #[test]
