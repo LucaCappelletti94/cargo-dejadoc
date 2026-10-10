@@ -561,3 +561,70 @@ fn constant_observer_freezes_only_disable_the_fold_under_them() {
         context_form(&source, "folded")
     );
 }
+
+fn grouped_form(source: &str) -> syn_canon::CanonicalForm {
+    struct Groups;
+
+    impl syn::visit_mut::VisitMut for Groups {
+        fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+            syn::visit_mut::visit_expr_mut(self, expr);
+            let inner =
+                core::mem::replace(expr, syn::Expr::Verbatim(proc_macro2::TokenStream::new()));
+            *expr = syn::Expr::Group(syn::ExprGroup {
+                attrs: Vec::new(),
+                group_token: syn::token::Group::default(),
+                expr: Box::new(inner),
+            });
+        }
+    }
+
+    let mut file: syn::File = syn::parse_str(source).unwrap();
+    syn::visit_mut::VisitMut::visit_file_mut(&mut Groups, &mut file);
+    syn_canon::canonicalize(file)
+}
+
+#[test]
+fn delimiterless_constant_groups_preserve_typed_results() {
+    for width in WIDTHS {
+        for (operator, left, right, result) in OPERATORS {
+            let source = format!("fn f() -> {width} {{ {left}{width} {operator} {right}{width} }}");
+            let expected = format!("fn f() -> {width} {{ {result}{width} }}");
+            let neighbour = format!("fn f() -> {width} {{ {}{width} }}", plus_one(result));
+            assert_eq!(grouped_form(&source), form(&expected));
+            assert_ne!(grouped_form(&source), form(&neighbour));
+        }
+    }
+    for (width, _, maximum) in SIGNED_MINIMA {
+        let magnitude = maximum.parse::<u128>().unwrap() + 1;
+        let minimum = format!("fn f() -> {width} {{ -{magnitude}{width} }}");
+        assert_eq!(grouped_form(&minimum), form(&minimum));
+    }
+}
+
+#[test]
+fn compound_constant_negation_preserves_signed_results() {
+    for width in ["i8", "i16", "i32", "i64", "i128"] {
+        for (source, result) in [
+            (format!("-(2{width} + 3{width})"), "-5"),
+            (format!("-(2{width} - 8{width})"), "6"),
+            (format!("-const {{ 2{width} + 3{width} }}"), "-5"),
+        ] {
+            let source = format!("fn f() -> {width} {{ {source} }}");
+            let expected = format!("fn f() -> {width} {{ {result}{width} }}");
+            assert_eq!(form(&source), form(&expected));
+            assert_eq!(grouped_form(&source), form(&expected));
+            assert_ne!(failing(&source), failing(&expected));
+        }
+    }
+}
+
+#[test]
+fn comparison_operands_fold_without_boolean_evaluation() {
+    for operator in ["==", "!=", "<", "<=", ">", ">="] {
+        let source = format!("fn f() -> bool {{ (2u32 + 3u32) {operator} 5u32 }}");
+        let expected = format!("fn f() -> bool {{ 5u32 {operator} 5u32 }}");
+        assert_eq!(form(&source), form(&expected));
+        assert_ne!(form(&source), form("fn f() -> bool { true }"));
+        assert_ne!(form(&source), form("fn f() -> bool { false }"));
+    }
+}

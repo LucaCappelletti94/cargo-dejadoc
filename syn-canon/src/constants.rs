@@ -7,26 +7,39 @@ use syn::spanned::Spanned;
 use syn::visit_mut::{self, VisitMut};
 
 use crate::alpha::Renamer;
-use crate::scope::{PrimTy, primitive_suffix};
+use crate::scope::{IntWidth, PrimTy, primitive_suffix};
 
 const MAX_DEPTH: usize = 64;
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+struct FixedInt {
+    width: IntWidth,
+    signed: bool,
+}
+
+impl FixedInt {
+    fn suffix(self) -> &'static str {
+        PrimTy::Int {
+            width: self.width,
+            signed: self.signed,
+        }
+        .suffix()
+    }
+}
+
 #[derive(Clone, Copy)]
 struct Integer {
-    ty: PrimTy,
+    ty: FixedInt,
     bits: u128,
 }
 
 impl Integer {
     fn width(self) -> u32 {
-        match self.ty {
-            PrimTy::Int { width, .. } => width.bits(),
-            PrimTy::Bool => unreachable!("integer type"),
-        }
+        self.ty.width.bits()
     }
 
     fn signed(self) -> bool {
-        matches!(self.ty, PrimTy::Int { signed: true, .. })
+        self.ty.signed
     }
 
     fn mask(self) -> u128 {
@@ -79,48 +92,51 @@ impl Integer {
         Some(Self { bits, ..self })
     }
 
-    fn binary(self, right: Self, op: &syn::BinOp) -> Option<Self> {
-        if matches!(op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) {
-            return self.shift(right, matches!(op, syn::BinOp::Shl(_)));
-        }
-        if self.ty != right.ty {
-            return None;
-        }
-        let bits = match op {
-            syn::BinOp::BitAnd(_) => Some(self.bits & right.bits),
-            syn::BinOp::BitOr(_) => Some(self.bits | right.bits),
-            syn::BinOp::BitXor(_) => Some(self.bits ^ right.bits),
-            _ => None,
+    fn binary(self, right: Self, op: BinaryOp) -> Option<Self> {
+        let op = match op {
+            BinaryOp::Shl => return self.shift(right, true),
+            BinaryOp::Shr => return self.shift(right, false),
+            BinaryOp::BitAnd => {
+                return Some(Self {
+                    bits: self.bits & right.bits,
+                    ..self
+                });
+            }
+            BinaryOp::BitOr => {
+                return Some(Self {
+                    bits: self.bits | right.bits,
+                    ..self
+                });
+            }
+            BinaryOp::BitXor => {
+                return Some(Self {
+                    bits: self.bits ^ right.bits,
+                    ..self
+                });
+            }
+            BinaryOp::Math(op) => op,
         };
-        if let Some(bits) = bits {
-            return Some(Self { bits, ..self });
-        }
         if self.signed() {
             let (left, right) = (self.signed_value(), right.signed_value());
             let minimum = -(i128::MAX >> (128 - self.width())) - 1;
-            if matches!(op, syn::BinOp::Div(_) | syn::BinOp::Rem(_))
-                && left == minimum
-                && right == -1
-            {
+            if matches!(op, MathOp::Div | MathOp::Rem) && left == minimum && right == -1 {
                 return None;
             }
             let value = match op {
-                syn::BinOp::Add(_) => left.checked_add(right),
-                syn::BinOp::Sub(_) => left.checked_sub(right),
-                syn::BinOp::Mul(_) => left.checked_mul(right),
-                syn::BinOp::Div(_) => left.checked_div(right),
-                syn::BinOp::Rem(_) => left.checked_rem(right),
-                _ => None,
+                MathOp::Add => left.checked_add(right),
+                MathOp::Sub => left.checked_sub(right),
+                MathOp::Mul => left.checked_mul(right),
+                MathOp::Div => left.checked_div(right),
+                MathOp::Rem => left.checked_rem(right),
             }?;
             self.checked_signed(value)
         } else {
             let value = match op {
-                syn::BinOp::Add(_) => self.bits.checked_add(right.bits),
-                syn::BinOp::Sub(_) => self.bits.checked_sub(right.bits),
-                syn::BinOp::Mul(_) => self.bits.checked_mul(right.bits),
-                syn::BinOp::Div(_) => self.bits.checked_div(right.bits),
-                syn::BinOp::Rem(_) => self.bits.checked_rem(right.bits),
-                _ => None,
+                MathOp::Add => self.bits.checked_add(right.bits),
+                MathOp::Sub => self.bits.checked_sub(right.bits),
+                MathOp::Mul => self.bits.checked_mul(right.bits),
+                MathOp::Div => self.bits.checked_div(right.bits),
+                MathOp::Rem => self.bits.checked_rem(right.bits),
             }?;
             self.checked_unsigned(value)
         }
@@ -152,20 +168,39 @@ impl Integer {
     }
 }
 
-fn arithmetic(op: &syn::BinOp) -> bool {
-    matches!(
-        op,
-        syn::BinOp::Add(_)
-            | syn::BinOp::Sub(_)
-            | syn::BinOp::Mul(_)
-            | syn::BinOp::Div(_)
-            | syn::BinOp::Rem(_)
-            | syn::BinOp::BitAnd(_)
-            | syn::BinOp::BitOr(_)
-            | syn::BinOp::BitXor(_)
-            | syn::BinOp::Shl(_)
-            | syn::BinOp::Shr(_)
-    )
+#[derive(Clone, Copy)]
+enum MathOp {
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+}
+
+#[derive(Clone, Copy)]
+enum BinaryOp {
+    Math(MathOp),
+    BitAnd,
+    BitOr,
+    BitXor,
+    Shl,
+    Shr,
+}
+
+fn arithmetic(op: &syn::BinOp) -> Option<BinaryOp> {
+    Some(match op {
+        syn::BinOp::Add(_) => BinaryOp::Math(MathOp::Add),
+        syn::BinOp::Sub(_) => BinaryOp::Math(MathOp::Sub),
+        syn::BinOp::Mul(_) => BinaryOp::Math(MathOp::Mul),
+        syn::BinOp::Div(_) => BinaryOp::Math(MathOp::Div),
+        syn::BinOp::Rem(_) => BinaryOp::Math(MathOp::Rem),
+        syn::BinOp::BitAnd(_) => BinaryOp::BitAnd,
+        syn::BinOp::BitOr(_) => BinaryOp::BitOr,
+        syn::BinOp::BitXor(_) => BinaryOp::BitXor,
+        syn::BinOp::Shl(_) => BinaryOp::Shl,
+        syn::BinOp::Shr(_) => BinaryOp::Shr,
+        _ => return None,
+    })
 }
 
 fn scalar_const(block: &syn::Block) -> Option<&syn::Expr> {
@@ -175,39 +210,60 @@ fn scalar_const(block: &syn::Block) -> Option<&syn::Expr> {
     }
 }
 
+enum Node<'a> {
+    Literal(&'a syn::LitInt),
+    Nested(&'a syn::Expr),
+    Unary(&'a syn::ExprUnary),
+    Binary(&'a syn::ExprBinary),
+}
+
+fn node(expr: &syn::Expr) -> Option<Node<'_>> {
+    match expr {
+        syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Int(literal),
+            ..
+        }) => Some(Node::Literal(literal)),
+        syn::Expr::Paren(paren) => Some(Node::Nested(&paren.expr)),
+        syn::Expr::Group(group) => Some(Node::Nested(&group.expr)),
+        syn::Expr::Const(constant) => scalar_const(&constant.block).map(Node::Nested),
+        syn::Expr::Unary(unary) => Some(Node::Unary(unary)),
+        syn::Expr::Binary(binary) => Some(Node::Binary(binary)),
+        _ => None,
+    }
+}
+
 fn closed(expr: &syn::Expr, depth: usize) -> bool {
     if depth >= MAX_DEPTH {
         return true;
     }
-    match expr {
-        syn::Expr::Lit(literal) => matches!(literal.lit, syn::Lit::Int(_)),
-        syn::Expr::Paren(paren) => closed(&paren.expr, depth + 1),
-        syn::Expr::Group(group) => closed(&group.expr, depth + 1),
-        syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_) | syn::UnOp::Not(_)) => {
+    match node(expr) {
+        Some(Node::Literal(_)) => true,
+        Some(Node::Nested(expr)) => closed(expr, depth + 1),
+        Some(Node::Unary(unary)) if matches!(unary.op, syn::UnOp::Neg(_) | syn::UnOp::Not(_)) => {
             closed(&unary.expr, depth + 1)
         }
-        syn::Expr::Binary(binary) if arithmetic(&binary.op) => {
+        Some(Node::Binary(binary)) if arithmetic(&binary.op).is_some() => {
             closed(&binary.left, depth + 1) && closed(&binary.right, depth + 1)
-        }
-        syn::Expr::Const(constant) => {
-            scalar_const(&constant.block).is_some_and(|expr| closed(expr, depth + 1))
         }
         _ => false,
     }
 }
 
-fn integer_type(ty: PrimTy) -> Option<PrimTy> {
-    matches!(ty, PrimTy::Int { .. }).then_some(ty)
+fn integer_type(ty: PrimTy) -> Option<FixedInt> {
+    match ty {
+        PrimTy::Int { width, signed } => Some(FixedInt { width, signed }),
+        PrimTy::Bool => None,
+    }
 }
 
 #[derive(Clone, Copy)]
 enum TypeProof {
     Unsuffixed,
-    Fixed(PrimTy),
+    Fixed(FixedInt),
 }
 
 impl TypeProof {
-    fn fixed(self) -> Option<PrimTy> {
+    fn fixed(self) -> Option<FixedInt> {
         match self {
             Self::Unsuffixed => None,
             Self::Fixed(ty) => Some(ty),
@@ -215,15 +271,12 @@ impl TypeProof {
     }
 }
 
-fn proven_type(expr: &syn::Expr, expected: Option<PrimTy>, depth: usize) -> Option<TypeProof> {
+fn proven_type(expr: &syn::Expr, expected: Option<FixedInt>, depth: usize) -> Option<TypeProof> {
     if depth >= MAX_DEPTH || !crate::drift::expr_attrs(expr).is_empty() {
         return None;
     }
-    match expr {
-        syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(literal),
-            ..
-        }) => {
+    match node(expr)? {
+        Node::Literal(literal) => {
             if literal.suffix().is_empty() {
                 Some(expected.map_or(TypeProof::Unsuffixed, TypeProof::Fixed))
             } else {
@@ -234,13 +287,9 @@ fn proven_type(expr: &syn::Expr, expected: Option<PrimTy>, depth: usize) -> Opti
                 Some(TypeProof::Fixed(ty))
             }
         }
-        syn::Expr::Paren(paren) => proven_type(&paren.expr, expected, depth + 1),
-        syn::Expr::Group(group) => proven_type(&group.expr, expected, depth + 1),
-        syn::Expr::Unary(unary) => proven_type(&unary.expr, expected, depth + 1),
-        syn::Expr::Const(constant) => {
-            proven_type(scalar_const(&constant.block)?, expected, depth + 1)
-        }
-        syn::Expr::Binary(binary) => {
+        Node::Nested(expr) => proven_type(expr, expected, depth + 1),
+        Node::Unary(unary) => proven_type(&unary.expr, expected, depth + 1),
+        Node::Binary(binary) => {
             let left = proven_type(&binary.left, expected, depth + 1)?;
             if matches!(binary.op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) {
                 proven_type(&binary.right, None, depth + 1)?.fixed()?;
@@ -253,32 +302,24 @@ fn proven_type(expr: &syn::Expr, expected: Option<PrimTy>, depth: usize) -> Opti
                 (TypeProof::Unsuffixed, TypeProof::Unsuffixed) => Some(TypeProof::Unsuffixed),
             }
         }
-        _ => None,
     }
 }
 
 fn literal(expr: &syn::Expr) -> Option<&syn::LitInt> {
     match expr {
         syn::Expr::Lit(syn::ExprLit {
-            attrs,
             lit: syn::Lit::Int(literal),
-        }) if attrs.is_empty() => Some(literal),
-        syn::Expr::Paren(paren) if paren.attrs.is_empty() => literal(&paren.expr),
-        syn::Expr::Group(group) if group.attrs.is_empty() => literal(&group.expr),
+            ..
+        }) => Some(literal),
+        syn::Expr::Group(group) => literal(&group.expr),
         _ => None,
     }
 }
 
-fn evaluate(expr: &syn::Expr, ty: PrimTy, depth: usize) -> Option<Integer> {
-    if depth >= MAX_DEPTH || !crate::drift::expr_attrs(expr).is_empty() {
-        return None;
-    }
+fn evaluate(expr: &syn::Expr, ty: FixedInt, depth: usize) -> Option<Integer> {
     let model = Integer { ty, bits: 0 };
-    match expr {
-        syn::Expr::Lit(syn::ExprLit {
-            lit: syn::Lit::Int(literal),
-            ..
-        }) => {
+    match node(expr)? {
+        Node::Literal(literal) => {
             let magnitude = literal.base10_parse::<u128>().ok()?;
             if model.signed() {
                 model.checked_signed(i128::try_from(magnitude).ok()?)
@@ -286,10 +327,8 @@ fn evaluate(expr: &syn::Expr, ty: PrimTy, depth: usize) -> Option<Integer> {
                 model.checked_unsigned(magnitude)
             }
         }
-        syn::Expr::Paren(paren) => evaluate(&paren.expr, ty, depth + 1),
-        syn::Expr::Group(group) => evaluate(&group.expr, ty, depth + 1),
-        syn::Expr::Const(constant) => evaluate(scalar_const(&constant.block)?, ty, depth + 1),
-        syn::Expr::Unary(unary) => {
+        Node::Nested(expr) => evaluate(expr, ty, depth + 1),
+        Node::Unary(unary) => {
             if matches!(unary.op, syn::UnOp::Neg(_))
                 && model.signed()
                 && let Some(literal) = literal(&unary.expr)
@@ -316,16 +355,18 @@ fn evaluate(expr: &syn::Expr, ty: PrimTy, depth: usize) -> Option<Integer> {
                 _ => None,
             }
         }
-        syn::Expr::Binary(binary) => {
+        Node::Binary(binary) => {
             let left = evaluate(&binary.left, ty, depth + 1)?;
             let right_ty = if matches!(binary.op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) {
                 proven_type(&binary.right, None, depth + 1)?.fixed()?
             } else {
                 ty
             };
-            left.binary(evaluate(&binary.right, right_ty, depth + 1)?, &binary.op)
+            left.binary(
+                evaluate(&binary.right, right_ty, depth + 1)?,
+                arithmetic(&binary.op)?,
+            )
         }
-        _ => None,
     }
 }
 
@@ -355,7 +396,7 @@ pub(crate) fn normalize_block(renamer: &Renamer<'_>, block: &mut syn::Block) {
 
 struct Normalizer<'a, 'env> {
     renamer: &'a Renamer<'env>,
-    expected: Option<PrimTy>,
+    expected: Option<FixedInt>,
     contextual: bool,
     depth: usize,
 }
