@@ -141,3 +141,37 @@ fn tied_future_negation_grouping_keeps_the_exact_family_members() {
         ]
     );
 }
+
+#[test]
+fn inverted_future_conditions_preserve_origins_branches_and_output_positions() {
+    let original = "fn f(p:bool,q:u8,r:u8)->(u8,u8){let a=p;let b=p;println!(\"barrier\");let c=if !a{q}else{r};let d=if b{3u8}else{4u8};(c,d)}";
+    let oriented = "fn g(p:bool,q:u8,r:u8)->(u8,u8){let a=p;let b=p;println!(\"barrier\");let c=if a{r}else{q};let d=if b{3u8}else{4u8};(c,d)}";
+    let permuted = "fn h(p:bool,q:u8,r:u8)->(u8,u8){let b=p;let a=p;println!(\"barrier\");let c=if a{r}else{q};let d=if b{3u8}else{4u8};(c,d)}";
+    let shared = "fn f(p:bool,q:u8,r:u8)->(u8,u8){let a=p;let b=p;println!(\"barrier\");let c=if a{r}else{q};let d=if a{3u8}else{4u8};(c,d)}";
+    let branches = "fn f(p:bool,q:u8,r:u8)->(u8,u8){let a=p;let b=p;println!(\"barrier\");let c=if a{q}else{r};let d=if b{3u8}else{4u8};(c,d)}";
+    let outputs = "fn f(p:bool,q:u8,r:u8)->(u8,u8){let a=p;let b=p;println!(\"barrier\");let c=if a{r}else{q};let d=if b{3u8}else{4u8};(d,c)}";
+    for equivalent in [oriented, permuted] {
+        same(original, equivalent);
+    }
+    for neighbor in [shared, branches, outputs] {
+        separate(original, neighbor);
+    }
+    let sites = [
+        ("original", original),
+        ("oriented", oriented),
+        ("permuted", permuted),
+        ("shared", shared),
+        ("branches", branches),
+        ("outputs", outputs),
+    ]
+    .map(|(item, code)| site(item, code));
+    assert_eq!(
+        members(&group(&sites, 1, 0)),
+        [
+            vec!["branches"],
+            vec!["oriented", "original", "permuted"],
+            vec!["outputs"],
+            vec!["shared"]
+        ]
+    );
+}

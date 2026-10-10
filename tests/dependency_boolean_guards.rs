@@ -265,6 +265,20 @@ fn branch_node_bounds_retain_the_complete_conditional() {
 }
 
 #[test]
+fn unit_branch_final_items_obey_the_shared_node_bound() {
+    for (count, admitted) in [(8189, true), (8190, true), (8191, false)] {
+        let padding = "0u8;".repeat(count);
+        let original = format!("fn f(p:bool){{if !p{{{padding}}}else{{0u8;struct Marker;}}}}");
+        let oriented = format!("fn g(x:bool){{if x{{0u8;struct Marker;}}else{{{padding}}}}}");
+        if admitted {
+            same(&original, &oriented);
+        } else {
+            separate(&original, &oriented);
+        }
+    }
+}
+
+#[test]
 fn deep_boolean_tails_fold_up_to_the_expression_bound() {
     same(&deep_if(64), &deep_bare(64));
     separate(&deep_if(65), &deep_bare(65));
