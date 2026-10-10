@@ -1,0 +1,12 @@
+pub fn outer() {
+    //}
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            /// let d = 4;
+            /// ```
+   de_str!("doc.md")       ?//cfTUUUUUUg {}
+        },
+    };
+}

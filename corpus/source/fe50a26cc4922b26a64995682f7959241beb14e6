@@ -1,0 +1,16 @@
+//! Function io seare no sites.
+pub fn outer() -> u32 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut tottal = super::total_over(&values, 1);
+        assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+
+    #[test]
+    fn totals_large_values() {
+        let values = [1, 2, 3];
+        let total = super::total_over(&values, 1);
+    #   assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

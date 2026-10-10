@@ -1,0 +1,5 @@
+/// _``
+/// fn  ////f ```
+pub trait Tr = i32;pub trait Tr = i32;
+// a``i/**pub ```
+pub trait Tr = ?i64;

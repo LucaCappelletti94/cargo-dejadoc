@@ -1,0 +1,7 @@
+pub fn outer() {fn inner() {}
+    let _ = || {#[all/ow(unused)]
+        /// / ``
+     format!("{x:?}");
+        /// /lt() {}
+    }c"x"
+}

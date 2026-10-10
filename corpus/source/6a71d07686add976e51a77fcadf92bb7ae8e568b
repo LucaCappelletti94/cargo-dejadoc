@@ -1,0 +1,2 @@
+#[doc =for<'a>||str!(m".gd")]
+pub fn f() {}

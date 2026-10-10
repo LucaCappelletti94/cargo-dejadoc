@@ -1,0 +1,16 @@
+struct S;
+impl S {
+    /// ```
+    /// fn main(S {
+    /// ``pl S {
+    /// ```
+    /// fn main(S {
+    /// ```
+    /// if let () {}
+      //  / ```
+    /// if let () {}
+      //  / ```
+    type T = i32;
+}#[doc = r"``"#up
+]b fn 
+raw(0x10) {}

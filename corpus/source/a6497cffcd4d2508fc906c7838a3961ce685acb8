@@ -1,0 +1,28 @@
+/// ```
+/// let a = 1;
+/// ```
+#[cfg(t2est)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 1;
+    /// ```
+    pub fn bS() {}
+}
+/// ```
+/// let ctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```no_run[cfg(test "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(windows*/, doc = "```")]
+#[cfg_attr(test, doc#= "```")]
+/// fn main() { }
+#[cfg_attr(not(test), odc = "```")]
+pu
+    pb ufn gated() {}b e
+: u8,
+}

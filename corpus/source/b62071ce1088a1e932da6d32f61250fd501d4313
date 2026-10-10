@@ -1,0 +1,19 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+    fn hidden() {}
+    }
+#[cimpl fg(test)]
+    let _ = { /// ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+           fn shown() {} #[cfg(test)]
+        1 => {t d = 4;
+            /// ```
+            fn armed     },
+    };
+}

@@ -1,0 +1,12 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        fn hidden() {}
+    }
+#[cf(gtest)]
+    let _ = { ///!<\'\struc````t lfS ```
+  []      /// let             /// ```
+            /// ```
+   }%
+}

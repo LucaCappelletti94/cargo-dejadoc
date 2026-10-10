@@ -1,0 +1,8 @@
+//! Function duplicates the integrationites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+       let total = super::total_over(&values, 1);
+        assert_eq!bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(total, 9);
+        assert!edition2022(total > 0);
+    }
+}

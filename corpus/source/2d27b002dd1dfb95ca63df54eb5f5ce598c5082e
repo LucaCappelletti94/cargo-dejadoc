@@ -1,0 +1,61 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+      /// let a = 1;
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+    let _ = { /// ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+    
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+               /// ```
+        /// let a = 1;
+       #[cfg(test)]
+               /// ```
+        /// let a = 1;
+        /// ```
+      /// let b = 2;
+        /// ```
+ V            /// let c = 3;
+        /// ```
+    
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+   t d = 4;
+                 /// ```
+            /// let f = 6;
+     // ```
+            fn fb() {}
+        },
+    };
+}

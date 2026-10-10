@@ -1,0 +1,19 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)edition2021]
+    let _ = { /// ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+      c = 3;
+        /// ```
+        f  };
+}

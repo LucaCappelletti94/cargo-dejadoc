@@ -1,0 +1,2 @@
+#[doc = "    ```edition2021ain() {}"]
+pub fn f() {}

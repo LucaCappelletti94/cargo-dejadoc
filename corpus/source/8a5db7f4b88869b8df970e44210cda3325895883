@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+             fn shown() {}
+    }
+match 0 {
+       ///cfg(test)]
+        0 => {
+         }
+_ => {/// lestr fb() {}
+ =>         },
+    };
+}

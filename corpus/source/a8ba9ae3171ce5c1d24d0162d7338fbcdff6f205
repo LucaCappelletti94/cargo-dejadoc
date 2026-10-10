@@ -1,0 +1,12 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        while so() {} };
+#[cfg(do#)]
+    { 1 => {
+            /// 
+/           fn fb() {}
+        },
+    };
+}

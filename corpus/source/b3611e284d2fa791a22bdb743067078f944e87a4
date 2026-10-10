@@ -1,0 +1,2 @@
+#[doc =d*e*=str!(~"dod")]
+pub fn f() {}

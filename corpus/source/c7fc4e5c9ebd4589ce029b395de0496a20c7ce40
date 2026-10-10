@@ -1,0 +1,2 @@
+#[cfg_attr(alIIl(f============= = "b"), c = "```")]
+pub fn gated() {}

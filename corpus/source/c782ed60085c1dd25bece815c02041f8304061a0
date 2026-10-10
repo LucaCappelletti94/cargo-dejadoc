@@ -1,0 +1,16 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+//ignorex = 1;
+///    
+///  x = 0;
+///     ley = = 2;
+///|
+/// ```
+pub const C: i32 = 1;
+/// ```
+//"   0 inintro-//"(VUUUUU
+/// ```
+pub trait Tr = i64;

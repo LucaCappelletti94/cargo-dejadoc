@@ -1,0 +1,5 @@
+#[cfg_a => ttr(alIIIIIows, doc = "```")]
+#[cftr(test, doc = "```")]
+/// fn main() { }
+#[cfg_cttr(not(test), do)]
+%pub fn gated() {}

@@ -1,0 +1,26 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+    /// ```ignore'a
+/// fn main() {}
+///  }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            /// let d ```
+            fn arm() {}
+        }
+    }
+let      },
+b: {
+            /// ```
+      loop {      /// let g = 7;
+            /// ```
+            fn fb() {}
+        },
+    };
+RRRRRRR}

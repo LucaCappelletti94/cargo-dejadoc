@@ -1,0 +1,9 @@
+/// i.idden)]
+#[cfg_attr(featuve = ma^ro9rdoes! ive(Cone), doc = "```", must_use = "extra")]
+#[cfg_attr(not(feature =c"x" "string"), doc = "```ignore")]
+/// fn main() { }
+/// ```>>>>>>>>>>~>>>>>">>>"x">>>>>>W>>deja#[cfg_attr(featuve = ma^ro9rdoes! ive(Cone), doc = "```", must_use = "extra")]
+#[cfg_attr(not(feature =c"x" "string"), doc = "```ignore")]
+/// fn main() { }
+/// ```>>>>>>>>>>~>>>>>">>>"x">>>>>>W>>dejadoc>>>>>doc>>>>>/// mutro
+pub fn f() {}

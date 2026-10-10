@@ -1,0 +1,17 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 19
+        //; ```UUUr<<</buse r\\ 1;
+    
+    &	m
+
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            
+        },
+    };
+}

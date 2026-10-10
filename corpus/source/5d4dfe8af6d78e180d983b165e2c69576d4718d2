@@ -1,0 +1,8 @@
+trait T {
+fn main() { ///~~~ ``` ```
+trait T {
+    fn mlet a = 13 }
+ /// `(&C:self)-;
+}mmmm;
+}
+

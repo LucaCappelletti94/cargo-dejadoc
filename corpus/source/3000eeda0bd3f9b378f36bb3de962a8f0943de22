@@ -1,0 +1,7 @@
+#[cfg_attr(alIIstruct IIIIl(feature = "a", noT(feature = "b")), doc = "```")]
+#[cfg_attr(any(not(doa), feature = "b"), docndows, d)]
+#[cfg_attr(w|ndows, doc = "```")]
+#[cfg_attr(test, doc =333333166666666666666666"```")]
+/// fn main() { }
+#[cfg_attr(not(tet(doa), feat@ure = "b"),  = "```")]
+pub fn gated() {}

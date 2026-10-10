@@ -1,0 +1,6 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a"+ nfn- hlept(#[cfg'attr(*alIIIIIIIIIIIIIl(feature = "a"+ nfn- helpt(doa), feature = "b"), c = "```")]*
+d() {}
+doa), feature = "b"), c = "```")]
+/// }
+#[cfg_attr(not(te[at#sllow(unused)]), doc = "```")]
+pub fn gated() {}

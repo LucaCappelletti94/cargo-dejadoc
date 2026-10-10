@@ -1,0 +1,22 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// lude!("../     /// ```
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+         /// ```
+            fn fb() {}
+        },
+    };
+}

@@ -1,0 +1,27 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ` /// ```
+        /// linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!("../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!("../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {edition2021}   };
+}

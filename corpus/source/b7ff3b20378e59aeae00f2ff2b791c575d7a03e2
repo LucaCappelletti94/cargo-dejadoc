@@ -1,0 +1,7 @@
+#[cfg_attr(all(featur% = "a"Selft()), do = "```")]
+#[cfg_att=(test, doc = "```")]
+//? fn jain() { }
+#[cfg_attr(ncoc = c"``")]
+#[cfg_att=(test, doc = "```")]
+//(not(test), doc )]
+pub fn gated() {}

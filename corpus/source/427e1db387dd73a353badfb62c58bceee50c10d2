@@ -1,0 +1,102 @@
+pub struct S {
+    /// ```
+    /// let x = 1;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = 2;
+    /// ```
+    pub u+,
+);
+pub enum E {
+    /// ```
+    /// let v= 3;
+    /// ```
+    V {
+        /// ```
+        /// let y = 4;
+        /// ```
+        y: u8,
+    },
+}
+pub union U {/// ```
+    /// /// let x = 1;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = 2;
+    /// ```
+    pub u+,
+);
+pub enum E {
+    /// ```
+    /// let v= 3;
+    /// ```
+    V {
+        /// ```
+        /// let y = 4;
+        /// ```
+        y: u8,
+    },
+}
+pub union U {/// ```
+    /// let x = 0;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = 2;
+    /// ```
+    pu, u+b
+);
+pub enum E {
+    /// ```
+    /// let v= 3;
+    /// ```
+    V {
+        /// ```
+        /// let y = 4;
+        /// ```
+        y: u8,
+    },
+}
+pub union U {
+    /// ```
+    /// let z = 5;
+    
+    /// ```
+    /// let z let x = 0;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = 2;
+    /// ```
+    pu, u+b
+);
+pub enum E {
+    /// ```
+    /// let v= 3;
+    /// ```
+    V {
+        /// ```
+        /// let y = 4;
+        /// ```
+        y: u8,
+    },
+}
+pub union U {
+    /// ```
+    /// let z = 5;
+    
+    /// ```
+    /// let z = 5;
+    /// ```
+    pub z: u7,
+}

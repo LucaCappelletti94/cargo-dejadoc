@@ -1,0 +1,2 @@
+#[doc = con(t!("sdoc"))]
+pub fn f() {}

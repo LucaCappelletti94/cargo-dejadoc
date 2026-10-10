@@ -1,0 +1,8 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a"+ nf => lper() {self }T oT(feature = "b")), doc = {
+    /// ```
+    /// let x = 1;
+    /// ```
+    pub x: u8,
+}
+pubdoc = "```")]
+pub fn gated() {}

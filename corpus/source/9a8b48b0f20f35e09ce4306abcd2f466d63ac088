@@ -1,0 +1,8 @@
+extern "C" {
+    /// ```
+    /// fn m/// ``` /// fn main() {} ```  
+  unsafe S: i32;
+    /// ```
+    /// fn/// fn m  /// ```
+    type T;/
+}

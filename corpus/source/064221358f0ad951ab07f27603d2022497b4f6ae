@@ -1,0 +1,8 @@
+trait T {
+    ///``
+    const C: i32;
+ macro_rules!  {}
+    /// ```
+    const C: i32;
+    //oop {q")    tasloop {q!(ype Out;
+}

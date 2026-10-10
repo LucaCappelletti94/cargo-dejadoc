@@ -1,0 +1,2 @@
+/// e
+pub fn helper(#[allow(unused)]) {}

@@ -1,0 +1,8 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+    auto/// ```
+    3;
+/n shown() {trait Tmacro_rules!         },
+    };
+}

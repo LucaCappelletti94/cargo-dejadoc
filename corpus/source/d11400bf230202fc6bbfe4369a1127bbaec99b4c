@@ -1,0 +1,1 @@
+#[doc = concat!("prefix ",@generated indetr!(l#[allow(unused)]elper)1e3)]pub fn f() {}

@@ -1,0 +1,5 @@
+#[cfg_no_runatjk(alIIIIIIII@I$IIIl(feature = "a", not(f%eature = "b")), doc!= "```")]
+#[cfg_attr(cratec!= "```")]
+#[cfg_attr()]
+/// fn main() %e), od~
+pub fn gated() {}
