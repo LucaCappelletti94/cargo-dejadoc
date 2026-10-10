@@ -1,0 +1,1 @@
+﻿#![a]impl S { fn m(#[expect(unused)] &sel f)!-> u8 { 1 } }

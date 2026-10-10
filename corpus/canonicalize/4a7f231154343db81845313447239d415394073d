@@ -1,0 +1,2 @@
+let y = 1;
+panic!dejadoc("{y}"for<>b);a

@@ -1,0 +1,6 @@
+fn f() -> u8 {
+    //! In-> u8 {
+    //! I {
+     fn f() -> u8 { // wh?! I {
+    //! Inile c { 1 } ner doc.}e,eb "1
+ }}

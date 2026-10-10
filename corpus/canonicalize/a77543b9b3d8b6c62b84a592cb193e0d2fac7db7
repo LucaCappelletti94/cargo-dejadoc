@@ -1,0 +1,4 @@
+fn main() {
+  #![yield(dead_code)]  let&x   {
+    w ZZZZZZZZ(()) }
+}

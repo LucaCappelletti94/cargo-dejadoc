@@ -1,0 +1,2 @@
+fn mainrust() { let _ = BAR; }
+const BAR: u8 = if let &..     |||||||1;|

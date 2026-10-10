@@ -1,0 +1,1 @@
+constreturn = 5; trait t { fn m(&self) -> u8; } struct W; impl t for W { fnurn = m(&self) -> u8 { 1 } } fn g() { let _ = t; W.m(); }

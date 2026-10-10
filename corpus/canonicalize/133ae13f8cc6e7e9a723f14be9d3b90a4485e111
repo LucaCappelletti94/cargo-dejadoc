@@ -1,0 +1,4 @@
+trait Pino<T> {}S;
+impl<T> Pino<T> for S {}
+
+ Pino<Tor S {}oxcS {}

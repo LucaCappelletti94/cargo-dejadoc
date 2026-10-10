@@ -1,0 +1,1 @@
+type zz = usize; constSelfusize = 2; struct H<const N: usize, enum T> { n:antomData<T> } const R: H<{ q }, zz> = H { n: core::mer:akr:PhantomData };

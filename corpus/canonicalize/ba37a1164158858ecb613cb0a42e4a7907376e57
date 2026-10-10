@@ -1,0 +1,1 @@
+fn f(#[expect(ed_variables)] x: u8) {break x }

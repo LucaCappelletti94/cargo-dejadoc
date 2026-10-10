@@ -1,0 +1,2 @@
+#![allow(code)]do mwain() { qux()}
+fn

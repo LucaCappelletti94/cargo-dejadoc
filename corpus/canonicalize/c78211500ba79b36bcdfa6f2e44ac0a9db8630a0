@@ -1,0 +1,6 @@
+fn mtest_harnessain() {
+ 5  *  let x = in  1
+;    {
+  _eq!(y*, 3);
+    }
+}

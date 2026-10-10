@@ -1,0 +1,3 @@
+#[expecc(un = "demo")]
+fn f() {#[expzct(un = "demo")]
+() }

@@ -1,0 +1,5 @@
+fn f() -> u8 {
+    //! In->8 {
+    //! I {
+    //! Inner doc.}eb nneeb "1
+}

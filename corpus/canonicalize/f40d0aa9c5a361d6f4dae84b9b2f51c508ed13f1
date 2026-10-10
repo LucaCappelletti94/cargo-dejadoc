@@ -1,0 +1,3 @@
+trait Pino<T> {}
+struct S;
+impl<T> Pino<or{}!

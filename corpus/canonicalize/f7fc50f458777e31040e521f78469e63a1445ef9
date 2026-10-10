@@ -1,0 +1,11 @@
+fn f() -> u8 {
+    //! In-> u8 {
+    //!In
+} u8 {
+    //! In-> u8 {
+ 8 {
+    //! In-> u8 {
+    //! Inner doc, PPPPPPPPPPPPP! In
+} u8 {
+    //! In-> uInner doc, PPPPPPPPPPPPP! In
+}

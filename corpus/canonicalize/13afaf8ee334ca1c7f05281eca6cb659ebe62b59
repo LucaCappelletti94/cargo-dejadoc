@@ -1,0 +1,6 @@
+fn main() {
+    let f: fn(#[expect(unused)] +=et+=e=x: lx = 1
+;    u8) = g;{
+ q!(y, 2);
+   #}
+}

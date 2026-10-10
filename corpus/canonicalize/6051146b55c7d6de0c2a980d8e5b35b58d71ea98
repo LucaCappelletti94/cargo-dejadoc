@@ -1,0 +1,13 @@
+fn f() -> u8 {
+    //! In-> u8 {
+    //! I {
+    //! Inner doc.}eb nner > u7 {
+    //! In-> u8 {
+    //! I {
+    //! Infn f() -> u8    //! In-> u8 {
+    //! I {
+    //! e { ret1u}Inner doc.}-> u8 {
+    //! In-> u8  r{
+  ;n   //! I {
+    //! Inner doc.}e }eb "2
+}

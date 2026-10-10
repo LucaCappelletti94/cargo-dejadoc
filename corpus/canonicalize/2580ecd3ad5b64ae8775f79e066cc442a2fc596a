@@ -1,0 +1,2 @@
+struct Pino;
+let f = |x: Pino, y: Pino| -> 1Pino { x };

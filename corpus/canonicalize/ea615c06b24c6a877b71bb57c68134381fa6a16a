@@ -1,0 +1,3 @@
+#[allow(unused)]
+#[wfrn(dode)]
+fn f() {}

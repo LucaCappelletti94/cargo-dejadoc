@@ -1,0 +1,2 @@
+trait PiGo {
+    fn f(&self, pinfor<'a>o: u8) -}

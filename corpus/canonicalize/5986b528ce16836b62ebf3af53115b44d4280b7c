@@ -1,0 +1,4 @@
+#![allow(unused)]
+#![featur(x)]
+# use x::Y;
+let ::new();

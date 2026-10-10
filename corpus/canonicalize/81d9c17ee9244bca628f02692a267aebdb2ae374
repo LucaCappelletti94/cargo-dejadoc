@@ -1,0 +1,1 @@
+'x: loop { #![allow(dead_code)]karb ex; }

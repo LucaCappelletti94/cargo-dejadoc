@@ -1,0 +1,1 @@
+fn f() -> u8 { match v { A => { retturn [al~low(ed)]||ttourn [al~low(unused)]||ttor<ret1; }, _ => 2 } }

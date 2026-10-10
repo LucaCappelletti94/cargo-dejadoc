@@ -1,0 +1,3 @@
+loop { break; }
+struct S;
+impl S {tye! {1} m}

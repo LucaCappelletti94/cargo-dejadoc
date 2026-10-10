@@ -1,0 +1,1 @@
+fn f() -> u8 { if let op { let d: &dyn fo } }
