@@ -44,7 +44,7 @@ assert_ne!(
 );
 ```
 
-Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, declarations retain their distinct origins, and `==` and `!=` keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
+Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, declarations retain their distinct origins, and general `==` and `!=` comparisons keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
 
 ```rust
 let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
@@ -59,6 +59,24 @@ assert_eq!(
 assert_eq!(
     form("fn f(a: u32, b: u32) -> bool { a >= b }"),
     form("fn g(x: u32, y: u32) -> bool { y <= x }"),
+);
+```
+
+Passing-mode comparison normalizes proven primitive boolean double negations, ordered De Morgan forms, opposite boolean branches and equality with literal `true`. Negated conditions swap complete ordinary blocks, and literal conditions select a tail only when both branches independently prove the same scalar type. Short-circuit operand order, storage and destruction scopes, active attributes and discarded inference constraints stay intact.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+assert_eq!(
+    form("fn f(p: bool, q: bool) -> bool { !(!!p && (q == true)) }"),
+    form("fn g(x: bool, y: bool) -> bool { !x || !y }"),
+);
+assert_eq!(
+    form("fn f(p: bool, q: bool) -> (bool, u8, u8) { (if p { true } else { false }, if !q { 1u8 } else { 2u8 }, if true { 3u8 } else { 4u8 }) }"),
+    form("fn g(x: bool, y: bool) -> (bool, u8, u8) { (x, if y { 2u8 } else { 1u8 }, 3u8) }"),
+);
+assert_ne!(
+    form("fn f() -> usize { let n = 1; let _ = if true { n } else { 2u8 }; std::mem::size_of_val(&n) }"),
+    form("fn f() -> usize { let n = 1; let _ = n; std::mem::size_of_val(&n) }"),
 );
 ```
 

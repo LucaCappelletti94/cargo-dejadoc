@@ -100,6 +100,8 @@ pub(crate) enum Lbl {
     Int(u128, Option<PrimTy>),
     /// A boolean literal.
     Bool(bool),
+    /// A proven primitive boolean negation of a total boolean scalar.
+    Not(Box<Lbl>),
     /// Any other literal, by its text.
     Lit(String),
     /// A value reference.
@@ -122,7 +124,7 @@ impl Lbl {
     pub(crate) fn prim(&self) -> Option<PrimTy> {
         match self {
             Self::Int(_, prim) => *prim,
-            Self::Bool(_) => Some(PrimTy::Bool),
+            Self::Bool(_) | Self::Not(_) => Some(PrimTy::Bool),
             Self::Ref(value) => value.prim,
             Self::Op(_, _, _, prim) | Self::Flat(_, _, prim) => Some(*prim),
             _ => None,
@@ -542,8 +544,10 @@ fn scalar_prim(left: &Lbl, right: &Lbl) -> Option<PrimTy> {
     }
 }
 
-/// A comparison over proven scalars, oriented by kind, a bool result.
+/// A comparison or a logical operation over proven scalars, oriented by
+/// kind, a bool result.
 fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+    let prim = scalar_prim(left, right)?;
     let (tag, reverse) = match bin_op {
         syn::BinOp::Eq(_) => ('=', None),
         syn::BinOp::Ne(_) => ('!', None),
@@ -551,9 +555,10 @@ fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinar
         syn::BinOp::Le(_) => ('≤', None),
         syn::BinOp::Gt(_) => ('<', Some(ReversedComparison::Lt)),
         syn::BinOp::Ge(_) => ('≤', Some(ReversedComparison::Le)),
+        syn::BinOp::And(_) if prim == PrimTy::Bool => ('∧', None),
+        syn::BinOp::Or(_) if prim == PrimTy::Bool => ('∨', None),
         _ => return None,
     };
-    scalar_prim(left, right)?;
     Some(TotalBinary::Ordered {
         tag,
         reverse,
@@ -561,9 +566,43 @@ fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinar
     })
 }
 
+/// Negate a total boolean label without changing logical operand order.
+pub(crate) fn not_label(operand: Lbl) -> Lbl {
+    match operand {
+        Lbl::Not(inner) => *inner,
+        Lbl::Bool(value) => Lbl::Bool(!value),
+        Lbl::Op(tag @ ('∧' | '∨'), mut left, mut right, _) => {
+            *left = not_label(*left);
+            *right = not_label(*right);
+            Lbl::Op(
+                if tag == '∧' { '∨' } else { '∧' },
+                left,
+                right,
+                PrimTy::Bool,
+            )
+        }
+        other => Lbl::Not(Box::new(other)),
+    }
+}
+
+/// The total boolean operand compared with literal `true`.
+pub(crate) fn true_comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<Lbl> {
+    if !matches!(bin_op, syn::BinOp::Eq(_)) {
+        return None;
+    }
+    match (left, right) {
+        (other, Lbl::Bool(true)) | (Lbl::Bool(true), other)
+            if other.prim() == Some(PrimTy::Bool) =>
+        {
+            Some(other.clone())
+        }
+        _ => None,
+    }
+}
+
 /// The operands of a flat chain, flattening chains of the same operator
 /// and type.
-fn collect_leaves(op: BitwiseOp, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
+pub(crate) fn collect_leaves(op: BitwiseOp, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
     match lbl {
         Lbl::Flat(inner_op, leaves, inner_prim) if inner_op == op.tag() && inner_prim == prim => {
             out.extend(leaves);
@@ -574,7 +613,7 @@ fn collect_leaves(op: BitwiseOp, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
 
 /// A flat chain's canonical label, sorted leaves with the literal
 /// subset folded, a lone literal standing for the whole chain.
-fn flat_label(op: BitwiseOp, prim: PrimTy, mut leaves: Vec<Lbl>) -> Lbl {
+pub(crate) fn flat_label(op: BitwiseOp, prim: PrimTy, mut leaves: Vec<Lbl>) -> Lbl {
     leaves.sort();
     if op != BitwiseOp::Xor {
         leaves.dedup();
@@ -615,6 +654,18 @@ pub(crate) fn literal_label(prim: PrimTy, bits: u128) -> Lbl {
     match prim {
         PrimTy::Int { .. } => Lbl::Int(bits, Some(prim)),
         PrimTy::Bool => Lbl::Bool(bits != 0),
+    }
+}
+
+/// Count source-label nodes before future projection.
+fn label_nodes(lbl: &Lbl) -> usize {
+    match lbl {
+        Lbl::Not(inner) => 1 + label_nodes(inner),
+        Lbl::Op(_, left, right, _) => 1 + label_nodes(left) + label_nodes(right),
+        Lbl::Flat(_, leaves, _) | Lbl::Other(_, leaves) => {
+            1 + leaves.iter().map(label_nodes).sum::<usize>()
+        }
+        _ => 1,
     }
 }
 
@@ -932,28 +983,37 @@ fn label_binary(
     let (left, mut sites) = label_expr(renamer, env, &bin.left, consumer, locals);
     let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals);
     sites.extend(r_sites);
-    let label = match total_binary(&bin.op, &left, &right) {
-        Some(TotalBinary::Ordered { tag, reverse, prim }) => {
-            let (lo, hi) = if reverse.is_some() {
-                (right, left)
-            } else {
-                (left, right)
-            };
-            Lbl::Op(tag, Box::new(lo), Box::new(hi), prim)
-        }
-        Some(TotalBinary::Flat(op, prim)) => {
-            let mut leaves = Vec::new();
-            collect_leaves(op, prim, left, &mut leaves);
-            collect_leaves(op, prim, right, &mut leaves);
-            flat_label(op, prim, leaves)
-        }
-        None => {
-            let tag = if is_assign_op(&bin.op) {
-                "ao".into()
-            } else {
-                op_text(&bin.op)
-            };
-            Lbl::Other(tag, vec![left, right])
+    let label = if bin.attrs.is_empty()
+        && let Some(reduced) = true_comparison(&bin.op, &left, &right)
+    {
+        reduced
+    } else {
+        match total_binary(&bin.op, &left, &right) {
+            Some(TotalBinary::Ordered {
+                tag: '∧' | '∨', ..
+            }) if !bin.attrs.is_empty() => Lbl::Other(op_text(&bin.op), vec![left, right]),
+            Some(TotalBinary::Ordered { tag, reverse, prim }) => {
+                let (lo, hi) = if reverse.is_some() {
+                    (right, left)
+                } else {
+                    (left, right)
+                };
+                Lbl::Op(tag, Box::new(lo), Box::new(hi), prim)
+            }
+            Some(TotalBinary::Flat(op, prim)) => {
+                let mut leaves = Vec::new();
+                collect_leaves(op, prim, left, &mut leaves);
+                collect_leaves(op, prim, right, &mut leaves);
+                flat_label(op, prim, leaves)
+            }
+            None => {
+                let tag = if is_assign_op(&bin.op) {
+                    "ao".into()
+                } else {
+                    op_text(&bin.op)
+                };
+                Lbl::Other(tag, vec![left, right])
+            }
         }
     };
     if label.prim().is_some() {
@@ -969,6 +1029,7 @@ fn value_sites(label: &Lbl, sites: &mut Vec<Site>) {
             port: value.port.clone(),
             ctx: Ctx::Value,
         }),
+        Lbl::Not(inner) => value_sites(inner, sites),
         Lbl::Op(_, left, right, _) => {
             value_sites(left, sites);
             value_sites(right, sites);
@@ -1069,7 +1130,7 @@ fn label_reference(
     (Lbl::Other(kind.into(), vec![inner]), sites)
 }
 
-/// The label of a unary expression, its operand labeled.
+/// A unary label with proven boolean negation pushed inward.
 fn label_unary(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
@@ -1078,10 +1139,203 @@ fn label_unary(
     locals: &mut usize,
 ) -> (Lbl, Vec<Site>) {
     let (inner, sites) = label_expr(renamer, env, &unary.expr, consumer, locals);
-    (Lbl::Other("u".into(), vec![inner]), sites)
+    let label = if matches!(unary.op, syn::UnOp::Not(_))
+        && unary.attrs.is_empty()
+        && inner.prim() == Some(PrimTy::Bool)
+    {
+        not_label(inner)
+    } else {
+        Lbl::Other("u".into(), vec![inner])
+    };
+    (label, sites)
 }
 
-/// The label of an `if` expression, the else branch present when one is.
+/// The single unattributed, bounded value tail of a clean block.
+pub(crate) fn scalar_tail(block: &syn::Block) -> Option<&syn::Expr> {
+    let [syn::Stmt::Expr(tail, None)] = block.stmts.as_slice() else {
+        return None;
+    };
+    if !crate::drift::expr_attrs(tail).is_empty() || !crate::algebra::within_bounds(tail) {
+        return None;
+    }
+    Some(tail)
+}
+
+/// Select independently typed literal-condition tails or opposite boolean literals.
+pub(crate) fn branch_value(cond: &Lbl, then: &Lbl, otherwise: &Lbl) -> Option<Lbl> {
+    if let Lbl::Bool(selected) = cond {
+        return (then.prim() == otherwise.prim() && then.prim().is_some()).then(|| {
+            if *selected {
+                then.clone()
+            } else {
+                otherwise.clone()
+            }
+        });
+    }
+    match (then, otherwise) {
+        (Lbl::Bool(true), Lbl::Bool(false)) if cond.prim() == Some(PrimTy::Bool) => {
+            Some(cond.clone())
+        }
+        (Lbl::Bool(false), Lbl::Bool(true)) if cond.prim() == Some(PrimTy::Bool) => {
+            Some(not_label(cond.clone()))
+        }
+        _ => None,
+    }
+}
+
+/// Strip unattributed wrappers and leading negations, retaining their parity.
+pub(crate) fn condition_polarity(expr: &syn::Expr) -> (&syn::Expr, bool) {
+    let mut current = expr;
+    let mut negated = false;
+    loop {
+        let next = match current {
+            syn::Expr::Unary(unary)
+                if matches!(unary.op, syn::UnOp::Not(_))
+                    && crate::drift::expr_attrs(current).is_empty() =>
+            {
+                negated = !negated;
+                &unary.expr
+            }
+            syn::Expr::Group(group) if crate::drift::expr_attrs(current).is_empty() => &group.expr,
+            _ => return (current, negated),
+        };
+        current = next;
+    }
+}
+
+struct BranchScan {
+    attributed: bool,
+    depth: usize,
+    expr_depth: usize,
+    nodes: usize,
+    valid: bool,
+}
+
+impl<'ast> Visit<'ast> for BranchScan {
+    fn visit_attribute(&mut self, _: &'ast syn::Attribute) {
+        self.attributed = true;
+    }
+
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let expr_depth = core::mem::replace(&mut self.expr_depth, 0);
+        self.depth += 1;
+        if !self.valid || self.depth > MAX_BLOCK_DEPTH {
+            self.valid = false;
+        } else {
+            syn::visit::visit_block(self, block);
+        }
+        self.depth -= 1;
+        self.expr_depth = expr_depth;
+    }
+
+    fn visit_stmt(&mut self, stmt: &'ast syn::Stmt) {
+        self.nodes += 1;
+        if !self.valid || self.nodes > MAX_REGION_NODES {
+            self.valid = false;
+            return;
+        }
+        syn::visit::visit_stmt(self, stmt);
+    }
+
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        self.nodes += 1;
+        self.expr_depth += 1;
+        if !self.valid || self.nodes > MAX_REGION_NODES || self.expr_depth > MAX_BLOCK_DEPTH {
+            self.valid = false;
+        } else {
+            syn::visit::visit_expr(self, expr);
+        }
+        self.expr_depth -= 1;
+    }
+
+    fn visit_item(&mut self, item: &'ast syn::Item) {
+        self.nodes += 1;
+        if !self.valid || self.nodes > MAX_REGION_NODES {
+            self.valid = false;
+            return;
+        }
+        syn::visit::visit_item(self, item);
+    }
+}
+
+/// Whether both ordinary branches are unattributed and within the shared bounds.
+pub(crate) fn branches_unattributed(
+    attrs: &[syn::Attribute],
+    then: &syn::Block,
+    otherwise: &syn::ExprBlock,
+) -> bool {
+    if !attrs.is_empty() {
+        return false;
+    }
+    let mut scan = BranchScan {
+        attributed: false,
+        depth: 0,
+        expr_depth: 0,
+        nodes: 0,
+        valid: true,
+    };
+    scan.visit_block(then);
+    scan.visit_expr_block(otherwise);
+    scan.valid && !scan.attributed
+}
+
+/// Orient an unattributed conditional by its leading negation parity.
+fn branch_orientation(r#if: &syn::ExprIf) -> Option<(&syn::Expr, &syn::Block, &syn::Block)> {
+    let (positive, negated) = condition_polarity(&r#if.cond);
+    if !negated || !crate::drift::expr_attrs(positive).is_empty() {
+        return None;
+    }
+    let (_, otherwise) = r#if.else_branch.as_ref()?;
+    let syn::Expr::Block(otherwise) = otherwise.as_ref() else {
+        return None;
+    };
+    if !branches_unattributed(&r#if.attrs, &r#if.then_branch, otherwise) {
+        return None;
+    }
+    Some((positive, &otherwise.block, &r#if.then_branch))
+}
+
+/// Prove the positive condition before orienting whole branches.
+fn oriented_if<'r>(
+    renamer: &Renamer,
+    env: &BTreeMap<String, Value>,
+    r#if: &'r syn::ExprIf,
+    consumer: usize,
+    locals: &mut usize,
+) -> Option<(Lbl, Vec<Site>, &'r syn::Block, &'r syn::Block)> {
+    let (positive, then, otherwise) = branch_orientation(r#if)?;
+    let saved = *locals;
+    let (cond, cond_sites) = label_expr(renamer, env, positive, consumer, locals);
+    if cond.prim() != Some(PrimTy::Bool) {
+        *locals = saved;
+        return None;
+    }
+    Some((cond, cond_sites, then, otherwise))
+}
+
+/// Fold scalar branches only after proving their types independently.
+fn boolean_branch_fold(
+    renamer: &Renamer,
+    env: &BTreeMap<String, Value>,
+    consumer: usize,
+    locals: &mut usize,
+    cond: &Lbl,
+    then: &syn::Block,
+    otherwise: &syn::Block,
+) -> Option<Lbl> {
+    let then_tail = scalar_tail(then)?;
+    let otherwise_tail = scalar_tail(otherwise)?;
+    let saved = *locals;
+    let (then_label, _) = label_expr(renamer, env, then_tail, consumer, locals);
+    let (otherwise_label, _) = label_expr(renamer, env, otherwise_tail, consumer, locals);
+    let Some(value) = branch_value(cond, &then_label, &otherwise_label) else {
+        *locals = saved;
+        return None;
+    };
+    Some(value)
+}
+
+/// Label proven branch folds before allocating branch-local ports.
 fn label_if_expr(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
@@ -1089,9 +1343,57 @@ fn label_if_expr(
     consumer: usize,
     locals: &mut usize,
 ) -> (Lbl, Vec<Site>) {
+    if let Some((cond, cond_sites, then, otherwise)) =
+        oriented_if(renamer, env, r#if, consumer, locals)
+    {
+        if let Some(value) =
+            boolean_branch_fold(renamer, env, consumer, locals, &cond, then, otherwise)
+        {
+            let mut sites = Vec::new();
+            value_sites(&value, &mut sites);
+            return (value, sites);
+        }
+        let (then_label, then_sites) = label_block(renamer, env, then, consumer, locals);
+        let (otherwise_label, otherwise_sites) =
+            label_block(renamer, env, otherwise, consumer, locals);
+        let mut sites = cond_sites;
+        sites.extend(then_sites);
+        sites.extend(otherwise_sites);
+        return (
+            Lbl::Other("if".into(), vec![cond, then_label, otherwise_label]),
+            sites,
+        );
+    }
     let (cond, mut sites) = label_cond(renamer, env, &r#if.cond, consumer, locals);
-    let (then, then_sites) = label_block(renamer, env, &r#if.then_branch, consumer, locals);
-    let mut children = vec![cond, then];
+    let saved = *locals;
+    let otherwise = r#if
+        .else_branch
+        .as_ref()
+        .and_then(|(_, else_expr)| match else_expr.as_ref() {
+            syn::Expr::Block(block) => Some(block),
+            _ => None,
+        });
+    if cond.prim() == Some(PrimTy::Bool)
+        && crate::drift::expr_attrs(&r#if.cond).is_empty()
+        && let Some(otherwise) = otherwise
+        && let Some(value) = boolean_branch_fold(
+            renamer,
+            env,
+            consumer,
+            locals,
+            &cond,
+            &r#if.then_branch,
+            &otherwise.block,
+        )
+        && branches_unattributed(&r#if.attrs, &r#if.then_branch, otherwise)
+    {
+        let mut sites = Vec::new();
+        value_sites(&value, &mut sites);
+        return (value, sites);
+    }
+    *locals = saved;
+    let (then_label, then_sites) = label_block(renamer, env, &r#if.then_branch, consumer, locals);
+    let mut children = vec![cond, then_label];
     sites.extend(then_sites);
     if let Some((_, else_expr)) = &r#if.else_branch {
         let (else_label, else_sites) = label_expr(renamer, env, else_expr, consumer, locals);
@@ -1556,12 +1858,6 @@ fn label_cond(
     locals: &mut usize,
 ) -> (Lbl, Vec<Site>) {
     match cond {
-        syn::Expr::Binary(binary) if matches!(binary.op, syn::BinOp::And(_)) => {
-            let (left, mut sites) = label_cond(renamer, env, &binary.left, consumer, locals);
-            let (right, r_sites) = label_cond(renamer, env, &binary.right, consumer, locals);
-            sites.extend(r_sites);
-            (Lbl::Other("&&".into(), vec![left, right]), sites)
-        }
         syn::Expr::Let(let_expr) => {
             let (value, sites) = label_expr(renamer, env, &let_expr.expr, consumer, locals);
             (Lbl::Other("lc".into(), vec![value]), sites)
@@ -1646,6 +1942,7 @@ fn color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
                 lbl.clone()
             }
         }
+        Lbl::Not(inner) => Lbl::Not(Box::new(color_substitute(inner, colors))),
         Lbl::Op(op, left, right, prim) => Lbl::Op(
             *op,
             Box::new(color_substitute(left, colors)),
@@ -1699,6 +1996,7 @@ fn assign_palette(sigs: &[Sig]) -> Vec<Color> {
 fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
     match lbl {
         Lbl::Future(index, prim) => Lbl::Future(ranks[*index], *prim),
+        Lbl::Not(inner) => Lbl::Not(Box::new(future_rank_substitute(inner, ranks))),
         Lbl::Op(op, left, right, prim) => Lbl::Op(
             *op,
             Box::new(future_rank_substitute(left, ranks)),
@@ -1729,6 +2027,7 @@ fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
 fn future_color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
     match lbl {
         Lbl::Future(index, _) => color_node(colors[*index]),
+        Lbl::Not(inner) => Lbl::Not(Box::new(future_color_substitute(inner, colors))),
         Lbl::Op(op, left, right, prim) => Lbl::Op(
             *op,
             Box::new(future_color_substitute(left, colors)),
@@ -1757,6 +2056,7 @@ fn future_color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
 fn future_refs(lbl: &Lbl, visit: &mut impl FnMut(usize)) {
     match lbl {
         Lbl::Future(index, _) => visit(*index),
+        Lbl::Not(inner) => future_refs(inner, visit),
         Lbl::Op(_, left, right, _) => {
             future_refs(left, visit);
             future_refs(right, visit);
@@ -1851,6 +2151,14 @@ fn future_context_walk(node: &Lbl, owner: &Lbl, path: &mut Vec<Lbl>, contexts: &
                 vec![owner.clone(), Lbl::Other("path".into(), path.clone())],
             ));
         }
+        Lbl::Not(inner) => {
+            path.push(Lbl::Other(
+                "not".into(),
+                vec![Lbl::Int(0, Some(PrimTy::Bool))],
+            ));
+            future_context_walk(inner, owner, path, contexts);
+            path.pop();
+        }
         Lbl::Op(op, left, right, prim) => {
             for (position, child) in [left, right].into_iter().enumerate() {
                 path.push(Lbl::Other(
@@ -1895,6 +2203,7 @@ fn future_summary(lbl: &Lbl) -> Lbl {
             definitions.sort();
             Lbl::Graph(Box::new(future_rank_substitute(root, &ranks)), definitions)
         }
+        Lbl::Not(inner) => Lbl::Not(Box::new(future_summary(inner))),
         Lbl::Op(op, left, right, prim) => Lbl::Op(
             *op,
             Box::new(future_summary(left)),
@@ -2134,6 +2443,7 @@ impl RegionProjection<'_> {
                 Port::Node(id) => return self.reference(value, id),
                 _ => Lbl::Ref(value.clone()),
             },
+            Lbl::Not(inner) => Lbl::Not(Box::new(self.label(inner)?)),
             Lbl::Op(op, left, right, prim) => Lbl::Op(
                 *op,
                 Box::new(self.label(left)?),
@@ -2330,6 +2640,7 @@ fn label_affected(lbl: &Lbl, affected: &[bool]) -> bool {
             port: Port::Node(index),
             ..
         }) => affected[*index],
+        Lbl::Not(inner) => label_affected(inner, affected),
         Lbl::Op(_, left, right, _) => {
             label_affected(left, affected) || label_affected(right, affected)
         }
@@ -2495,6 +2806,7 @@ struct BlockScan {
     unreachable: bool,
     tail_pending: bool,
     open: Option<usize>,
+    over_budget: bool,
 }
 
 impl BlockScan {
@@ -2510,6 +2822,7 @@ impl BlockScan {
             unreachable: false,
             tail_pending: false,
             open: None,
+            over_budget: false,
         }
     }
 
@@ -2525,6 +2838,14 @@ impl BlockScan {
         );
     }
 
+    /// A completed statement label past the node budget keeps the block
+    /// opaque.
+    fn budget(&mut self, label: &Lbl) {
+        if label_nodes(label) > MAX_REGION_NODES {
+            self.over_budget = true;
+        }
+    }
+
     fn statement(&mut self, renamer: &Renamer, index: usize, stmt: &syn::Stmt, last: bool) {
         if last
             && let syn::Stmt::Expr(expr, None) = stmt
@@ -2535,6 +2856,7 @@ impl BlockScan {
         }
         if self.unreachable {
             let (label, sites) = statement_label(renamer, &self.env, stmt, index, &mut self.locals);
+            self.budget(&label);
             self.note(&sites, USE_UNREACHABLE, index, &label);
             return;
         }
@@ -2550,10 +2872,12 @@ impl BlockScan {
             let_producer(renamer, &self.env, local, index, &mut self.locals)
             && init.prim().is_some()
         {
+            self.budget(&init);
             self.producer(index, name, init, &sites);
             return;
         }
         let (label, sites) = statement_label(renamer, &self.env, stmt, index, &mut self.locals);
+        self.budget(&label);
         self.note(&sites, USE_OPAQUE, index, &label);
         if let Some(name) = local_binding_name(local) {
             self.invalidate(name);
@@ -2628,6 +2952,7 @@ impl BlockScan {
     fn other(&mut self, renamer: &Renamer, index: usize, stmt: &syn::Stmt) {
         let kind = stmt_kind(renamer, stmt);
         let (label, sites) = statement_label(renamer, &self.env, stmt, index, &mut self.locals);
+        self.budget(&label);
         match kind {
             StmtKind::Barrier => {
                 self.tags[index] = OBSERVATION;
@@ -2708,6 +3033,7 @@ impl BlockScan {
             if self.unreachable { UNREACHABLE } else { TAIL };
         if self.unreachable {
             let (label, sites) = label_expr(renamer, &self.env, expr, 0, &mut self.locals);
+            self.budget(&label);
             self.note(&sites, USE_UNREACHABLE, 0, &label);
             return;
         }
@@ -2722,6 +3048,7 @@ impl BlockScan {
 
     fn tail_element(&mut self, renamer: &Renamer, expr: &syn::Expr, position: usize) {
         let (label, sites) = label_expr(renamer, &self.env, expr, position, &mut self.locals);
+        self.budget(&label);
         self.note(&sites, USE_TAIL, position, &label);
         self.tail_types.push(label.prim());
     }
@@ -2821,6 +3148,13 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
         scan.statement(renamer, index, stmt, index + 1 == block.stmts.len());
     }
     scan.finish_tail(renamer, block);
+    if scan.over_budget {
+        record_all_opaque(renamer, block);
+        let scope = renamer.scopes.last_mut().expect("a fn scope");
+        scope.seq = seq;
+        scope.next_local = scan.locals;
+        return;
+    }
     let region_seq: Vec<usize> = (0..scan.regions.len())
         .map(|_| {
             let current = seq;
