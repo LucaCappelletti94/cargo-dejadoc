@@ -1,9 +1,0 @@
-extern "C" {
-    // `
- fn main() { let a = 1; }
-    
- fn main() { let a = 1; }
-    //in    
- fn main() { let a = 1; }
-    //include!("../e T;2
-}

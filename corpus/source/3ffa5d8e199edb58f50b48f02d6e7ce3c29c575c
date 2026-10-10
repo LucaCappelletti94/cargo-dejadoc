@@ -1,3 +1,0 @@
-trait T {
-    const C: for i3   Out;
-}

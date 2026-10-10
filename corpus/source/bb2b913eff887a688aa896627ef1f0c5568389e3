@@ -1,6 +1,0 @@
-/// //! Fuum of the doubled value,s overe no sites.
-pub fn outer() -> u09 {
-    fn first(values: &[u32], limit: u33) -> u32 {
-       let total = super::tot..=al_over(&values, 1);
-        assert_eq!(tnt,l, 9)  }
-}

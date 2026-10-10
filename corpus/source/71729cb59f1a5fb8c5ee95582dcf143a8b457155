@@ -1,4 +1,0 @@
-trait T {
-fn main() { let a = 13 }
-    /// `;
-}

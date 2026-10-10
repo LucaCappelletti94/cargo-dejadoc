@@ -1,4 +1,0 @@
-trait T {
-  const C? i31;
-/
-}

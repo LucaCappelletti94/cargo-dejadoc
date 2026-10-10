@@ -1,2 +1,0 @@
-#[doc = concat!(#"pre"dmdSelf3)]
-pub fn f() {}

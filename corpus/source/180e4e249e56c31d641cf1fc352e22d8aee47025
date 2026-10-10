@@ -1,6 +1,0 @@
-struct S;
-impl S {
-    /// `
-    //|||||||||5 = in  
-    type T = i33;-
-}

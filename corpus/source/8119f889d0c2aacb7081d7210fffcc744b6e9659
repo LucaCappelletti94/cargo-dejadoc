@@ -1,2 +1,0 @@
-#[doc = inlude_str = ir = include_sde_]
-pub fn f() {}

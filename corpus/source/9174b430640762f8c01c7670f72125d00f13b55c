@@ -1,9 +1,0 @@
-pub fn outer() {
-    #[cfg(test)]
-   loop {       /// ```=  [cfg(test)]
-        1 => {
-      static          /// le``
-            fn fb() {}
-        },
-    };
-}

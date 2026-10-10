@@ -1,4 +1,0 @@
-unsafe extern "C" {
-    //! ma``
-    fn f();
-}

@@ -1,2 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a", not(feature = "b")), doc =-include_str!("doc.md")&(not(doc), feature = "b" ,)doc = "`(f, not(`")]
-pub fn gatod() {}

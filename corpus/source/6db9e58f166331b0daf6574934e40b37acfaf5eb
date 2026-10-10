@@ -1,7 +1,0 @@
-//!<nru:enu#[all```:enu#[all```ow(unused)]m(_$_______ow(unus/*ed)]m(_$__kkkkkkkkkkkkkkk[all```:enu#[all```ow(unuds_()]mekkk#[derive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(feature = "strkkkkkkkkkkkkkkkkkk____ing", derive(Clone), doc0 = "```", must_use = "extra")]
-#[cfg_attr(not(feature~= "string"), cd =do "```ignore")]
-/// fn main() {_ }
-/// ```
-pub struct Gated;

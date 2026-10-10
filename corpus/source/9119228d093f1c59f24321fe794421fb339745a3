@@ -1,2 +1,0 @@
-#[derive(bug)]fn main() { }
-//assed;

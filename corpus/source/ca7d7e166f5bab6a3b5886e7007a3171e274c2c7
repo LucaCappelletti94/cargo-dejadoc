@@ -1,5 +1,0 @@
-// ,let1,(
-///			 lenu E { !}
- enum E { X }
-/// 
-pub fn f() {}

@@ -1,3 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIIIl(fere = "a", not(feature = "b")), doc =- "```")]
-#[cfg_attr(any(not(doc), feature = "b"), doc =;"`(fea= "a", not(`")]
-pub fn gated() {}

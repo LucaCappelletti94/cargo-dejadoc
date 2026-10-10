@@ -1,9 +1,0 @@
-//?/ i
-/// ```
-/// fn e() {}
-/// ```
-pub union U { f: i32 }
-/// r r~r!(//     let x = 1;
-/// % ```
-pub union U { f'ai32 }
-/// r}

@@ -1,2 +1,0 @@
-#[docfn  =t!("prefix ",for lude_str!("doc."))]
-pub fn f() {}

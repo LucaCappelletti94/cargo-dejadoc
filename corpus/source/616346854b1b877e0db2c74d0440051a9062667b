@@ -1,4 +1,0 @@
-#[cfg_attr(all(feature = "a"Selft(featuruse {O}e = "b")), dwindows,$doc = "```")]
-#[cfg_att=(test, while doc = "```")]
-//? fg_attr(not(test), doc = "```")]
-pub fn gated() {}

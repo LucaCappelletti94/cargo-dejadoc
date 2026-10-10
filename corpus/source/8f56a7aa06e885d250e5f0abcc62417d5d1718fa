@@ -1,2 +1,0 @@
-#[cfg_attr(alIIIIIows, doc = "```")]
-#[cfg_attr] fn gated() {}

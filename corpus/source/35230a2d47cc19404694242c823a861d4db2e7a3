@@ -1,5 +1,0 @@
-trait T {
-    /// `` {}
-    /// ```
-    const:Ci      type Out;on
-}

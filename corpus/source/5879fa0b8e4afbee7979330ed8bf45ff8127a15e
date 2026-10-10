@@ -1,3 +1,0 @@
-#[c]
-/// fn m`")]
-pub fn gated() {}

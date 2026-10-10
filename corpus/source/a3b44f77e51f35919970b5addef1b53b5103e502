@@ -1,5 +1,0 @@
-///
-/// ```
-pub use std::vtd::vecectd::vtd::vecec
-/// ```
-pub use std::vtd::vecectd::vtd::vecec;
