@@ -1,4 +1,4 @@
-//! Exhaustive small ordered-graph comparison through the public API.
+//! Exhaustive small graph comparison through the public API.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -60,31 +60,58 @@ fn number(order: &[usize], node: usize) -> usize {
         .unwrap()
 }
 
-fn oracle(nodes: &[Producer], roots: [usize; 2], orders: &[Vec<usize>]) -> String {
-    orders
+fn elements(producer: &Producer) -> (char, Vec<(u8, usize)>) {
+    match producer {
+        Producer::Argument(port) => ('&', vec![(0, 15), (1, *port)]),
+        Producer::Previous(input) => ('^', vec![(0, 1), (2, *input)]),
+        Producer::Pair(left, right) => {
+            let mut elems = vec![(2, *left), (2, *right)];
+            elems.sort_unstable();
+            ('^', elems)
+        }
+    }
+}
+
+fn element_text(elem: &(u8, usize)) -> String {
+    match elem.0 {
+        0 => format!("l{}", elem.1),
+        1 => format!("p{}", elem.1),
+        _ => format!("n{}", elem.1),
+    }
+}
+
+fn oracle(nodes: &[Producer], roots: [usize; 2]) -> String {
+    permutations(nodes.len())
         .iter()
-        .map(|order| {
-            let rows: Vec<_> = order
-                .iter()
-                .map(|&node| match nodes[node] {
-                    Producer::Argument(port) => format!("and:u32:arg{port}:15u32"),
-                    Producer::Previous(input) => {
-                        format!("xor:u32:node{}:1u32", number(order, input))
+        .map(|perm| {
+            let pos = |node: usize| {
+                perm.iter()
+                    .position(|&candidate| candidate == node)
+                    .unwrap()
+            };
+            let mut text = String::new();
+            for (slot, &node) in perm.iter().enumerate() {
+                let mark = if slot == pos(roots[0]) && slot == pos(roots[1]) {
+                    "12"
+                } else if slot == pos(roots[0]) {
+                    "1"
+                } else if slot == pos(roots[1]) {
+                    "2"
+                } else {
+                    ""
+                };
+                let (op, mut elems) = elements(&nodes[node]);
+                for elem in &mut elems {
+                    if elem.0 == 2 {
+                        elem.1 = pos(elem.1);
                     }
-                    Producer::Pair(left, right) => {
-                        format!(
-                            "xor:u32:node{}:node{}",
-                            number(order, left),
-                            number(order, right)
-                        )
-                    }
-                })
-                .collect();
-            format!(
-                "{rows:?}:{}:{}",
-                number(order, roots[0]),
-                number(order, roots[1])
-            )
+                }
+                elems.sort_unstable();
+                let body: Vec<_> = elems.iter().map(element_text).collect();
+                write!(text, "{mark}{op}{};", body.join(",")).unwrap();
+            }
+            write!(text, "t{},{}", pos(roots[0]), pos(roots[1])).unwrap();
+            text
         })
         .min()
         .unwrap()
@@ -125,7 +152,7 @@ fn all_small_legal_schedules_and_renamings_match_the_independent_graph_oracle() 
             for first in 0..n {
                 for second in 0..n {
                     let roots = [first, second];
-                    let graph = oracle(&nodes, roots, &orders);
+                    let graph = oracle(&nodes, roots);
                     for order in &orders {
                         if order.iter().any(|&node| match nodes[node] {
                             Producer::Previous(input) => {

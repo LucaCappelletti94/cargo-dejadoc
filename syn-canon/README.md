@@ -28,7 +28,7 @@ Indexed imports bind only their declared namespaces. Ambiguous unindexed imports
 
 Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit integer types through resolved type aliases. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
 
-Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving lexical value identities and distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 block levels or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
+Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving lexical value identities and distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 expression or block levels, or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
 
 Passing-mode comparison evaluates closed fixed-width integer literal operations before dependency scheduling, checking every intermediate result and retaining the result's type. Compatible suffixes or a resolved immediate declaration establish the type, with signed minima and Rust's truncating left shifts preserved. Overflow, zero divisors, signed minimum division or remainder by `-1`, unresolved inference, pointer-sized arithmetic and syntax-observed regions retain their operations.
 
@@ -41,6 +41,24 @@ assert_eq!(
 assert_ne!(
     form("fn f() -> u8 { (255u8 + 1u8) - 1u8 }"),
     form("fn f() -> u8 { 255u8 }"),
+);
+```
+
+Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, declarations retain their distinct origins, and `==` and `!=` keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+assert_eq!(
+    form("fn f(a: u32, b: u32) -> u32 { (a ^ 1u32) ^ b }"),
+    form("fn g(x: u32, y: u32) -> u32 { y ^ (1u32 ^ x) }"),
+);
+assert_eq!(
+    form("fn f(a: bool) -> bool { a | a }"),
+    form("fn g(x: bool) -> bool { x }"),
+);
+assert_eq!(
+    form("fn f(a: u32, b: u32) -> bool { a >= b }"),
+    form("fn g(x: u32, y: u32) -> bool { y <= x }"),
 );
 ```
 

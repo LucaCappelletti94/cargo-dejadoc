@@ -47,6 +47,18 @@ jobs:
         with:
           name: dependency-constants-witnesses
           path: ${{ runner.temp }}/dependency-constants-witnesses.json
+      - name: Verify primitive algebra witnesses
+        id: dependency_algebra_witnesses
+        run: |
+          python3 -B tests/dependency_constants_witnesses.py --cases tests/fixtures/dependency/algebra_cases.json --request-id "DG-CI-M3-${{ github.run_id }}-${{ github.run_attempt }}" --output "${{ runner.temp }}/dependency-algebra-witnesses.json" --timeout 600
+          python3 -B tests/dependency_constants_witnesses.py --cases tests/fixtures/dependency/algebra_signed_cases.json --request-id "DG-CI-M3-SIGNED-${{ github.run_id }}-${{ github.run_attempt }}" --output "${{ runner.temp }}/dependency-algebra-signed-witnesses.json" --timeout 600
+      - uses: actions/upload-artifact@v4
+        if: always() && steps.dependency_algebra_witnesses.outcome != 'skipped'
+        with:
+          name: dependency-algebra-witnesses
+          path: |
+            ${{ runner.temp }}/dependency-algebra-witnesses.json
+            ${{ runner.temp }}/dependency-algebra-signed-witnesses.json
       - run: cargo clippy --workspace --lib --no-default-features -- -D warnings
       - run: cargo test --workspace --lib --no-default-features
       - run: cargo clippy -p dejadoc --all-targets --no-default-features --features std -- -D warnings

@@ -5,6 +5,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+mod algebra;
 mod alpha;
 mod blocks;
 mod const_items;

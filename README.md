@@ -34,6 +34,8 @@ Function comparisons use original module files, import associations and enclosin
 
 Passing doctests and functions compare checked fixed-width literal arithmetic by its typed result before dependency scheduling. Overflowing intermediates, unresolved inference, pointer-sized arithmetic and syntax observers retain their expressions, and `compile_fail` comparisons apply no arithmetic evaluation.
 
+Passing comparisons normalize proven primitive bitwise commutation, association and `&`/`|` idempotence, with `>` and `>=` oriented by reversing their operands. Stable typed values are required, storage observations and unresolved inference restrict normalization, and `compile_fail` inputs retain their expressions.
+
 ### Contexts
 
 Whole function bodies, explicit blocks, complete match arms and closures are normalized independently using [`syn-canon`](https://docs.rs/syn-canon). Arm patterns and guards and closure inputs contribute to the canonical size.

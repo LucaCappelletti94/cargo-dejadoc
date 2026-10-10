@@ -101,7 +101,7 @@ pub fn check_functions(report: &dejadoc::Report) {
     assert_eq!(report.functions % 2, 0);
 }
 
-/// Checked literal folds and legal schedules group apart from a changed operand.
+/// Checked literal folds and legal algebra and schedules group apart from changed neighbors.
 pub fn check_dependency_schedules(data: &[u8]) {
     let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
     let mask = byte(0);
@@ -115,26 +115,107 @@ pub fn check_dependency_schedules(data: &[u8]) {
     let statements = [
         format!("let {first} = input & ({mask}u32 + {bias}u32);"),
         format!("let {second} = input >> ({shift}u32 + 0u32);"),
-        format!("let left = {first} ^ {bias}u32;"),
+        format!("let left = ({first} ^ {bias}u32) ^ 7u32;"),
         format!("let right = {second} | 1u32;"),
+        format!("let flag = {first} > 3u32;"),
     ];
-    let source = |order: [usize; 4], folded: bool| {
-        let folded_first = folded.then(|| format!("let {first} = input & {}u32;", mask + bias));
-        let folded_second = folded.then(|| format!("let {second} = input >> {shift}u32;"));
-        let statements = [
-            folded_first.as_ref().unwrap_or(&statements[0]),
-            folded_second.as_ref().unwrap_or(&statements[1]),
-            &statements[2],
+    let fn_code = |p0: &str, p1: &str, p2: &str, p3: &str, p4: &str, output: &str| {
+        format!("fn f(input:u32)->(u32,u32,bool){{ {p0} {p1} {p2} {p3} {p4} {output} }}")
+    };
+    let original = fn_code(
+        &statements[0],
+        &statements[1],
+        &statements[2],
+        &statements[3],
+        &statements[4],
+        "(left,right,flag)",
+    );
+    let scheduled = {
+        let s0 = format!("let {second} = input >> {shift}u32;");
+        let s1 = format!("let {first} = input & {}u32;", mask + bias);
+        fn_code(
+            &s0,
+            &s1,
+            &statements[4],
             &statements[3],
-        ];
-        format!(
-            "fn f(input:u32)->(u32,u32){{ {} {} {} {} (left,right) }}",
-            statements[order[0]], statements[order[1]], statements[order[2]], statements[order[3]],
+            &statements[2],
+            "(left,right,flag)",
         )
     };
-    let original = source([0, 1, 2, 3], false);
-    let scheduled = source([1, 3, 0, 2], true);
-    let changed = original.replace(&format!("^ {bias}u32"), &format!("^ {}u32", bias + 1));
+    let commute = {
+        let s2 = format!("let left = 7u32 ^ ({first} ^ {bias}u32);");
+        fn_code(
+            &statements[0],
+            &statements[1],
+            &s2,
+            &statements[3],
+            &statements[4],
+            "(left,right,flag)",
+        )
+    };
+    let associate = {
+        let s2 = format!("let left = {first} ^ ({bias}u32 ^ 7u32);");
+        fn_code(
+            &statements[0],
+            &statements[1],
+            &s2,
+            &statements[3],
+            &statements[4],
+            "(left,right,flag)",
+        )
+    };
+    let idempotent = {
+        let s3 = format!("let right = ({second} | 1u32) | ({second} | 1u32);");
+        fn_code(
+            &statements[0],
+            &statements[1],
+            &statements[2],
+            &s3,
+            &statements[4],
+            "(left,right,flag)",
+        )
+    };
+    let compare = {
+        let s4 = format!("let flag = 3u32 < {first};");
+        fn_code(
+            &statements[0],
+            &statements[1],
+            &statements[2],
+            &statements[3],
+            &s4,
+            "(left,right,flag)",
+        )
+    };
+    let changed = {
+        let s2 = format!("let left = ({first} ^ {}u32) ^ 7u32;", bias + 1);
+        fn_code(
+            &statements[0],
+            &statements[1],
+            &s2,
+            &statements[3],
+            &statements[4],
+            "(left,right,flag)",
+        )
+    };
+    let operator = {
+        let s2 = format!("let left = ({first} | {bias}u32) ^ 7u32;");
+        fn_code(
+            &statements[0],
+            &statements[1],
+            &s2,
+            &statements[3],
+            &statements[4],
+            "(left,right,flag)",
+        )
+    };
+    let port = fn_code(
+        &statements[0],
+        &statements[1],
+        &statements[2],
+        &statements[3],
+        &statements[4],
+        "(right,left,flag)",
+    );
     let site = |item: &str, code: String| DocTest {
         file: format!("src/{item}.rs"),
         line: 1,
@@ -150,7 +231,13 @@ pub fn check_dependency_schedules(data: &[u8]) {
         &[
             site("original", original),
             site("scheduled", scheduled),
+            site("commute", commute),
+            site("associate", associate),
+            site("idempotent", idempotent),
+            site("compare", compare),
             site("changed", changed),
+            site("operator", operator),
+            site("port", port),
         ],
         2,
         0,
@@ -164,5 +251,15 @@ pub fn check_dependency_schedules(data: &[u8]) {
             members
         })
         .collect();
-    assert_eq!(groups, [vec!["c::original", "c::scheduled"]]);
+    assert_eq!(
+        groups,
+        [vec![
+            "c::associate",
+            "c::commute",
+            "c::compare",
+            "c::idempotent",
+            "c::original",
+            "c::scheduled",
+        ]]
+    );
 }
