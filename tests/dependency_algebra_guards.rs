@@ -284,3 +284,43 @@ fn scheduled_scale_forms_are_deterministic() {
     assert_eq!(first.leaf_tokens(), second.leaf_tokens());
     assert_eq!(first.body_units(), second.body_units());
 }
+
+#[test]
+fn attributed_operands_keep_the_enclosing_chain_opaque() {
+    // The function fragments require nightly `stmt_expr_attributes`.
+    separate(
+        "fn f(a: u32, b: u32) -> u32 { (a | #[cfg(all())] b) | a }",
+        "fn g(x: u32, y: u32) -> u32 { x | #[cfg(all())] y }",
+    );
+    same(
+        "fn f(a: u32, b: u32) -> u32 { (a | b) | a }",
+        "fn g(x: u32, y: u32) -> u32 { x | y }",
+    );
+}
+
+#[test]
+fn inline_comparisons_keep_their_roles_in_bitwise_chains() {
+    for op in ["&", "|", "^"] {
+        let left = format!(
+            "fn f(a: u32, b: u32, c: u32) -> bool {{ ((a < b) {op} (b < c)) {op} (a != c) }}"
+        );
+        same(
+            &left,
+            &format!(
+                "fn g(x: u32, y: u32, z: u32) -> bool {{ (x != z) {op} ((y < z) {op} (x < y)) }}"
+            ),
+        );
+        separate(
+            &left,
+            &format!(
+                "fn g(x: u32, y: u32, z: u32) -> bool {{ ((y < x) {op} (y < z)) {op} (x != z) }}"
+            ),
+        );
+        separate(
+            &left,
+            &format!(
+                "fn g(x: u32, y: u32, z: u32) -> bool {{ ((x < y) {op} (y < z)) {op} (x == z) }}"
+            ),
+        );
+    }
+}

@@ -128,6 +128,14 @@ impl Lbl {
             _ => None,
         }
     }
+
+    pub(crate) fn literal_bits(&self) -> Option<u128> {
+        match self {
+            Self::Int(bits, _) => Some(*bits),
+            Self::Bool(value) => Some(u128::from(*value)),
+            _ => None,
+        }
+    }
 }
 
 /// The context a reference site holds: a value read or a storage
@@ -430,26 +438,74 @@ fn op_text(op: &syn::BinOp) -> String {
     }
 }
 
+/// An associative bitwise operation over proven primitives.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BitwiseOp {
+    And,
+    Or,
+    Xor,
+}
+
+impl BitwiseOp {
+    pub(crate) fn from_bin_op(op: &syn::BinOp) -> Option<Self> {
+        match op {
+            syn::BinOp::BitAnd(_) => Some(Self::And),
+            syn::BinOp::BitOr(_) => Some(Self::Or),
+            syn::BinOp::BitXor(_) => Some(Self::Xor),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn tag(self) -> char {
+        match self {
+            Self::And => '&',
+            Self::Or => '|',
+            Self::Xor => '^',
+        }
+    }
+
+    pub(crate) fn fold(self, left: u128, right: u128) -> u128 {
+        match self {
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
+        }
+    }
+}
+
+/// The comparison emitted after exchanging ordered operands.
+#[derive(Clone, Copy)]
+pub(crate) enum ReversedComparison {
+    Lt,
+    Le,
+}
+
+impl ReversedComparison {
+    pub(crate) fn bin_op(self) -> syn::BinOp {
+        match self {
+            Self::Lt => syn::BinOp::Lt(syn::token::Lt::default()),
+            Self::Le => syn::BinOp::Le(syn::token::Le::default()),
+        }
+    }
+}
+
 /// The total form of a binary operation over proven scalars.
 pub(crate) enum TotalBinary {
     /// Kept in operand order, a valid shift or an oriented comparison.
-    Ordered { tag: char, swap: bool, prim: PrimTy },
+    Ordered {
+        tag: char,
+        reverse: Option<ReversedComparison>,
+        prim: PrimTy,
+    },
     /// An unordered bitwise chain of `&`, `|` or `^`.
-    Flat(char, PrimTy),
+    Flat(BitwiseOp, PrimTy),
 }
 
 pub(crate) fn total_binary(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+    if let Some(op) = BitwiseOp::from_bin_op(bin_op) {
+        return Some(TotalBinary::Flat(op, scalar_prim(left, right)?));
+    }
     match bin_op {
-        syn::BinOp::BitAnd(_) | syn::BinOp::BitOr(_) | syn::BinOp::BitXor(_) => {
-            Some(TotalBinary::Flat(
-                match bin_op {
-                    syn::BinOp::BitAnd(_) => '&',
-                    syn::BinOp::BitOr(_) => '|',
-                    _ => '^',
-                },
-                scalar_prim(left, right)?,
-            ))
-        }
         syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => {
             let prim = left.prim()?;
             let PrimTy::Int { width, .. } = prim else {
@@ -462,7 +518,7 @@ pub(crate) fn total_binary(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Opti
                             syn::BinOp::Shl(_) => '«',
                             _ => '»',
                         },
-                        swap: false,
+                        reverse: None,
                         prim,
                     })
                 }
@@ -488,28 +544,28 @@ fn scalar_prim(left: &Lbl, right: &Lbl) -> Option<PrimTy> {
 
 /// A comparison over proven scalars, oriented by kind, a bool result.
 fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
-    let (tag, swap) = match bin_op {
-        syn::BinOp::Eq(_) => ('=', false),
-        syn::BinOp::Ne(_) => ('!', false),
-        syn::BinOp::Lt(_) => ('<', false),
-        syn::BinOp::Le(_) => ('≤', false),
-        syn::BinOp::Gt(_) => ('<', true),
-        syn::BinOp::Ge(_) => ('≤', true),
+    let (tag, reverse) = match bin_op {
+        syn::BinOp::Eq(_) => ('=', None),
+        syn::BinOp::Ne(_) => ('!', None),
+        syn::BinOp::Lt(_) => ('<', None),
+        syn::BinOp::Le(_) => ('≤', None),
+        syn::BinOp::Gt(_) => ('<', Some(ReversedComparison::Lt)),
+        syn::BinOp::Ge(_) => ('≤', Some(ReversedComparison::Le)),
         _ => return None,
     };
     scalar_prim(left, right)?;
     Some(TotalBinary::Ordered {
         tag,
-        swap,
+        reverse,
         prim: PrimTy::Bool,
     })
 }
 
 /// The operands of a flat chain, flattening chains of the same operator
 /// and type.
-fn collect_leaves(op: char, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
+fn collect_leaves(op: BitwiseOp, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
     match lbl {
-        Lbl::Flat(inner_op, leaves, inner_prim) if inner_op == op && inner_prim == prim => {
+        Lbl::Flat(inner_op, leaves, inner_prim) if inner_op == op.tag() && inner_prim == prim => {
             out.extend(leaves);
         }
         other => out.push(other),
@@ -518,64 +574,47 @@ fn collect_leaves(op: char, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
 
 /// A flat chain's canonical label, sorted leaves with the literal
 /// subset folded, a lone literal standing for the whole chain.
-fn flat_label(op: char, prim: PrimTy, mut leaves: Vec<Lbl>) -> Lbl {
+fn flat_label(op: BitwiseOp, prim: PrimTy, mut leaves: Vec<Lbl>) -> Lbl {
     leaves.sort();
-    if op != '^' {
+    if op != BitwiseOp::Xor {
         leaves.dedup();
     }
     fold_literal_leaves(op, prim, &mut leaves);
     match leaves.as_slice() {
         [only] => only.clone(),
-        _ => Lbl::Flat(op, leaves, prim),
+        _ => Lbl::Flat(op.tag(), leaves, prim),
     }
 }
 
 /// The chain's literal leaves folded into one, re-sorted into place.
-fn fold_literal_leaves(op: char, prim: PrimTy, leaves: &mut Vec<Lbl>) {
-    let is_literal = |leaf: &Lbl| matches!(leaf, Lbl::Int(_, _) | Lbl::Bool(_));
+fn fold_literal_leaves(op: BitwiseOp, prim: PrimTy, leaves: &mut Vec<Lbl>) {
+    let is_literal = |leaf: &Lbl| leaf.literal_bits().is_some();
     if leaves.iter().filter(|leaf| is_literal(leaf)).count() < 2 {
         return;
     }
-    let old = core::mem::take(leaves);
-    let mut acc: Option<Lbl> = None;
-    let mut out = Vec::with_capacity(old.len());
-    for leaf in old {
-        if is_literal(&leaf) {
-            acc = Some(match acc {
-                None => match leaf {
-                    Lbl::Int(value, _) => Lbl::Int(value, Some(prim)),
-                    other => other,
-                },
-                Some(acc) => combine_literal(op, prim, acc, leaf),
-            });
-        } else {
-            out.push(leaf);
-        }
-    }
-    if let Some(acc) = acc {
-        out.push(acc);
-        out.sort();
-    }
-    *leaves = out;
+    let mut acc = None;
+    leaves.retain(|leaf| {
+        let Some(bits) = leaf.literal_bits() else {
+            return true;
+        };
+        acc = Some(match acc {
+            None => bits,
+            Some(left) => op.fold(left, bits),
+        });
+        false
+    });
+    leaves.push(literal_label(
+        prim,
+        acc.expect("at least two literal operands"),
+    ));
+    leaves.sort();
 }
 
-/// One bitwise or boolean fold over two literal leaves.
-pub(crate) fn combine_literal(op: char, prim: PrimTy, left: Lbl, right: Lbl) -> Lbl {
-    match (left, right) {
-        (Lbl::Int(l, _), Lbl::Int(r, _)) => Lbl::Int(
-            match op {
-                '&' => l & r,
-                '|' => l | r,
-                _ => l ^ r,
-            },
-            Some(prim),
-        ),
-        (Lbl::Bool(l), Lbl::Bool(r)) => Lbl::Bool(match op {
-            '&' => l & r,
-            '|' => l || r,
-            _ => l ^ r,
-        }),
-        _ => unreachable!("a chain's literal leaves carry the chain's type"),
+/// A folded literal under the chain's proven primitive type.
+pub(crate) fn literal_label(prim: PrimTy, bits: u128) -> Lbl {
+    match prim {
+        PrimTy::Int { .. } => Lbl::Int(bits, Some(prim)),
+        PrimTy::Bool => Lbl::Bool(bits != 0),
     }
 }
 
@@ -894,8 +933,12 @@ fn label_binary(
     let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals);
     sites.extend(r_sites);
     let label = match total_binary(&bin.op, &left, &right) {
-        Some(TotalBinary::Ordered { tag, swap, prim }) => {
-            let (lo, hi) = if swap { (right, left) } else { (left, right) };
+        Some(TotalBinary::Ordered { tag, reverse, prim }) => {
+            let (lo, hi) = if reverse.is_some() {
+                (right, left)
+            } else {
+                (left, right)
+            };
             Lbl::Op(tag, Box::new(lo), Box::new(hi), prim)
         }
         Some(TotalBinary::Flat(op, prim)) => {
@@ -1968,27 +2011,6 @@ fn future_normalize(lbl: &Lbl, states: &mut usize) -> Option<Lbl> {
             let mut marks = vec![0; definitions.len()];
             future_search(root, definitions, &seed, &mut marks, states, 0)
         }
-        Lbl::Op(op, left, right, prim) => Some(Lbl::Op(
-            *op,
-            Box::new(future_normalize(left, states)?),
-            Box::new(future_normalize(right, states)?),
-            *prim,
-        )),
-        Lbl::Flat(op, leaves, prim) => {
-            let mut leaves = leaves
-                .iter()
-                .map(|leaf| future_normalize(leaf, states))
-                .collect::<Option<Vec<_>>>()?;
-            leaves.sort();
-            Some(Lbl::Flat(*op, leaves, *prim))
-        }
-        Lbl::Other(kind, children) => Some(Lbl::Other(
-            kind.clone(),
-            children
-                .iter()
-                .map(|child| future_normalize(child, states))
-                .collect::<Option<Vec<_>>>()?,
-        )),
         other => Some(other.clone()),
     }
 }
@@ -2204,8 +2226,8 @@ fn complete_candidate(
     }
     let declarations = order
         .iter()
-        .map(|&slot| future_normalize(&color_substitute(&inits[slot], &positions), states))
-        .collect::<Option<Vec<_>>>()?;
+        .map(|&slot| color_substitute(&inits[slot], &positions))
+        .collect();
     let slots: BTreeMap<_, _> = nodes
         .iter()
         .copied()

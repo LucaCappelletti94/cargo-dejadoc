@@ -9,7 +9,7 @@ use syn::visit::{self, Visit};
 use syn::visit_mut::{self, VisitMut};
 
 use crate::alpha::Renamer;
-use crate::schedule::{self, BlockFacts, Lbl, Port, TotalBinary, Value};
+use crate::schedule::{self, BitwiseOp, BlockFacts, Lbl, Port, TotalBinary, Value};
 use crate::scope::PrimTy;
 
 pub(crate) fn within_bounds(expr: &syn::Expr) -> bool {
@@ -142,7 +142,7 @@ impl Walker {
                         extend(op, prim, left, *binary.left, &mut pieces);
                         extend(op, prim, right, *binary.right, &mut pieces);
                         pieces.sort_by(|a, b| a.0.cmp(&b.0));
-                        if self.dedup && op != '^' {
+                        if self.dedup && op != BitwiseOp::Xor {
                             pieces.dedup_by(|a, b| a.0 == b.0);
                         }
                         fold_literals(op, prim, &mut pieces, span);
@@ -159,16 +159,12 @@ impl Walker {
                             });
                             emit(op, &mut expressions, count, span)
                         };
-                        (expression, Some(Lbl::Flat(op, labels, prim)))
+                        (expression, Some(Lbl::Flat(op.tag(), labels, prim)))
                     }
-                    Some(TotalBinary::Ordered { tag, swap, prim }) => {
-                        let (left, right) = if swap {
+                    Some(TotalBinary::Ordered { tag, reverse, prim }) => {
+                        let (left, right) = if let Some(reverse) = reverse {
                             core::mem::swap(&mut binary.left, &mut binary.right);
-                            binary.op = match tag {
-                                '<' => syn::BinOp::Lt(syn::token::Lt::default()),
-                                '≤' => syn::BinOp::Le(syn::token::Le::default()),
-                                _ => unreachable!("only ordering comparisons reverse"),
-                            };
+                            binary.op = reverse.bin_op();
                             (right, left)
                         } else {
                             (left, right)
@@ -181,7 +177,6 @@ impl Walker {
                     None => (syn::Expr::Binary(binary), None),
                 }
             }
-            syn::Expr::Paren(paren) => self.scalar(*paren.expr),
             syn::Expr::Group(group) => self.scalar(*group.expr),
             expr @ (syn::Expr::Lit(_) | syn::Expr::Path(_) | syn::Expr::Unary(_)) => {
                 let label = schedule::scalar_leaf(&self.env, &expr);
@@ -198,11 +193,7 @@ impl VisitMut for Walker {
             return;
         }
         match expr {
-            syn::Expr::Binary(_)
-            | syn::Expr::Lit(_)
-            | syn::Expr::Path(_)
-            | syn::Expr::Paren(_)
-            | syn::Expr::Group(_) => {
+            syn::Expr::Binary(_) | syn::Expr::Lit(_) | syn::Expr::Path(_) | syn::Expr::Group(_) => {
                 let owned = core::mem::replace(expr, empty_expr());
                 *expr = self.scalar(owned).0;
             }
@@ -233,13 +224,17 @@ impl VisitMut for Walker {
             _ => visit_mut::visit_expr_mut(self, expr),
         }
     }
-
-    fn visit_block_mut(&mut self, _block: &mut syn::Block) {}
 }
 
-fn extend(op: char, prim: PrimTy, label: Lbl, expr: syn::Expr, out: &mut Vec<(Lbl, syn::Expr)>) {
+fn extend(
+    op: BitwiseOp,
+    prim: PrimTy,
+    label: Lbl,
+    expr: syn::Expr,
+    out: &mut Vec<(Lbl, syn::Expr)>,
+) {
     match label {
-        Lbl::Flat(inner_op, labels, inner_prim) if inner_op == op && inner_prim == prim => {
+        Lbl::Flat(inner_op, labels, inner_prim) if inner_op == op.tag() && inner_prim == prim => {
             let mut expressions = Vec::with_capacity(labels.len());
             decompose(op, expr, &mut expressions);
             assert_eq!(
@@ -253,18 +248,9 @@ fn extend(op: char, prim: PrimTy, label: Lbl, expr: syn::Expr, out: &mut Vec<(Lb
     }
 }
 
-fn bitwise_tag(op: &syn::BinOp) -> Option<char> {
-    match op {
-        syn::BinOp::BitAnd(_) => Some('&'),
-        syn::BinOp::BitOr(_) => Some('|'),
-        syn::BinOp::BitXor(_) => Some('^'),
-        _ => None,
-    }
-}
-
-fn decompose(op: char, expr: syn::Expr, out: &mut Vec<syn::Expr>) {
+fn decompose(op: BitwiseOp, expr: syn::Expr, out: &mut Vec<syn::Expr>) {
     match expr {
-        syn::Expr::Binary(binary) if bitwise_tag(&binary.op) == Some(op) => {
+        syn::Expr::Binary(binary) if BitwiseOp::from_bin_op(&binary.op) == Some(op) => {
             decompose(op, *binary.left, out);
             decompose(op, *binary.right, out);
         }
@@ -273,38 +259,34 @@ fn decompose(op: char, expr: syn::Expr, out: &mut Vec<syn::Expr>) {
 }
 
 fn fold_literals(
-    op: char,
+    op: BitwiseOp,
     prim: PrimTy,
     pieces: &mut Vec<(Lbl, syn::Expr)>,
     span: proc_macro2::Span,
 ) {
-    let literal = |label: &Lbl| matches!(label, Lbl::Int(_, _) | Lbl::Bool(_));
+    let literal = |label: &Lbl| label.literal_bits().is_some();
     if pieces.iter().filter(|piece| literal(&piece.0)).count() < 2 {
         return;
     }
     let mut acc = None;
     pieces.retain(|piece| {
-        if !literal(&piece.0) {
+        let Some(bits) = piece.0.literal_bits() else {
             return true;
-        }
-        acc = Some(match acc.take() {
-            None => piece.0.clone(),
-            Some(left) => schedule::combine_literal(op, prim, left, piece.0.clone()),
+        };
+        acc = Some(match acc {
+            None => bits,
+            Some(left) => op.fold(left, bits),
         });
         false
     });
-    let label = acc.expect("at least two literal operands");
-    let bits = match label {
-        Lbl::Int(bits, _) => bits,
-        Lbl::Bool(value) => u128::from(value),
-        _ => unreachable!("a literal subset yields a literal"),
-    };
+    let bits = acc.expect("at least two literal operands");
+    let label = schedule::literal_label(prim, bits);
     pieces.push((label, crate::constants::literal_expr(prim, bits, span)));
     pieces.sort_by(|a, b| a.0.cmp(&b.0));
 }
 
 fn emit(
-    op: char,
+    op: BitwiseOp,
     expressions: &mut impl Iterator<Item = syn::Expr>,
     count: usize,
     span: proc_macro2::Span,
@@ -317,10 +299,9 @@ fn emit(
     let left = emit(op, expressions, count / 2, span);
     let right = emit(op, expressions, count - count / 2, span);
     let op = match op {
-        '&' => syn::BinOp::BitAnd(syn::token::And { spans: [span] }),
-        '|' => syn::BinOp::BitOr(syn::token::Or { spans: [span] }),
-        '^' => syn::BinOp::BitXor(syn::token::Caret { spans: [span] }),
-        _ => unreachable!("only primitive bitwise chains are emitted"),
+        BitwiseOp::And => syn::BinOp::BitAnd(syn::token::And { spans: [span] }),
+        BitwiseOp::Or => syn::BinOp::BitOr(syn::token::Or { spans: [span] }),
+        BitwiseOp::Xor => syn::BinOp::BitXor(syn::token::Caret { spans: [span] }),
     };
     syn::Expr::Binary(syn::ExprBinary {
         attrs: Vec::new(),
