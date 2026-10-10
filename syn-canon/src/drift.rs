@@ -1092,7 +1092,7 @@ fn fold_scalar_const(expr: &mut syn::Expr) {
     }
 }
 
-fn fold_scalar_argument_block(expr: &mut syn::Expr) {
+pub(crate) fn fold_scalar_argument_block(expr: &mut syn::Expr) {
     let syn::Expr::Block(block) = expr else {
         return;
     };
@@ -1422,7 +1422,7 @@ fn pat_attrs(pat: &mut syn::Pat) -> Option<&mut Vec<syn::Attribute>> {
     })
 }
 
-fn type_attrs(ty: &syn::Type) -> &[syn::Attribute] {
+pub(crate) fn type_attrs(ty: &syn::Type) -> &[syn::Attribute] {
     match ty {
         syn::Type::Array(ty) => &ty.attrs,
         syn::Type::FnPtr(ty) => &ty.attrs,
@@ -1441,7 +1441,7 @@ fn type_attrs(ty: &syn::Type) -> &[syn::Attribute] {
     }
 }
 
-fn expr_attrs(expr: &syn::Expr) -> &[syn::Attribute] {
+pub(crate) fn expr_attrs(expr: &syn::Expr) -> &[syn::Attribute] {
     match expr {
         syn::Expr::Array(expr) => &expr.attrs,
         syn::Expr::Assign(expr) => &expr.attrs,
@@ -1485,7 +1485,7 @@ fn expr_attrs(expr: &syn::Expr) -> &[syn::Attribute] {
     }
 }
 
-fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
+pub(crate) fn item_attrs(item: &mut syn::Item) -> Option<&mut Vec<syn::Attribute>> {
     Some(match item {
         syn::Item::Const(v) => &mut v.attrs,
         syn::Item::Enum(v) => &mut v.attrs,

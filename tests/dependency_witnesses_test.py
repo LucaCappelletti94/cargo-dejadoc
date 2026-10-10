@@ -9,6 +9,7 @@ import time
 import unittest
 
 import dependency_witnesses as witnesses
+import dependency_constants_witnesses as constants
 
 
 class WitnessHarnessTests(unittest.TestCase):
@@ -79,6 +80,29 @@ class WitnessHarnessTests(unittest.TestCase):
             self.assertTrue(check["equal"])
             self.assertFalse(check["matches_expectation"])
 
+    def test_constant_compiler_errors_cannot_establish_native_equality(self):
+        case = {
+            "id": "constant_compile_errors",
+            "family": "constant",
+            "a": 'const N:u32=5u32/0u32; fn main(){println!("{}",N);}',
+            "b": 'const N:u32=6u32/0u32; fn main(){println!("{}",N);}',
+            "expected": "same",
+            "expect": {
+                side: {
+                    profile: {"compile": ["error[E0080]"], "run": "absent"}
+                    for profile in ("off", "on")
+                }
+                for side in ("a", "b")
+            },
+        }
+        report = constants.run_matrix(
+            [case], request_id="DG-HARNESS-CONSTANT-ERRORS-01",
+            toolchain="stable", timeout=60,
+        )
+        self.assertFalse(report["ok"])
+        for check in report["checks"]:
+            self.assertFalse(check["relation_matches"])
+
     def test_two_compiler_errors_cannot_count_as_equivalent_execution(self):
         case = {
             "id": "compile_errors",
@@ -108,10 +132,11 @@ class WitnessHarnessTests(unittest.TestCase):
             parent_program = (
                 f"import subprocess, sys; subprocess.Popen([sys.executable, '-c', {child_program!r}])"
             )
+            deadline = time.monotonic() + 3
             result = witnesses.run_process(
                 [sys.executable, "-c", parent_program],
                 request_id="DG-HARNESS-TIMEOUT-01",
-                deadline=time.monotonic() + 3,
+                deadline=deadline,
                 timeout=0.5,
             )
             self.assertEqual(result["request_id"], "DG-HARNESS-TIMEOUT-01")
@@ -119,12 +144,19 @@ class WitnessHarnessTests(unittest.TestCase):
             self.assertIsNone(result["exit"])
             child = json.loads(marker.read_text())
             self.assertEqual(child["request_id"], result["request_id"])
-            try:
-                state = pathlib.Path(f"/proc/{child['pid']}/stat").read_text().rpartition(") ")[2].split()[0]
-            except (FileNotFoundError, ProcessLookupError):
-                state = "exited"
+            while True:
+                try:
+                    state = pathlib.Path(f"/proc/{child['pid']}/stat").read_text().rpartition(") ")[2].split()[0]
+                except (FileNotFoundError, ProcessLookupError):
+                    state = "exited"
+                if state in ("Z", "X", "exited") or time.monotonic() >= deadline:
+                    break
+                time.sleep(min(0.01, max(0, deadline - time.monotonic())))
             if state not in ("Z", "X", "exited"):
-                os.kill(child["pid"], signal.SIGKILL)
+                try:
+                    os.kill(child["pid"], signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
             self.assertIn(state, ("Z", "X", "exited"), "descendant survived the timeout")
             self.assertEqual(result["stdout"], "observed\n")
 

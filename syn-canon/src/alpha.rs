@@ -216,6 +216,8 @@ pub(crate) struct Renamer<'env> {
     prim_fallback: bool,
     /// A live observer attribute froze the declarations being visited.
     observed: bool,
+    constants_observed: bool,
+    constants_prepared: bool,
     /// The block nesting level of the traversal.
     depth: usize,
     /// The scheduler scope state of every function open in the traversal.
@@ -251,6 +253,8 @@ impl<'env> Renamer<'env> {
             compiles: false,
             prim_fallback: false,
             observed: false,
+            constants_observed: false,
+            constants_prepared: false,
             depth: 0,
             scopes: Vec::new(),
             block_facts: Vec::new(),
@@ -709,6 +713,14 @@ impl<'env> Renamer<'env> {
         } else {
             None
         }
+    }
+
+    fn constants_allowed(&self) -> bool {
+        self.compiles
+            && !self.observed
+            && !self.constants_observed
+            && self.macro_origins.is_none()
+            && !self.scopes.iter().any(|scope| scope.frozen)
     }
 
     /// The proven primitive type of a declared type, when the declaration
@@ -1311,6 +1323,11 @@ impl<'env> Renamer<'env> {
                         if matches!(arg, syn::GenericArgument::Const(_)) {
                             let outer = core::mem::replace(&mut self.in_type, false);
                             syn::visit_mut::visit_generic_argument_mut(self, arg);
+                            if self.constants_allowed()
+                                && let syn::GenericArgument::Const(expr) = arg
+                            {
+                                crate::drift::fold_scalar_argument_block(expr);
+                            }
                             self.in_type = outer;
                         } else {
                             syn::visit_mut::visit_generic_argument_mut(self, arg);
@@ -1892,10 +1909,34 @@ fn restore_type(facts: &mut ReferenceFacts, ty: &syn::Type, resolutions: &[TypeR
 impl VisitMut for Renamer<'_> {
     fn visit_file_mut(&mut self, file: &mut syn::File) {
         self.observed |= crate::context::live_attr(&file.attrs);
+        self.constants_observed |= crate::context::live_attr(&file.attrs);
         self.prim_fallback &= crate::context::scope_primitives_known(&file.items);
         let items: Vec<&syn::Item> = file.items.iter().collect();
         prebind(self, &items);
         syn::visit_mut::visit_file_mut(self, file);
+    }
+
+    fn visit_item_mut(&mut self, item: &mut syn::Item) {
+        let observed = self.constants_observed;
+        self.constants_observed |=
+            crate::drift::item_attrs(item).is_some_and(|attrs| crate::context::live_attr(attrs));
+        let prepared = core::mem::replace(&mut self.constants_prepared, false);
+        syn::visit_mut::visit_item_mut(self, item);
+        self.constants_prepared = prepared;
+        self.constants_observed = observed;
+    }
+
+    fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
+        let observed = self.constants_observed;
+        self.constants_observed |= !crate::drift::expr_attrs(expr).is_empty();
+        let prepared = self.constants_prepared;
+        if !prepared && self.constants_allowed() {
+            crate::constants::normalize_expr(self, expr, None);
+        }
+        self.constants_prepared = true;
+        syn::visit_mut::visit_expr_mut(self, expr);
+        self.constants_prepared = prepared;
+        self.constants_observed = observed;
     }
 
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
@@ -1910,11 +1951,16 @@ impl VisitMut for Renamer<'_> {
             .collect();
         prebind(self, &items);
         self.depth += 1;
+        if self.constants_allowed() {
+            crate::constants::normalize_block(self, block);
+        }
+        let prepared = core::mem::replace(&mut self.constants_prepared, true);
         let analyzed = self.compiles && !self.scopes.is_empty() && self.macro_origins.is_none();
         if analyzed {
             schedule::analyze(self, block);
         }
         syn::visit_mut::visit_block_mut(self, block);
+        self.constants_prepared = prepared;
         self.depth -= 1;
         self.pop();
         if analyzed {
@@ -1924,6 +1970,8 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_local_mut(&mut self, local: &mut syn::Local) {
+        let observed = self.constants_observed;
+        self.constants_observed |= !local.attrs.is_empty();
         // The initializer resolves under the outer bindings.
         if let Some(init) = &mut local.init {
             syn::visit_mut::visit_expr_mut(self, &mut init.expr);
@@ -1932,6 +1980,7 @@ impl VisitMut for Renamer<'_> {
             }
         }
         self.bind_pat(&mut local.pat);
+        self.constants_observed = observed;
     }
 
     fn visit_item_fn_mut(&mut self, item: &mut syn::ItemFn) {
@@ -2066,6 +2115,10 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_item_const_mut(&mut self, item: &mut syn::ItemConst) {
         self.rename_binder(Ns::Value, &mut item.ident);
+        if self.constants_allowed() {
+            let expected = self.param_prim(&item.ty);
+            crate::constants::normalize_expr(self, &mut item.expr, expected);
+        }
         self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
@@ -2073,9 +2126,50 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_item_static_mut(&mut self, item: &mut syn::ItemStatic) {
         self.rename_binder(Ns::Value, &mut item.ident);
+        if self.constants_allowed() {
+            let expected = self.param_prim(&item.ty);
+            crate::constants::normalize_expr(self, &mut item.expr, expected);
+        }
         self.visit_attrs(&mut item.attrs);
         syn::visit_mut::visit_type_mut(self, &mut item.ty);
         syn::visit_mut::visit_expr_mut(self, &mut item.expr);
+    }
+
+    fn visit_impl_item_const_mut(&mut self, item: &mut syn::ImplItemConst) {
+        let observed = self.constants_observed;
+        self.constants_observed |= crate::context::live_attr(&item.attrs);
+        if self.constants_allowed() {
+            let expected = self.param_prim(&item.ty);
+            crate::constants::normalize_expr(self, &mut item.expr, expected);
+        }
+        syn::visit_mut::visit_impl_item_const_mut(self, item);
+        self.constants_observed = observed;
+    }
+
+    fn visit_trait_item_const_mut(&mut self, item: &mut syn::TraitItemConst) {
+        let observed = self.constants_observed;
+        self.constants_observed |= crate::context::live_attr(&item.attrs);
+        if self.constants_allowed()
+            && let Some((_, expr)) = &mut item.default
+        {
+            let expected = self.param_prim(&item.ty);
+            crate::constants::normalize_expr(self, expr, expected);
+        }
+        syn::visit_mut::visit_trait_item_const_mut(self, item);
+        self.constants_observed = observed;
+    }
+
+    fn visit_const_param_mut(&mut self, param: &mut syn::ConstParam) {
+        let observed = self.constants_observed;
+        self.constants_observed |= crate::context::live_attr(&param.attrs);
+        if self.constants_allowed()
+            && let Some((_, expr)) = &mut param.default
+        {
+            let expected = self.param_prim(&param.ty);
+            crate::constants::normalize_expr(self, expr, expected);
+        }
+        syn::visit_mut::visit_const_param_mut(self, param);
+        self.constants_observed = observed;
     }
 
     fn visit_item_macro_mut(&mut self, item: &mut syn::ItemMacro) {
@@ -2293,7 +2387,10 @@ impl VisitMut for Renamer<'_> {
             restore_type(&mut self.facts, ty, &self.self_ty_resolutions);
             return;
         }
+        let observed = self.constants_observed;
+        self.constants_observed |= !crate::drift::type_attrs(ty).is_empty();
         syn::visit_mut::visit_type_mut(self, ty);
+        self.constants_observed = observed;
     }
 
     fn visit_lifetime_mut(&mut self, lifetime: &mut syn::Lifetime) {
@@ -2370,10 +2467,14 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_attribute_mut(&mut self, attribute: &mut syn::Attribute) {
+        let prepared = core::mem::replace(&mut self.constants_prepared, true);
+        let observed = core::mem::replace(&mut self.constants_observed, true);
         // Attribute paths name external items, but a `#[attr = expr]`
         // value may reference the local bindings.
         if let syn::Meta::NameValue(name_value) = &mut attribute.meta {
             syn::visit_mut::visit_expr_mut(self, &mut name_value.value);
         }
+        self.constants_prepared = prepared;
+        self.constants_observed = observed;
     }
 }
