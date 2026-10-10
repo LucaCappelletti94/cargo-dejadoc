@@ -9,6 +9,7 @@ fuzz_target!(|data: &[u8]| {
     let data = data.to_vec();
     dejadoc_fuzz::on_large_stack(move || {
         dejadoc_fuzz::check_dependency_schedules(&data);
+        dejadoc_fuzz::check_boolean_schedules(&data);
         let Ok(code) = std::str::from_utf8(&data) else {
             return;
         };

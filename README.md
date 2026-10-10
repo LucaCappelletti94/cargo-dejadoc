@@ -34,7 +34,7 @@ Function comparisons use original module files, import associations and enclosin
 
 Passing doctests and functions compare checked fixed-width literal arithmetic by its typed result before dependency scheduling. Overflowing intermediates, unresolved inference, pointer-sized arithmetic and syntax observers retain their expressions, and `compile_fail` comparisons apply no arithmetic evaluation.
 
-Passing comparisons normalize proven primitive bitwise commutation, association and `&`/`|` idempotence, with `>` and `>=` oriented by reversing their operands. Stable typed values are required, storage observations and unresolved inference restrict normalization, and `compile_fail` inputs retain their expressions.
+Passing comparisons normalize proven primitive bitwise algebra, comparison orientation and boolean rewrites, preserving exact dependency identities and short-circuit order. Negated conditions swap complete branch blocks, and literal conditions require independently identical scalar branch types. Storage observations, destruction scopes, active attributes and unresolved inference restrict normalization, and `compile_fail` inputs retain their expressions.
 
 ### Contexts
 
