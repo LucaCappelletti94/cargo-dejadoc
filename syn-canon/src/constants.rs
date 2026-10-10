@@ -256,6 +256,18 @@ fn integer_type(ty: PrimTy) -> Option<FixedInt> {
     }
 }
 
+/// A folded literal expression of a proven scalar type.
+pub(crate) fn literal_expr(ty: PrimTy, bits: u128, span: proc_macro2::Span) -> syn::Expr {
+    if ty == PrimTy::Bool {
+        return syn::Expr::Lit(syn::ExprLit {
+            attrs: Vec::new(),
+            lit: syn::Lit::Bool(syn::LitBool::new(bits != 0, span)),
+        });
+    }
+    let ty = integer_type(ty).expect("an integer type");
+    Integer { ty, bits }.expression(span)
+}
+
 #[derive(Clone, Copy)]
 enum TypeProof {
     Unsuffixed,
@@ -314,6 +326,22 @@ fn literal(expr: &syn::Expr) -> Option<&syn::LitInt> {
         syn::Expr::Group(group) => literal(&group.expr),
         _ => None,
     }
+}
+
+pub(crate) fn signed_literal(expr: &syn::Expr) -> Option<(PrimTy, u128)> {
+    if !matches!(expr, syn::Expr::Unary(unary) if matches!(unary.op, syn::UnOp::Neg(_)) && literal(&unary.expr).is_some())
+    {
+        return None;
+    }
+    let ty = proven_type(expr, None, 0)?.fixed()?;
+    let value = evaluate(expr, ty, 0)?;
+    Some((
+        PrimTy::Int {
+            width: ty.width,
+            signed: ty.signed,
+        },
+        value.bits,
+    ))
 }
 
 fn evaluate(expr: &syn::Expr, ty: FixedInt, depth: usize) -> Option<Integer> {

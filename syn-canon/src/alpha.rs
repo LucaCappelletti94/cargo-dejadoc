@@ -218,6 +218,7 @@ pub(crate) struct Renamer<'env> {
     observed: bool,
     constants_observed: bool,
     constants_prepared: bool,
+    regions_active: bool,
     /// The block nesting level of the traversal.
     depth: usize,
     /// The scheduler scope state of every function open in the traversal.
@@ -255,6 +256,7 @@ impl<'env> Renamer<'env> {
             observed: false,
             constants_observed: false,
             constants_prepared: false,
+            regions_active: true,
             depth: 0,
             scopes: Vec::new(),
             block_facts: Vec::new(),
@@ -721,6 +723,23 @@ impl<'env> Renamer<'env> {
             && !self.constants_observed
             && self.macro_origins.is_none()
             && !self.scopes.iter().any(|scope| scope.frozen)
+    }
+
+    /// Whether an open frame carries a glob import that may shadow a
+    /// type name.
+    pub(crate) fn glob_uncertain(&self) -> bool {
+        self.frames.iter().any(|frame| frame.glob)
+    }
+
+    /// Whether the innermost function scope carries a `cfg` the source
+    /// cannot settle.
+    pub(crate) fn cfg_blocked(&self) -> bool {
+        self.scopes.last().is_some_and(|scope| scope.cfg)
+    }
+
+    /// The facts of the most recently analyzed block, when any.
+    pub(crate) fn last_block_facts(&self) -> Option<&schedule::BlockFacts> {
+        self.block_facts.last()
     }
 
     /// The proven primitive type of a declared type, when the declaration
@@ -1243,6 +1262,7 @@ impl<'env> Renamer<'env> {
                 offset: plan.offset,
                 prim: plan.prim,
                 port: plan.port.clone(),
+                active: plan.active,
             });
         for name in &names {
             self.bind_full(Ns::Value, name, Origin::Let, None, 0, plan.take());
@@ -1270,6 +1290,10 @@ impl<'env> Renamer<'env> {
             self.pop();
             self.scopes.push(schedule::ScopeState {
                 frozen,
+                cfg: attrs.iter().any(|attr| {
+                    let path = attr.path();
+                    path.is_ident("cfg") || path.is_ident("cfg_attr")
+                }),
                 ..Default::default()
             });
             true
@@ -1921,8 +1945,10 @@ impl VisitMut for Renamer<'_> {
         self.constants_observed |=
             crate::drift::item_attrs(item).is_some_and(|attrs| crate::context::live_attr(attrs));
         let prepared = core::mem::replace(&mut self.constants_prepared, false);
+        let regions_active = core::mem::replace(&mut self.regions_active, true);
         syn::visit_mut::visit_item_mut(self, item);
         self.constants_prepared = prepared;
+        self.regions_active = regions_active;
         self.constants_observed = observed;
     }
 
@@ -1955,11 +1981,33 @@ impl VisitMut for Renamer<'_> {
             crate::constants::normalize_block(self, block);
         }
         let prepared = core::mem::replace(&mut self.constants_prepared, true);
-        let analyzed = self.compiles && !self.scopes.is_empty() && self.macro_origins.is_none();
+        let analyzed = self.compiles
+            && self.regions_active
+            && !self.scopes.is_empty()
+            && self.macro_origins.is_none();
         if analyzed {
             schedule::analyze(self, block);
+            if self.constants_allowed() && !self.glob_uncertain() && !self.cfg_blocked() {
+                let facts = self.last_block_facts().expect("an analyzed block");
+                crate::algebra::normalize(self, block, facts);
+            }
         }
-        syn::visit_mut::visit_block_mut(self, block);
+        let complete = analyzed
+            && self
+                .last_block_facts()
+                .is_some_and(schedule::BlockFacts::can_rewrite);
+        let mut reachable = true;
+        for stmt in &mut block.stmts {
+            let boundary = matches!(
+                schedule::stmt_kind(self, stmt),
+                schedule::StmtKind::Boundary(true)
+            );
+            let regions_active =
+                core::mem::replace(&mut self.regions_active, complete && reachable);
+            self.visit_stmt_mut(stmt);
+            self.regions_active = regions_active;
+            reachable &= !boundary;
+        }
         self.constants_prepared = prepared;
         self.depth -= 1;
         self.pop();

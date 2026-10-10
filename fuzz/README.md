@@ -2,7 +2,7 @@
 
 ClusterFuzzLite runs these on every pull request, daily in batch, and on every push to `main`. Each target runs dejadoc on the 1 GiB stack `group` uses.
 
-- `canonicalize` groups identical bodies at different source sites and compares legal typed dependency schedules with a changed-operand control.
+- `canonicalize` groups identical bodies at different source sites and compares legal typed schedules, algebra rewrites and literal folds with changed-neighbor controls.
 - `doc` writes NUL-separated parts as `///`, raw, escaped and `/** */` doc attributes and extracts them.
 - `source` parses a whole file with `syn` and extracts it.
 

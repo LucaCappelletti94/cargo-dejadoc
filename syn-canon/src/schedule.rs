@@ -15,9 +15,9 @@ use crate::reference::{BlockProof, ReferenceFacts};
 use crate::scope::{FreeKey, PrimTy, unraw};
 
 /// The graph nodes a region may still be labeled with.
-const MAX_REGION_NODES: usize = 16_384;
+pub(crate) const MAX_REGION_NODES: usize = 16_384;
 /// The block nesting level a function scope may analyze.
-const MAX_BLOCK_DEPTH: usize = 64;
+pub(crate) const MAX_BLOCK_DEPTH: usize = 64;
 /// The expanded search states a region may spend, partial
 /// individualizations counted, refinement rounds never.
 const MAX_LABEL_STATES: usize = 4_096;
@@ -95,7 +95,7 @@ pub(crate) struct Value {
 
 /// A labeled node of the expression language the analysis reads.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
-enum Lbl {
+pub(crate) enum Lbl {
     /// An integer literal, `None` when the suffix leaves the type unproven.
     Int(u128, Option<PrimTy>),
     /// A boolean literal.
@@ -106,6 +106,9 @@ enum Lbl {
     Ref(Value),
     /// A total bitwise or valid shift over proven scalars.
     Op(char, Box<Lbl>, Box<Lbl>, PrimTy),
+    /// A flattened bitwise chain: one operator and type, sorted leaves,
+    /// multiplicity retained, literal leaves folded.
+    Flat(char, Vec<Lbl>, PrimTy),
     /// Any other expression, by a kind tag and its ordered children.
     Other(String, Vec<Lbl>),
     /// A first-reference index in a projected future-producer graph.
@@ -116,12 +119,20 @@ enum Lbl {
 
 impl Lbl {
     /// The proven scalar type of a total expression, `None` otherwise.
-    fn prim(&self) -> Option<PrimTy> {
+    pub(crate) fn prim(&self) -> Option<PrimTy> {
         match self {
             Self::Int(_, prim) => *prim,
             Self::Bool(_) => Some(PrimTy::Bool),
             Self::Ref(value) => value.prim,
-            Self::Op(_, _, _, prim) => Some(*prim),
+            Self::Op(_, _, _, prim) | Self::Flat(_, _, prim) => Some(*prim),
+            _ => None,
+        }
+    }
+
+    pub(crate) fn literal_bits(&self) -> Option<u128> {
+        match self {
+            Self::Int(bits, _) => Some(*bits),
+            Self::Bool(value) => Some(u128::from(*value)),
             _ => None,
         }
     }
@@ -195,12 +206,15 @@ pub(crate) struct ScopeState {
     pub(crate) seq: usize,
     /// The running local ports, scoped to the function.
     pub(crate) next_local: usize,
+    /// A function-level `cfg` or `cfg_attr` the source cannot settle.
+    pub(crate) cfg: bool,
 }
 
 pub(crate) struct BindingPlan {
     pub(crate) offset: isize,
     pub(crate) prim: Option<PrimTy>,
     pub(crate) port: Port,
+    pub(crate) active: bool,
 }
 
 pub(crate) struct BlockFacts {
@@ -211,6 +225,10 @@ pub(crate) struct BlockFacts {
 impl BlockFacts {
     pub(crate) fn plan(&self, pat: &syn::Pat) -> Option<&BindingPlan> {
         self.plans.get(&core::ptr::from_ref(pat))
+    }
+
+    pub(crate) fn can_rewrite(&self) -> bool {
+        !self.permutation.is_empty()
     }
 
     // Cycle-follow the transposition in place, so the loop keeps its own index.
@@ -420,37 +438,184 @@ fn op_text(op: &syn::BinOp) -> String {
     }
 }
 
-/// The total result type of a bitwise or shift operation over proven
-/// scalars, an unsuffixed integer literal adopting the operation's
-/// established type.
-fn total_op(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<(char, PrimTy)> {
-    let op = match bin_op {
-        syn::BinOp::BitAnd(_) => '&',
-        syn::BinOp::BitOr(_) => '|',
-        syn::BinOp::BitXor(_) => '^',
-        syn::BinOp::Shl(_) => '<',
-        syn::BinOp::Shr(_) => '>',
-        _ => return None,
-    };
-    let left_prim = left.prim();
-    let right_prim = right.prim();
-    if matches!(bin_op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_)) {
-        let prim = left_prim?;
-        let PrimTy::Int { width, .. } = prim else {
-            return None;
-        };
-        return match right {
-            Lbl::Int(count, _) if *count < u128::from(width.bits()) => Some((op, prim)),
+/// An associative bitwise operation over proven primitives.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(crate) enum BitwiseOp {
+    And,
+    Or,
+    Xor,
+}
+
+impl BitwiseOp {
+    pub(crate) fn from_bin_op(op: &syn::BinOp) -> Option<Self> {
+        match op {
+            syn::BinOp::BitAnd(_) => Some(Self::And),
+            syn::BinOp::BitOr(_) => Some(Self::Or),
+            syn::BinOp::BitXor(_) => Some(Self::Xor),
             _ => None,
-        };
+        }
     }
-    let prim = match (left_prim, right_prim) {
-        (Some(left), Some(right)) if left == right => left,
-        (Some(left), None) if matches!(right, Lbl::Int(_, None)) => left,
-        (None, Some(right)) if matches!(left, Lbl::Int(_, None)) => right,
+
+    pub(crate) fn tag(self) -> char {
+        match self {
+            Self::And => '&',
+            Self::Or => '|',
+            Self::Xor => '^',
+        }
+    }
+
+    pub(crate) fn fold(self, left: u128, right: u128) -> u128 {
+        match self {
+            Self::And => left & right,
+            Self::Or => left | right,
+            Self::Xor => left ^ right,
+        }
+    }
+}
+
+/// The comparison emitted after exchanging ordered operands.
+#[derive(Clone, Copy)]
+pub(crate) enum ReversedComparison {
+    Lt,
+    Le,
+}
+
+impl ReversedComparison {
+    pub(crate) fn bin_op(self) -> syn::BinOp {
+        match self {
+            Self::Lt => syn::BinOp::Lt(syn::token::Lt::default()),
+            Self::Le => syn::BinOp::Le(syn::token::Le::default()),
+        }
+    }
+}
+
+/// The total form of a binary operation over proven scalars.
+pub(crate) enum TotalBinary {
+    /// Kept in operand order, a valid shift or an oriented comparison.
+    Ordered {
+        tag: char,
+        reverse: Option<ReversedComparison>,
+        prim: PrimTy,
+    },
+    /// An unordered bitwise chain of `&`, `|` or `^`.
+    Flat(BitwiseOp, PrimTy),
+}
+
+pub(crate) fn total_binary(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+    if let Some(op) = BitwiseOp::from_bin_op(bin_op) {
+        return Some(TotalBinary::Flat(op, scalar_prim(left, right)?));
+    }
+    match bin_op {
+        syn::BinOp::Shl(_) | syn::BinOp::Shr(_) => {
+            let prim = left.prim()?;
+            let PrimTy::Int { width, .. } = prim else {
+                return None;
+            };
+            match right {
+                Lbl::Int(count, _) if *count < u128::from(width.bits()) => {
+                    Some(TotalBinary::Ordered {
+                        tag: match bin_op {
+                            syn::BinOp::Shl(_) => '«',
+                            _ => '»',
+                        },
+                        reverse: None,
+                        prim,
+                    })
+                }
+                _ => None,
+            }
+        }
+        _ => comparison(bin_op, left, right),
+    }
+}
+
+/// The scalar type both sides prove, an unsuffixed integer literal
+/// adopting the established type.
+fn scalar_prim(left: &Lbl, right: &Lbl) -> Option<PrimTy> {
+    match (left.prim(), right.prim()) {
+        (Some(left), Some(right)) if left == right => Some(left),
+        (Some(left @ PrimTy::Int { .. }), None) if matches!(right, Lbl::Int(_, None)) => Some(left),
+        (None, Some(right @ PrimTy::Int { .. })) if matches!(left, Lbl::Int(_, None)) => {
+            Some(right)
+        }
+        _ => None,
+    }
+}
+
+/// A comparison over proven scalars, oriented by kind, a bool result.
+fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+    let (tag, reverse) = match bin_op {
+        syn::BinOp::Eq(_) => ('=', None),
+        syn::BinOp::Ne(_) => ('!', None),
+        syn::BinOp::Lt(_) => ('<', None),
+        syn::BinOp::Le(_) => ('≤', None),
+        syn::BinOp::Gt(_) => ('<', Some(ReversedComparison::Lt)),
+        syn::BinOp::Ge(_) => ('≤', Some(ReversedComparison::Le)),
         _ => return None,
     };
-    Some((op, prim))
+    scalar_prim(left, right)?;
+    Some(TotalBinary::Ordered {
+        tag,
+        reverse,
+        prim: PrimTy::Bool,
+    })
+}
+
+/// The operands of a flat chain, flattening chains of the same operator
+/// and type.
+fn collect_leaves(op: BitwiseOp, prim: PrimTy, lbl: Lbl, out: &mut Vec<Lbl>) {
+    match lbl {
+        Lbl::Flat(inner_op, leaves, inner_prim) if inner_op == op.tag() && inner_prim == prim => {
+            out.extend(leaves);
+        }
+        other => out.push(other),
+    }
+}
+
+/// A flat chain's canonical label, sorted leaves with the literal
+/// subset folded, a lone literal standing for the whole chain.
+fn flat_label(op: BitwiseOp, prim: PrimTy, mut leaves: Vec<Lbl>) -> Lbl {
+    leaves.sort();
+    if op != BitwiseOp::Xor {
+        leaves.dedup();
+    }
+    fold_literal_leaves(op, prim, &mut leaves);
+    match leaves.as_slice() {
+        [only] => only.clone(),
+        _ => Lbl::Flat(op.tag(), leaves, prim),
+    }
+}
+
+/// The chain's literal leaves folded into one, re-sorted into place.
+fn fold_literal_leaves(op: BitwiseOp, prim: PrimTy, leaves: &mut Vec<Lbl>) {
+    let is_literal = |leaf: &Lbl| leaf.literal_bits().is_some();
+    if leaves.iter().filter(|leaf| is_literal(leaf)).count() < 2 {
+        return;
+    }
+    let mut acc = None;
+    leaves.retain(|leaf| {
+        let Some(bits) = leaf.literal_bits() else {
+            return true;
+        };
+        acc = Some(match acc {
+            None => bits,
+            Some(left) => op.fold(left, bits),
+        });
+        false
+    });
+    leaves.push(literal_label(
+        prim,
+        acc.expect("at least two literal operands"),
+    ));
+    leaves.sort();
+}
+
+/// A folded literal under the chain's proven primitive type.
+pub(crate) fn literal_label(prim: PrimTy, bits: u128) -> Lbl {
+    match prim {
+        PrimTy::Int { .. } => Lbl::Int(bits, Some(prim)),
+        PrimTy::Bool => Lbl::Bool(bits != 0),
+    }
 }
 
 /// The text of `path`, the segments joined by `::`.
@@ -502,11 +667,15 @@ fn label_lit(lit: &syn::Lit) -> Lbl {
 }
 
 /// The binding names a pattern introduces, in source order.
-fn pat_names(pat: &syn::Pat) -> Vec<String> {
+pub(crate) fn pat_names(pat: &syn::Pat) -> Vec<String> {
     match pat {
         syn::Pat::Ident(ident) => {
             let text = ident.ident.to_string();
-            vec![unraw(&text).to_string()]
+            let mut names = vec![unraw(&text).to_string()];
+            if let Some((_, subpat)) = &ident.subpat {
+                names.extend(pat_names(subpat));
+            }
+            names
         }
         syn::Pat::Tuple(tuple) => tuple.elems.iter().flat_map(pat_names).collect(),
         syn::Pat::TupleStruct(tuple_struct) => {
@@ -543,7 +712,7 @@ fn let_name(local: &syn::Local) -> Option<String> {
 }
 
 /// The binding name of a simple `let` pattern, mutable or not.
-fn local_binding_name(local: &syn::Local) -> Option<String> {
+pub(crate) fn local_binding_name(local: &syn::Local) -> Option<String> {
     match &local.pat {
         syn::Pat::Ident(ident) if ident.subpat.is_none() => {
             let text = ident.ident.to_string();
@@ -554,7 +723,7 @@ fn local_binding_name(local: &syn::Local) -> Option<String> {
 }
 
 /// The assigned binding's name, when the target is a clean identifier.
-fn assign_target(stmt: &syn::Stmt) -> Option<String> {
+pub(crate) fn assign_target(stmt: &syn::Stmt) -> Option<String> {
     let syn::Stmt::Expr(expr, _) = stmt else {
         return None;
     };
@@ -591,7 +760,7 @@ fn stmt_boundary(expr: &syn::Expr) -> bool {
 }
 
 /// The statement's place in the region walk.
-enum StmtKind {
+pub(crate) enum StmtKind {
     /// A known observation with modeled value inputs.
     Barrier,
     /// A control boundary, a possible divergence.
@@ -600,7 +769,7 @@ enum StmtKind {
     Plain,
 }
 
-fn stmt_kind(renamer: &Renamer, stmt: &syn::Stmt) -> StmtKind {
+pub(crate) fn stmt_kind(renamer: &Renamer, stmt: &syn::Stmt) -> StmtKind {
     if let Some(mac) = stmt_macro(stmt) {
         let name = mac
             .path
@@ -631,6 +800,20 @@ fn stmt_kind(renamer: &Renamer, stmt: &syn::Stmt) -> StmtKind {
     StmtKind::Plain
 }
 
+pub(crate) fn scalar_leaf(env: &BTreeMap<String, Value>, expr: &syn::Expr) -> Option<Lbl> {
+    match expr {
+        syn::Expr::Lit(lit) => Some(label_lit(&lit.lit)),
+        syn::Expr::Unary(_) => {
+            crate::constants::signed_literal(expr).map(|(prim, bits)| Lbl::Int(bits, Some(prim)))
+        }
+        syn::Expr::Path(path) if path.qself.is_none() && path.path.segments.len() == 1 => {
+            let name = path.path.segments[0].ident.to_string();
+            env.get(unraw(&name)).cloned().map(Lbl::Ref)
+        }
+        _ => None,
+    }
+}
+
 /// The label and reference sites an expression carries. Nested blocks,
 /// loops, arms and closure bodies extend the environment with their local
 /// binders; borrows, addresses, receivers and captures mark the sites on
@@ -656,7 +839,10 @@ fn label_expr(
         syn::Expr::Reference(reference) => {
             label_reference(renamer, env, reference, consumer, locals)
         }
-        syn::Expr::Unary(unary) => label_unary(renamer, env, unary, consumer, locals),
+        syn::Expr::Unary(unary) => match crate::constants::signed_literal(expr) {
+            Some((prim, bits)) => (Lbl::Int(bits, Some(prim)), Vec::new()),
+            None => label_unary(renamer, env, unary, consumer, locals),
+        },
         syn::Expr::Block(block) => label_block(renamer, env, &block.block, consumer, locals),
         syn::Expr::If(r#if) => label_if_expr(renamer, env, r#if, consumer, locals),
         syn::Expr::ForLoop(for_loop) => label_for_loop(renamer, env, for_loop, consumer, locals),
@@ -734,8 +920,8 @@ fn label_path(env: &BTreeMap<String, Value>, path: &syn::Path) -> (Lbl, Vec<Site
     )
 }
 
-/// The label of a binary operation, a total one proven on both sides, any
-/// other one kept by operator text.
+/// The label of a binary operation, total ones canonical, any other one
+/// kept ordered by operator text.
 fn label_binary(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
@@ -746,16 +932,53 @@ fn label_binary(
     let (left, mut sites) = label_expr(renamer, env, &bin.left, consumer, locals);
     let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals);
     sites.extend(r_sites);
-    let total = total_op(&bin.op, &left, &right);
-    if let Some((op, prim)) = total {
-        (Lbl::Op(op, Box::new(left), Box::new(right), prim), sites)
-    } else {
-        let tag = if is_assign_op(&bin.op) {
-            "ao".into()
-        } else {
-            op_text(&bin.op)
-        };
-        (Lbl::Other(tag, vec![left, right]), sites)
+    let label = match total_binary(&bin.op, &left, &right) {
+        Some(TotalBinary::Ordered { tag, reverse, prim }) => {
+            let (lo, hi) = if reverse.is_some() {
+                (right, left)
+            } else {
+                (left, right)
+            };
+            Lbl::Op(tag, Box::new(lo), Box::new(hi), prim)
+        }
+        Some(TotalBinary::Flat(op, prim)) => {
+            let mut leaves = Vec::new();
+            collect_leaves(op, prim, left, &mut leaves);
+            collect_leaves(op, prim, right, &mut leaves);
+            flat_label(op, prim, leaves)
+        }
+        None => {
+            let tag = if is_assign_op(&bin.op) {
+                "ao".into()
+            } else {
+                op_text(&bin.op)
+            };
+            Lbl::Other(tag, vec![left, right])
+        }
+    };
+    if label.prim().is_some() {
+        sites.clear();
+        value_sites(&label, &mut sites);
+    }
+    (label, sites)
+}
+
+fn value_sites(label: &Lbl, sites: &mut Vec<Site>) {
+    match label {
+        Lbl::Ref(value) => sites.push(Site {
+            port: value.port.clone(),
+            ctx: Ctx::Value,
+        }),
+        Lbl::Op(_, left, right, _) => {
+            value_sites(left, sites);
+            value_sites(right, sites);
+        }
+        Lbl::Flat(_, leaves, _) => {
+            for leaf in leaves {
+                value_sites(leaf, sites);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -1429,6 +1652,14 @@ fn color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
             Box::new(color_substitute(right, colors)),
             *prim,
         ),
+        Lbl::Flat(op, leaves, prim) => {
+            let mut leaves: Vec<_> = leaves
+                .iter()
+                .map(|leaf| color_substitute(leaf, colors))
+                .collect();
+            leaves.sort();
+            Lbl::Flat(*op, leaves, *prim)
+        }
         Lbl::Other(kind, children) => Lbl::Other(
             kind.clone(),
             children
@@ -1464,6 +1695,326 @@ fn assign_palette(sigs: &[Sig]) -> Vec<Color> {
     colors
 }
 
+/// Preserve current identities when remapping future references.
+fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
+    match lbl {
+        Lbl::Future(index, prim) => Lbl::Future(ranks[*index], *prim),
+        Lbl::Op(op, left, right, prim) => Lbl::Op(
+            *op,
+            Box::new(future_rank_substitute(left, ranks)),
+            Box::new(future_rank_substitute(right, ranks)),
+            *prim,
+        ),
+        Lbl::Flat(op, leaves, prim) => {
+            let mut leaves = leaves
+                .iter()
+                .map(|leaf| future_rank_substitute(leaf, ranks))
+                .collect::<Vec<_>>();
+            leaves.sort();
+            Lbl::Flat(*op, leaves, *prim)
+        }
+        Lbl::Other(kind, children) => Lbl::Other(
+            kind.clone(),
+            children
+                .iter()
+                .map(|child| future_rank_substitute(child, ranks))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+/// Replace the future references of `lbl` with the referenced futures'
+/// previous-round colors.
+fn future_color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
+    match lbl {
+        Lbl::Future(index, _) => color_node(colors[*index]),
+        Lbl::Op(op, left, right, prim) => Lbl::Op(
+            *op,
+            Box::new(future_color_substitute(left, colors)),
+            Box::new(future_color_substitute(right, colors)),
+            *prim,
+        ),
+        Lbl::Flat(op, leaves, prim) => {
+            let mut leaves = leaves
+                .iter()
+                .map(|leaf| future_color_substitute(leaf, colors))
+                .collect::<Vec<_>>();
+            leaves.sort();
+            Lbl::Flat(*op, leaves, *prim)
+        }
+        Lbl::Other(kind, children) => Lbl::Other(
+            kind.clone(),
+            children
+                .iter()
+                .map(|child| future_color_substitute(child, colors))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
+fn future_refs(lbl: &Lbl, visit: &mut impl FnMut(usize)) {
+    match lbl {
+        Lbl::Future(index, _) => visit(*index),
+        Lbl::Op(_, left, right, _) => {
+            future_refs(left, visit);
+            future_refs(right, visit);
+        }
+        Lbl::Flat(_, children, _) | Lbl::Other(_, children) => {
+            for child in children {
+                future_refs(child, visit);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Rank dependency values without identifying equal producer origins.
+fn future_value_ranks(defs: &[Lbl]) -> Option<Vec<usize>> {
+    let mut pending = vec![0usize; defs.len()];
+    let mut readers = vec![Vec::new(); defs.len()];
+    for (member, definition) in defs.iter().enumerate() {
+        future_refs(definition, &mut |input| {
+            pending[member] += 1;
+            readers[input].push(member);
+        });
+    }
+    let mut ready: Vec<_> = (0..defs.len())
+        .filter(|&index| pending[index] == 0)
+        .collect();
+    let mut next = Vec::new();
+    let mut labels = Vec::new();
+    let mut ranks = vec![0; defs.len()];
+    let mut next_rank = 0;
+    let mut processed = 0;
+    while !ready.is_empty() {
+        labels.extend(
+            ready
+                .iter()
+                .map(|&index| (index, future_rank_substitute(&defs[index], &ranks))),
+        );
+        labels.sort_unstable_by(|left, right| left.1.cmp(&right.1));
+        let mut rank = next_rank;
+        let mut previous = None;
+        for (member, definition) in &labels {
+            if previous != Some(definition) {
+                rank = next_rank;
+                next_rank += 1;
+            }
+            previous = Some(definition);
+            ranks[*member] = rank;
+            processed += 1;
+        }
+        labels.clear();
+        for member in ready.drain(..) {
+            for &reader in &readers[member] {
+                pending[reader] -= 1;
+                if pending[reader] == 0 {
+                    next.push(reader);
+                }
+            }
+        }
+        core::mem::swap(&mut ready, &mut next);
+    }
+    (processed == defs.len()).then_some(ranks)
+}
+
+fn future_contexts(root: &Lbl, defs: &[Lbl], colors: &[Color]) -> Vec<Vec<Lbl>> {
+    let mut contexts = vec![Vec::new(); defs.len()];
+    let mut path = Vec::new();
+    future_context_walk(
+        root,
+        &Lbl::Other("root".into(), Vec::new()),
+        &mut path,
+        &mut contexts,
+    );
+    for (member, definition) in defs.iter().enumerate() {
+        future_context_walk(
+            definition,
+            &color_node(colors[member]),
+            &mut path,
+            &mut contexts,
+        );
+    }
+    for context in &mut contexts {
+        context.sort();
+    }
+    contexts
+}
+
+fn future_context_walk(node: &Lbl, owner: &Lbl, path: &mut Vec<Lbl>, contexts: &mut [Vec<Lbl>]) {
+    match node {
+        Lbl::Future(index, _) => {
+            contexts[*index].push(Lbl::Other(
+                "read".into(),
+                vec![owner.clone(), Lbl::Other("path".into(), path.clone())],
+            ));
+        }
+        Lbl::Op(op, left, right, prim) => {
+            for (position, child) in [left, right].into_iter().enumerate() {
+                path.push(Lbl::Other(
+                    op.to_string(),
+                    vec![Lbl::Int(0, Some(*prim)), Lbl::Lit(position.to_string())],
+                ));
+                future_context_walk(child, owner, path, contexts);
+                path.pop();
+            }
+        }
+        Lbl::Flat(op, children, prim) => {
+            path.push(Lbl::Other(op.to_string(), vec![Lbl::Int(0, Some(*prim))]));
+            for child in children {
+                future_context_walk(child, owner, path, contexts);
+            }
+            path.pop();
+        }
+        Lbl::Other(kind, children) => {
+            for (position, child) in children.iter().enumerate() {
+                path.push(Lbl::Other(
+                    kind.clone(),
+                    vec![Lbl::Lit(position.to_string())],
+                ));
+                future_context_walk(child, owner, path, contexts);
+                path.pop();
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Refinement colors summarize future values without equating origins.
+fn future_summary(lbl: &Lbl) -> Lbl {
+    match lbl {
+        Lbl::Graph(root, definitions) => {
+            let ranks =
+                future_value_ranks(definitions).unwrap_or_else(|| vec![0; definitions.len()]);
+            let mut definitions = definitions
+                .iter()
+                .map(|definition| future_rank_substitute(definition, &ranks))
+                .collect::<Vec<_>>();
+            definitions.sort();
+            Lbl::Graph(Box::new(future_rank_substitute(root, &ranks)), definitions)
+        }
+        Lbl::Op(op, left, right, prim) => Lbl::Op(
+            *op,
+            Box::new(future_summary(left)),
+            Box::new(future_summary(right)),
+            *prim,
+        ),
+        Lbl::Flat(op, leaves, prim) => {
+            let mut leaves = leaves.iter().map(future_summary).collect::<Vec<_>>();
+            leaves.sort();
+            Lbl::Flat(*op, leaves, *prim)
+        }
+        Lbl::Other(kind, children) => {
+            Lbl::Other(kind.clone(), children.iter().map(future_summary).collect())
+        }
+        other => other.clone(),
+    }
+}
+
+/// Refine future definitions without spending a search state.
+fn refine_future(defs: &[Lbl], root: &Lbl, seed: &[usize], marks: &[usize]) -> Vec<Color> {
+    let mut colors: Vec<_> = seed
+        .iter()
+        .map(|&rank| Color::try_from(rank).expect("a bounded future color fits u32"))
+        .collect();
+    if find_future_tie(&colors).is_none() {
+        return colors;
+    }
+    let mut passes = 0;
+    loop {
+        let previous = colors.clone();
+        let contexts = future_contexts(root, defs, &previous);
+        let mut sigs = Vec::with_capacity(defs.len());
+        for (member, consumers) in contexts.into_iter().enumerate() {
+            let base = future_color_substitute(&defs[member], &previous);
+            let mark = marks.get(member).copied().unwrap_or(0);
+            let base = if mark == 0 {
+                base
+            } else {
+                Lbl::Other("I".into(), vec![Lbl::Lit(mark.to_string()), base])
+            };
+            sigs.push(Sig {
+                base,
+                inputs: Vec::new(),
+                consumers,
+                prev_color: previous[member],
+            });
+        }
+        let next = assign_palette(&sigs);
+        let stable = next == colors;
+        colors = next;
+        passes += 1;
+        if stable || passes > defs.len() {
+            break;
+        }
+    }
+    colors
+}
+
+/// The first future color class with more than one member.
+fn find_future_tie(colors: &[Color]) -> Option<Vec<usize>> {
+    let mut groups: BTreeMap<Color, Vec<usize>> = BTreeMap::new();
+    for (member, &color) in colors.iter().enumerate() {
+        groups.entry(color).or_default().push(member);
+    }
+    groups.into_values().find(|members| members.len() >= 2)
+}
+
+/// Minimize complete future identities within the shared region budget.
+fn future_search(
+    root: &Lbl,
+    defs: &[Lbl],
+    seed: &[usize],
+    marks: &mut [usize],
+    states: &mut usize,
+    depth: usize,
+) -> Option<Lbl> {
+    *states += 1;
+    if *states > MAX_LABEL_STATES {
+        return None;
+    }
+    let colors = refine_future(defs, root, seed, marks);
+    if let Some(members) = find_future_tie(&colors) {
+        let mut best: Option<Lbl> = None;
+        for member in members {
+            marks[member] = depth + 1;
+            let candidate = future_search(root, defs, seed, marks, states, depth + 1);
+            marks[member] = 0;
+            let candidate = candidate?;
+            if best.as_ref().is_none_or(|winner| candidate < *winner) {
+                best = Some(candidate);
+            }
+        }
+        return best;
+    }
+    let mut order: Vec<_> = (0..defs.len()).collect();
+    order.sort_unstable_by_key(|&index| colors[index]);
+    let mut ranks = vec![0; defs.len()];
+    for (position, &index) in order.iter().enumerate() {
+        ranks[index] = position;
+    }
+    let root = future_rank_substitute(root, &ranks);
+    let definitions = order
+        .into_iter()
+        .map(|index| future_rank_substitute(&defs[index], &ranks))
+        .collect();
+    Some(Lbl::Graph(Box::new(root), definitions))
+}
+
+/// Share the region budget across complete future projections.
+fn future_normalize(lbl: &Lbl, states: &mut usize) -> Option<Lbl> {
+    match lbl {
+        Lbl::Graph(root, definitions) => {
+            let seed = future_value_ranks(definitions)?;
+            let mut marks = vec![0; definitions.len()];
+            future_search(root, definitions, &seed, &mut marks, states, 0)
+        }
+        other => Some(other.clone()),
+    }
+}
+
 /// Refine the region's colors until their class pattern stops refining or
 /// a size guard stops them. Per-state work, never a search state.
 fn refine_to_point(
@@ -1488,15 +2039,17 @@ fn refine_to_point(
                         vec![
                             Lbl::Lit(use_.kind.to_string()),
                             Lbl::Lit(use_.index.to_string()),
-                            color_substitute(&use_.label, &previous),
+                            future_summary(&color_substitute(&use_.label, &previous)),
                         ],
                     )
                 })
                 .collect();
             consumers.sort();
+            let mut inputs: Vec<_> = deps[slot].iter().map(|&dep| previous[dep]).collect();
+            inputs.sort_unstable();
             sigs.push(Sig {
-                base: color_substitute(&inits[slot], &previous),
-                inputs: deps[slot].iter().map(|&dep| previous[dep]).collect(),
+                base: future_summary(&color_substitute(&inits[slot], &previous)),
+                inputs,
                 consumers,
                 prev_color: previous[slot],
             });
@@ -1587,6 +2140,14 @@ impl RegionProjection<'_> {
                 Box::new(self.label(right)?),
                 *prim,
             ),
+            Lbl::Flat(op, leaves, prim) => {
+                let mut leaves = leaves
+                    .iter()
+                    .map(|leaf| self.label(leaf))
+                    .collect::<Option<Vec<_>>>()?;
+                leaves.sort();
+                Lbl::Flat(*op, leaves, *prim)
+            }
             Lbl::Other(kind, children) => Lbl::Other(
                 kind.clone(),
                 children
@@ -1631,22 +2192,34 @@ fn find_branchable_tie(
     None
 }
 
-/// The region's canonical order: refine, branch on each member of the
-/// first unproven tie in a bounded DFS, and take the smallest complete
-/// labeled candidate. `None` when the expanded-state budget is crossed;
-/// the whole region stays opaque.
+/// A complete region candidate preserves joint future sharing.
 struct Candidate {
     declarations: Vec<Lbl>,
     consumers: Vec<(u8, usize, Color, Lbl)>,
+    context: Lbl,
     order: Vec<usize>,
 }
 
+struct RegionLabels<'a> {
+    base: &'a [Lbl],
+    nodes: &'a [usize],
+    deps: &'a [Vec<usize>],
+    uses: &'a [Use],
+    context: &'a Lbl,
+}
+
 fn complete_candidate(
-    inits: &[Lbl],
-    nodes: &[usize],
-    uses: &[Use],
+    graph: &RegionLabels<'_>,
     order: Vec<usize>,
-) -> Candidate {
+    states: &mut usize,
+) -> Option<Candidate> {
+    let RegionLabels {
+        base: inits,
+        nodes,
+        uses,
+        context,
+        ..
+    } = graph;
     let mut positions = vec![0; order.len()];
     for (position, &slot) in order.iter().enumerate() {
         positions[slot] = Color::try_from(position).expect("a bounded region position fits u32");
@@ -1664,31 +2237,37 @@ fn complete_candidate(
     let mut consumers: Vec<_> = uses
         .iter()
         .map(|use_| {
-            (
+            Some((
                 use_.kind,
                 use_.index,
                 positions[slots[&use_.node]],
-                color_substitute(&use_.label, &positions),
-            )
+                future_normalize(&color_substitute(&use_.label, &positions), states)?,
+            ))
         })
-        .collect();
+        .collect::<Option<Vec<_>>>()?;
     consumers.sort();
-    Candidate {
+    let context = future_normalize(&color_substitute(context, &positions), states)?;
+    Some(Candidate {
         declarations,
         consumers,
+        context,
         order,
-    }
+    })
 }
 
 fn label_region_search(
-    base: &[Lbl],
+    graph: &RegionLabels<'_>,
     inits: &[Lbl],
-    nodes: &[usize],
-    deps: &[Vec<usize>],
-    uses: &[Use],
     states: &mut usize,
     depth: usize,
 ) -> Option<Candidate> {
+    let RegionLabels {
+        base,
+        nodes,
+        deps,
+        uses,
+        ..
+    } = graph;
     *states += 1;
     if *states > MAX_LABEL_STATES {
         return None;
@@ -1702,11 +2281,13 @@ fn label_region_search(
                 "I".into(),
                 vec![Lbl::Lit(depth.to_string()), base[member].clone()],
             );
-            let candidate =
-                label_region_search(base, &marked, nodes, deps, uses, states, depth + 1)?;
+            let candidate = label_region_search(graph, &marked, states, depth + 1)?;
             if best.as_ref().is_none_or(|winner| {
-                (&candidate.declarations, &candidate.consumers)
-                    < (&winner.declarations, &winner.consumers)
+                (
+                    &candidate.declarations,
+                    &candidate.consumers,
+                    &candidate.context,
+                ) < (&winner.declarations, &winner.consumers, &winner.context)
             }) {
                 best = Some(candidate);
             }
@@ -1714,7 +2295,7 @@ fn label_region_search(
         return best;
     }
     let order = kahn_order(&colors, deps, nodes.len())?;
-    Some(complete_candidate(base, nodes, uses, order))
+    complete_candidate(graph, order, states)
 }
 
 /// Emit dependency-ready nodes in exact color order.
@@ -1741,6 +2322,69 @@ fn kahn_order(colors: &[Color], deps: &[Vec<usize>], n: usize) -> Option<Vec<usi
         }
     }
     (order.len() == n).then_some(order)
+}
+
+fn label_affected(lbl: &Lbl, affected: &[bool]) -> bool {
+    match lbl {
+        Lbl::Ref(Value {
+            port: Port::Node(index),
+            ..
+        }) => affected[*index],
+        Lbl::Op(_, left, right, _) => {
+            label_affected(left, affected) || label_affected(right, affected)
+        }
+        Lbl::Flat(_, children, _) | Lbl::Other(_, children) => {
+            children.iter().any(|child| label_affected(child, affected))
+        }
+        _ => false,
+    }
+}
+
+fn region_context(
+    slots: &BTreeMap<usize, usize>,
+    producers: &[Producer],
+    uses: &[Use],
+    sealed: &[Option<(usize, usize)>],
+) -> Option<Lbl> {
+    let mut affected = vec![false; producers.len()];
+    let mut descendants = Vec::new();
+    for (index, producer) in producers.iter().enumerate() {
+        affected[index] = slots.contains_key(&index) || label_affected(&producer.init, &affected);
+        if affected[index] && !slots.contains_key(&index) {
+            descendants.push(Lbl::Ref(Value {
+                port: Port::Node(index),
+                prim: Some(producer.prim),
+            }));
+        }
+    }
+    let mut roots: Vec<_> = uses
+        .iter()
+        .filter(|use_| use_.kind != USE_DOWN && label_affected(&use_.label, &affected))
+        .map(|use_| (use_.kind, use_.index, &use_.label))
+        .collect();
+    roots.sort();
+    roots.dedup();
+    let roots = roots
+        .into_iter()
+        .map(|(kind, index, label)| {
+            Lbl::Other(
+                "root".into(),
+                vec![
+                    Lbl::Lit(kind.to_string()),
+                    Lbl::Lit(index.to_string()),
+                    label.clone(),
+                ],
+            )
+        })
+        .collect();
+    let context = Lbl::Other(
+        "context".into(),
+        vec![
+            Lbl::Other("roots".into(), roots),
+            Lbl::Flat('#', descendants, PrimTy::Bool),
+        ],
+    );
+    region_label(&context, slots, producers, sealed)
 }
 
 /// Label one region's producers from their dependency edges and their
@@ -1787,9 +2431,16 @@ fn schedule_region(
             })
         })
         .collect::<Option<_>>()?;
+    let context = region_context(&slots, producers, uses, sealed)?;
+    let graph = RegionLabels {
+        base: &inits,
+        nodes,
+        deps: &deps,
+        uses: &region_uses,
+        context: &context,
+    };
     let mut states = 0usize;
-    label_region_search(&inits, &inits, nodes, &deps, &region_uses, &mut states, 0)
-        .map(|candidate| candidate.order)
+    label_region_search(&graph, &inits, &mut states, 0).map(|candidate| candidate.order)
 }
 
 /// Record the producer uses the sites carry on `kind` with `index`, and
@@ -1951,6 +2602,8 @@ impl BlockScan {
                 }
             }
         }
+        deps.sort_unstable();
+        deps.dedup();
         let prim = init.prim().expect("a proven initializer");
         self.producers.push(Producer {
             stmt: index,
@@ -2128,6 +2781,7 @@ impl BlockScan {
                 BindingPlan {
                     offset: destination - source,
                     prim: Some(producer.prim),
+                    active: !self.regions[producer.region].dead,
                     port: Port::Sealed(
                         region_seq[producer.region],
                         permutation[producer.stmt] - self.regions[producer.region].start,
@@ -2146,6 +2800,17 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
         (scope.frozen, scope.seq, scope.next_local)
     };
     if frozen || renamer.depth() > MAX_BLOCK_DEPTH {
+        record_all_opaque(renamer, block);
+        return;
+    }
+    if block.stmts.iter().any(|stmt| match stmt {
+        syn::Stmt::Local(local) => local
+            .init
+            .as_ref()
+            .is_some_and(|init| !crate::algebra::within_bounds(&init.expr)),
+        syn::Stmt::Expr(expr, _) => !crate::algebra::within_bounds(expr),
+        syn::Stmt::Item(_) | syn::Stmt::Macro(_) => false,
+    }) {
         record_all_opaque(renamer, block);
         return;
     }
