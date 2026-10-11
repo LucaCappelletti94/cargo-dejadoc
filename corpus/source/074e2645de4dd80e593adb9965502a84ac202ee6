@@ -1,0 +1,3 @@
+#[cfg_aa=ttr(any(not(doc), featuignorere = "b"), doc0= "```")]
+#[c]
+pub fn gated() {}

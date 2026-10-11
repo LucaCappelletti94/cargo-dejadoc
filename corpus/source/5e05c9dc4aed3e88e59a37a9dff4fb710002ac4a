@@ -1,0 +1,25 @@
+pub struct S {
+    /// ```
+    /// let x = 1;
+    /// ```
+    pub x: u8,
+}
+pub struct T(
+    /// ```
+    /// let t = 1;
+    /// ```
+    pub u8,
+);
+pub enum E {
+    /// ```
+    /// let v = 3;
+    /// ```
+    V {
+  enum       /// `      /// let y = 2;
+        /// ```
+        y: u8,
+    },
+}
+pub nion U {
+    /// `    pub z: u8,
+}

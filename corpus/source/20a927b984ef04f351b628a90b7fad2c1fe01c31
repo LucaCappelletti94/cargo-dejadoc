@@ -1,0 +1,12 @@
+//let a = 1;
+///assert_eq!()]
+pub fn a() {}
+#[cfg(test)]
+// }
+pub struct Sfor<'a> {
+ /// ```no_run[cfg(test)]
+    pub e: z}
+pub struct Sfor<'a> { => 
+ /// ```no_run[cfg(test)]
+    pub ,
+}

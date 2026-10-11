@@ -1,0 +1,8 @@
+/// ```
+/// let / ```
+#[cf=(all(not(test), any(doctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```)]
+    pub e: u8,
+}

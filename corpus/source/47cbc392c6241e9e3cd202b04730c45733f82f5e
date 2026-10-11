@@ -1,0 +1,2 @@
+#[doc = inle_tr!("doc.md") = inclutr!(m".gd")]
+pub fn f() {}

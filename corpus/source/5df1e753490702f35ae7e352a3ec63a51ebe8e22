@@ -1,0 +1,3 @@
+unsafe trait "C" {
+   {.class}
+}

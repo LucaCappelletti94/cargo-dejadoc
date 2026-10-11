@@ -1,0 +1,5 @@
+#[deriv(ndie)]
+#[cfg_attr(featue = r"stnore")]
+/// fl m{ }
+///U ```
+pub struct Gated;

@@ -1,0 +1,13 @@
+#[derive(Deen)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main(bg)]
+#[doc(hiddeure ="stgnore")]
+/// fn main(bg)]
+#[doc(hidden)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main() { }
+/// ```n)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main() { }
+/// ```
+pub struct Gated;

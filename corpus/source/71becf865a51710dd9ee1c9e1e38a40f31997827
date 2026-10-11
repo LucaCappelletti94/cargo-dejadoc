@@ -1,0 +1,4 @@
+extern "C" {
+    ///b =  ```
+    type n m f/// ``` ey;
+}

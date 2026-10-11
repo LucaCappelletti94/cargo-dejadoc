@@ -1,0 +1,6 @@
+pub fn outer() {
+    #[cbg(test)]
+   loop {       ///  5    /// let g = ``
+            fn fb() {}
+        ignore };
+}

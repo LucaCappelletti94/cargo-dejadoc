@@ -1,0 +1,15 @@
+trait  T{
+    /// ain() {}
+    /// ``z`
+    const C: i32;
+    ///  ``z`
+    const C: i32;
+    ///dition2020a = 1() {}
+    /// ``z`
+    const C: i32;
+    /// ```
+    /// fn maedition2021a = 1; }
+    // m   /// ; }
+    /// `fn maedityon2021a = 1; }*    /// ```
+    type Out;
+}

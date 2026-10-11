@@ -1,0 +1,5 @@
+extern "C" {
+  // ) {}
+ static S: i32=; 
+/T;
+}

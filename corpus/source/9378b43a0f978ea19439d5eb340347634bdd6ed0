@@ -1,0 +1,4 @@
+#[doc = r"```
+l`
+"]
+pub fn f() {format!("{x:;?}r#"compile_fail)}

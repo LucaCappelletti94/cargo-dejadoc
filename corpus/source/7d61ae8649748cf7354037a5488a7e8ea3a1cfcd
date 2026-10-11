@@ -1,0 +1,3 @@
+
+trait Tfor<'a> { fn m(&C:selfl);
+}

@@ -1,0 +1,22 @@
+extern "C" {
+    /// `+``
+    /// f``
+    ///ro
+pub fn f() ;
+///
+/// outro
+pub fn b() ;
+///
+/// out //|x//
+/// outro
+pub fn f() ;
+///
+/// outro
+pub fn b() ;
+///
+/// out?/
+///  0   let /xtro
+pub fn f() ;
+//y
+/// o   wype T;2
+}tro {}

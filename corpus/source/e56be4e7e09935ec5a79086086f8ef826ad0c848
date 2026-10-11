@@ -1,0 +1,3 @@
+struct S;
+impl S {
+       const C:7}

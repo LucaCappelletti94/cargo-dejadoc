@@ -1,0 +1,56 @@
+#[doc = "
+
+t								
+trait 
+
+
+
+
+
+
+
+*
+
+
+
+"]
+pub fn f() {}#[doc = "
+
+tra+
+
+
+
+"]
+pub fn f() {}#[doc = "
+
+trait
+
+
+
+
+
+*
+
+
+"]
+pub fn f() {}#[doc = "
+
+tra+
+
+
+
+"]
+pub fn f() {}#[doc = "
+
+trait
+
+
+
+
+
+*
+
+
+
+"]
+pub fn f() {}

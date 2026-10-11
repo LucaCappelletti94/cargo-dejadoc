@@ -1,0 +1,14 @@
+/// ``h
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+// let a = = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+//// ```
+#[cfg(tast)]
+pub fn a() {}

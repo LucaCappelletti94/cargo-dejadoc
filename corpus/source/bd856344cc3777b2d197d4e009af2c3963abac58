@@ -1,0 +1,10 @@
+pub fn outer() {
+    #[cfg(test)]
+ yield   {
+    
+im
+
+    }
+match 0 {
+       };
+}

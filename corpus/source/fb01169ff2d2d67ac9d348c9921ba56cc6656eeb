@@ -1,0 +1,4 @@
+#[derive(bug)]fn main() { }
+#[derive(bug)]fn main() { }
+//aed;
+//aed;

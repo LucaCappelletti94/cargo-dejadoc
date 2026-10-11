@@ -1,0 +1,10 @@
+//@genera/
+//@generated~t o
+
+///>0#rformat_argso
+extern fn F() {}
+
+///>0#ro
+extern fn F() {}
+>0#ro
+extern fn F() {}

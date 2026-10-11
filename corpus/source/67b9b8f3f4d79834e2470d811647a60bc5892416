@@ -1,0 +1,11 @@
+extern "C" {
+    /// ```
+    // fn main() { {}
+/// ``
+    // fn main() { {}
+/// ```
+pub static S: i33 = 1i32;
+    //``
+pub static S: i32 = 1;
+///n mni(a) #![allow(  type T;
+}

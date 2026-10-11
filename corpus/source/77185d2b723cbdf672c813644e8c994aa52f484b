@@ -1,0 +1,6 @@
+pub fn outer() {
+    #[doc(test{.class})]
+   macro_rules!A  {
+     
+    };
+}

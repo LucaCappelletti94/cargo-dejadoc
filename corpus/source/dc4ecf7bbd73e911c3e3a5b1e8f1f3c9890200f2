@@ -1,0 +1,7 @@
+//s}for d doc{}
+
+mod doc{//s}
+
+mod doc{}
+
+mod doc{}}

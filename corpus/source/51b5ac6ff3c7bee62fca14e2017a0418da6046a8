@@ -1,0 +1,26 @@
+/// Bet***e ~~~
+ enum EX{   }
+/// ` t,tsld~ ~e/~
+// **********e ~~~
+ enum EX{   }
+/// ```#[fihte**************e ~~~
+ enum EX{   }
+/// ` tld~ ~e/~
+// **********e ~~~
+ enum EX{   }
+/// ```#[doc ciefi t,tsld~ ~e/~
+// f=22;
+///
+/// *****************e ~~~
+ enum EX{   }
+/// `t ,ldts~ ~e/~
+// **********e ~~~
+ enum EX{   }
+/// ```#[ddoc ciefi t,tsld~ ~e/~
+// f=/
+/// *****************e ~~~
+enum EX{   }
+/// ` t,tsld~ ~e/~
+// **********e ~~~
+ enum EX{   }
+/// ```#[doc r(pub}
