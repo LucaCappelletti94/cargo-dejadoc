@@ -1,3 +1,0 @@
-trait PiGo {
-    fn f(&self, pinfor<'a>o: u8) -z> u8 { pino }
-}

@@ -1,7 +1,0 @@
-fn mtest_harnessain() {
- 5  *  let x = in  1
-;    {
-        let1;
-   assert_eq!(y*, 3);
-    }
-}

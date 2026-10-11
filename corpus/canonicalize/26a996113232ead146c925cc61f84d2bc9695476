@@ -1,1 +1,0 @@
-type zz = usize; const q: usize = 2; struct H<const r: usize, T> { n: core::markhantomData }b;

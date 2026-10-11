@@ -1,2 +1,0 @@
-let r#type = 1;
-println!("{}", r3type);

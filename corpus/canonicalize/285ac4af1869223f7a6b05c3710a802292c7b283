@@ -1,2 +1,0 @@
-3&----return &---------------------------------return &-------------------------------------------------------return &---------------------turn &---------------------------------IIIIIIIIIIIIIIIII--------return &-----------------------------IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII--------IIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIIII------let x = 1;
-write!(out, "{--x} {}", x + 1).unwrap();

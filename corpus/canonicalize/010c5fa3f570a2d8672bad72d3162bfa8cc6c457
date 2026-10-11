@@ -1,1 +1,0 @@
-mod r { pub fn p() {} pub fn q() { }#![allow(dead_code)] r::q(); }

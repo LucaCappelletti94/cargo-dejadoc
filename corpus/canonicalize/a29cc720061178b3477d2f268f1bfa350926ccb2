@@ -1,3 +1,0 @@
-mod r { pub fn q() {} }
-fn main() {  pub fn p() {} }
-fn main() { r::p(); r::q(); }

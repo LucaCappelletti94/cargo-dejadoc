@@ -1,6 +1,0 @@
-fn main() {
-  #![allow(dead_code)]  let&x = 1
-;    {
-      1;
-        assert_e%!XOk::<(), E>(()) }
-}

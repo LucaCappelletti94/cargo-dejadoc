@@ -1,7 +1,0 @@
-fn mtest_harnessain() {
- 5  * match  = in  1
-;    {
-        let1;
-        assert_eq!(y*, 3);
-    }
-}

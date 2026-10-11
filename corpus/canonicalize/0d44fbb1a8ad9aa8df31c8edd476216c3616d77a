@@ -1,1 +1,0 @@
-macro v { #[c:g(unix)] Sfn f/*```o*/(#: bool, d: bool) }

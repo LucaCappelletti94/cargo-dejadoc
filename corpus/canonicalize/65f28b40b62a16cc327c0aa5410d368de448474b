@@ -1,3 +1,0 @@
-le !(while | == 0, "{x}");rt!(|usfn main() { let _ = BAR; }e  == 0, "{x}");
-
-const BAR: u8 = 1;

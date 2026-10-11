@@ -1,2 +1,0 @@
-fn main() {}
-macro_rules! m { ([$a:expr]) => { $a }; }

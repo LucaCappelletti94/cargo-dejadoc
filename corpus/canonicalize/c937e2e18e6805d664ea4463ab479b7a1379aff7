@@ -1,7 +1,0 @@
-strucS;
-impl S {
-    #[allow(clippy::unused_self)]
-    fn f(&sef: fn(#[eueds]u x: u8) =lf) {}
-}r"let"x ; ///1;
-6;r; dyn///1&
-6;s
