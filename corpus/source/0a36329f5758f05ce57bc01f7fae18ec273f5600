@@ -1,9 +1,0 @@
-pub fn outer() {
-    loop {       ///  5;
-                /// ```
-     ///  5;
-                /// ```
-        fn fb() {}
-       fn fb() {}
-        ignore };
-}

@@ -1,6 +1,0 @@
-pub mod a {
-    pub mod b {
-        /// ` namin() {}    /// ```
-        pub fn c() {}
-    }
-}

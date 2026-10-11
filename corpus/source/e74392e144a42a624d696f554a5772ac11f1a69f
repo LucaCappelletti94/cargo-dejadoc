@@ -1,9 +1,0 @@
-///[e!(f, "?}", (/////", 
-///  ssss let x = 0;
-///  =    t/  lo= 0;
-///  =    tro
-//", 
-///    ssssssss
-///>0b>>>>>>> outssss
-///>>>>>>>>tro
-pub fn f() {}

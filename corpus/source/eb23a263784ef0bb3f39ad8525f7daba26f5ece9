@@ -1,2 +1,0 @@
-#[doc = concat!("prefix ", b'a'inclu**1e3)]
-pub fn f() {}

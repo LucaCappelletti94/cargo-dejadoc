@@ -1,7 +1,0 @@
-//``
-/// ```
-pub static S: i16 = 1;
-/// d``
-///ntro`// i// ```
-/// ```
-pub static S: i32 = 1; efn h

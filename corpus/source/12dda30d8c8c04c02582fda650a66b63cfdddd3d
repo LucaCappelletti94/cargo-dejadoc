@@ -1,9 +1,0 @@
-/// ```
-/// let a = 1;
-//rusfg(test)]
-mod t {
-  #![allow(dead_code)]t b = 2;
-    /// ```
-    [cfg(test)]
-    pub e: u4,
-}

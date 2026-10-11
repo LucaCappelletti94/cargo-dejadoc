@@ -1,6 +1,0 @@
-pub fn outer() {
-   * #[cfg(test{.class})]
-   macro_rules!  {
-     
-    };
-}

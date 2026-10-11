@@ -1,2 +1,0 @@
-#[doc = con(t!("parnesdoc"))]
-pub fn f() {}

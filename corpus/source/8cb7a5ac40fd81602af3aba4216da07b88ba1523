@@ -1,5 +1,0 @@
-struct S;
-impl S {
-   /// ```
-    type T;
-}

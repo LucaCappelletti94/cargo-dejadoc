@@ -1,9 +1,0 @@
-trait T {
-    /// //*// ```
-    const C: i32;  //   /// fn main() {`l}
-    /// ```
-    const C: i32;
-    /// ```jjjjjjjjjjjjjjjjjjjj ```
-    const C: i32;  const C: i32;
-    //UUUUUU/ *6&6?*********Out;
-}
