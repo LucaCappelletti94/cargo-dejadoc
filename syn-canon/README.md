@@ -44,7 +44,7 @@ assert_ne!(
 );
 ```
 
-Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, declarations retain their distinct origins, and general `==` and `!=` comparisons keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
+Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, retained declarations keep distinct origins, and general `==` and `!=` comparisons keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
 
 ```rust
 let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
@@ -77,6 +77,28 @@ assert_eq!(
 assert_ne!(
     form("fn f() -> usize { let n = 1; let _ = if true { n } else { 2u8 }; std::mem::size_of_val(&n) }"),
     form("fn f() -> usize { let n = 1; let _ = n; std::mem::size_of_val(&n) }"),
+);
+```
+
+Passing-mode comparison substitutes unobserved stable primitive aliases and total primitive temporaries, expands primitive tuple literals under simple by-value bindings, and removes unused total primitive bindings. Tuple elements resolve before their bindings and qualify together. Storage, mutable versions, opaque uses, inference constraints and destruction boundaries prevent erasure, while source, substitution, labeling or final-syntax exhaustion preserves the complete affected region.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+let original = "fn f(input: u32) -> (u32, u32) {
+    let mask = input & 15u32;
+    let copied = mask;
+    let temp = copied ^ 3u32;
+    let (x, y) = (mask | 7u32, mask >> 1);
+    let dead = 17u32;
+    (temp, y)
+}";
+let expanded = "fn g(input: u32) -> (u32, u32) {
+    ((input & 15u32) ^ 3u32, (input & 15u32) >> 1)
+}";
+assert_eq!(form(original), form(expanded));
+assert_ne!(
+    syn_canon::canonicalize_failing(syn::parse_str(original).unwrap()),
+    syn_canon::canonicalize_failing(syn::parse_str(expanded).unwrap()),
 );
 ```
 

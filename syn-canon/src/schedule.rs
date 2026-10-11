@@ -2,6 +2,7 @@
 
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
@@ -13,6 +14,8 @@ use syn::visit::Visit;
 use crate::alpha::{MacroArgs, Renamer};
 use crate::reference::{BlockProof, ReferenceFacts};
 use crate::scope::{FreeKey, PrimTy, unraw};
+
+mod values;
 
 /// The graph nodes a region may still be labeled with.
 pub(crate) const MAX_REGION_NODES: usize = 16_384;
@@ -210,6 +213,7 @@ pub(crate) struct ScopeState {
     pub(crate) next_local: usize,
     /// A function-level `cfg` or `cfg_attr` the source cannot settle.
     pub(crate) cfg: bool,
+    pub(crate) observed: BTreeSet<Port>,
 }
 
 pub(crate) struct BindingPlan {
@@ -222,6 +226,7 @@ pub(crate) struct BindingPlan {
 pub(crate) struct BlockFacts {
     plans: BTreeMap<*const syn::Pat, BindingPlan>,
     permutation: Vec<usize>,
+    original: Option<syn::Block>,
 }
 
 impl BlockFacts {
@@ -231,6 +236,19 @@ impl BlockFacts {
 
     pub(crate) fn can_rewrite(&self) -> bool {
         !self.permutation.is_empty()
+    }
+
+    pub(crate) fn original_on_exhaustion(
+        &mut self,
+        block: &syn::Block,
+        outer: usize,
+    ) -> Option<syn::Block> {
+        let original = self.original.take()?;
+        if values::within_bounds(block, outer) {
+            None
+        } else {
+            Some(original)
+        }
     }
 
     // Cycle-follow the transposition in place, so the loop keeps its own index.
@@ -296,7 +314,7 @@ fn format_refs(format: &str, args: &[syn::Expr]) -> Vec<String> {
                 '}' => break,
                 ':' if !in_spec => in_spec = true,
                 _ if in_spec => spec.push(c),
-                _ if c.is_alphanumeric() || c == '_' => name.push(c),
+                _ if format_name_char(c) => name.push(c),
                 _ => {}
             }
         }
@@ -311,7 +329,7 @@ fn format_refs(format: &str, args: &[syn::Expr]) -> Vec<String> {
             let start = before
                 .char_indices()
                 .rev()
-                .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+                .find(|(_, c)| !format_name_char(*c))
                 .map_or(0, |(index, c)| index + c.len_utf8());
             if start < before.len() {
                 names.push(before[start..].to_string());
@@ -322,6 +340,10 @@ fn format_refs(format: &str, args: &[syn::Expr]) -> Vec<String> {
         .into_iter()
         .filter(|name| !args.iter().any(|arg| is_arg_path(arg, name)))
         .collect()
+}
+
+fn format_name_char(c: char) -> bool {
+    !c.is_whitespace() && (!c.is_ascii_punctuation() || c == '_')
 }
 
 fn is_arg_path(arg: &syn::Expr, name: &str) -> bool {
@@ -1784,6 +1806,31 @@ fn macro_label(
         children.push(label);
         sites.extend(a_sites);
     }
+    if let Some((position, _)) = crate::drift::format_operand(&mac.path)
+        && let Some(argument) = args.get(position)
+    {
+        if let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(lit),
+            ..
+        }) = argument
+        {
+            sites.extend(
+                format_refs(&lit.value(), &args)
+                    .into_iter()
+                    .filter_map(|name| {
+                        env.get(&name).map(|value| Site {
+                            port: value.port.clone(),
+                            ctx: Ctx::Value,
+                        })
+                    }),
+            );
+        } else {
+            sites.extend(env.values().map(|value| Site {
+                port: value.port.clone(),
+                ctx: Ctx::Value,
+            }));
+        }
+    }
     (Lbl::Other(alloc::format!("m:{name}"), children), sites)
 }
 
@@ -2780,7 +2827,7 @@ fn note_sites(
     }
 }
 
-fn record_all_opaque(renamer: &mut Renamer, block: &mut syn::Block) {
+pub(crate) fn record_all_opaque(renamer: &mut Renamer, block: &mut syn::Block) {
     renamer.facts.blocks.insert(
         core::ptr::from_ref(block),
         BlockProof {
@@ -2792,6 +2839,7 @@ fn record_all_opaque(renamer: &mut Renamer, block: &mut syn::Block) {
     renamer.push_facts(BlockFacts {
         plans: BTreeMap::new(),
         permutation: Vec::new(),
+        original: None,
     });
 }
 
@@ -2800,6 +2848,8 @@ struct BlockScan {
     producers: Vec<Producer>,
     regions: Vec<Region>,
     uses: Vec<Use>,
+    observed: BTreeSet<Port>,
+    forbidden: BTreeSet<Port>,
     tags: Vec<u8>,
     tail_types: Vec<Option<PrimTy>>,
     locals: usize,
@@ -2816,6 +2866,8 @@ impl BlockScan {
             producers: Vec::new(),
             regions: Vec::new(),
             uses: Vec::new(),
+            observed: BTreeSet::new(),
+            forbidden: BTreeSet::new(),
             tags: vec![OPAQUE; count],
             tail_types: Vec::new(),
             locals,
@@ -2827,6 +2879,14 @@ impl BlockScan {
     }
 
     fn note(&mut self, sites: &[Site], kind: u8, index: usize, label: &Lbl) {
+        for site in sites {
+            if site.ctx == Ctx::Storage {
+                self.observed.insert(site.port.clone());
+            }
+            if site.ctx == Ctx::Storage || !matches!(kind, USE_DOWN | USE_TAIL) {
+                self.forbidden.insert(site.port.clone());
+            }
+        }
         note_sites(
             sites,
             &mut self.uses,
@@ -2969,10 +3029,12 @@ impl BlockScan {
             StmtKind::Plain => self.note(&sites, USE_OPAQUE, index, &label),
         }
         if let Some(target) = assign_target(stmt) {
-            if let Some(value) = self.env.get(&target)
-                && let Port::Node(id) = &value.port
-            {
-                self.regions[self.producers[*id].region].dead = true;
+            if let Some(value) = self.env.get(&target) {
+                self.observed.insert(value.port.clone());
+                self.forbidden.insert(value.port.clone());
+                if let Port::Node(id) = &value.port {
+                    self.regions[self.producers[*id].region].dead = true;
+                }
             }
             self.invalidate(target);
         }
@@ -3003,18 +3065,19 @@ impl BlockScan {
             return;
         };
         for (position, capture) in format_refs(&lit.value(), &args).into_iter().enumerate() {
-            if let Some(value) = self.env.get(&capture)
-                && let Port::Node(node) = &value.port
-            {
-                self.uses.push(Use {
-                    node: *node,
-                    kind: USE_CAPTURE,
-                    index,
-                    label: Lbl::Other(
-                        "capture".into(),
-                        vec![Lbl::Int(position as u128, None), label.clone()],
-                    ),
-                });
+            if let Some(value) = self.env.get(&capture) {
+                self.forbidden.insert(value.port.clone());
+                if let Port::Node(node) = &value.port {
+                    self.uses.push(Use {
+                        node: *node,
+                        kind: USE_CAPTURE,
+                        index,
+                        label: Lbl::Other(
+                            "capture".into(),
+                            vec![Lbl::Int(position as u128, None), label.clone()],
+                        ),
+                    });
+                }
             }
         }
     }
@@ -3141,6 +3204,14 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
         record_all_opaque(renamer, block);
         return;
     }
+    let original = match values::normalize(renamer, block) {
+        values::Outcome::Unchanged => None,
+        values::Outcome::Rewritten(original) => Some(original),
+        values::Outcome::Exhausted => {
+            record_all_opaque(renamer, block);
+            return;
+        }
+    };
     let mut env = BTreeMap::new();
     renamer.frame_env(&mut env);
     let mut scan = BlockScan::new(env, locals, block.stmts.len());
@@ -3149,6 +3220,9 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
     }
     scan.finish_tail(renamer, block);
     if scan.over_budget {
+        if let Some(original) = original {
+            *block = original;
+        }
         record_all_opaque(renamer, block);
         let scope = renamer.scopes.last_mut().expect("a fn scope");
         scope.seq = seq;
@@ -3162,7 +3236,16 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
             current
         })
         .collect();
+    let frozen = original
+        .as_ref()
+        .map(|_| scan.regions.iter().filter(|region| region.dead).count());
     let orders = scan.schedule(&region_seq);
+    if frozen.is_some_and(|count| count != scan.regions.iter().filter(|region| region.dead).count())
+    {
+        *block = original.expect("a rewritten block retains its original");
+        record_all_opaque(renamer, block);
+        return;
+    }
     let permutation = scan.permutation(&orders, block.stmts.len());
     let plans = scan.binding_plans(block, &permutation, &region_seq);
     let mut types = vec![None; block.stmts.len()];
@@ -3176,6 +3259,17 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
     let scope = renamer.scopes.last_mut().expect("a fn scope");
     scope.seq = seq;
     scope.next_local = scan.locals;
+    scope.observed.extend(
+        scan.observed
+            .into_iter()
+            .filter(|port| !matches!(port, Port::Node(_))),
+    );
+    scope.observed.extend(
+        plans
+            .values()
+            .filter(|plan| !plan.active)
+            .map(|plan| plan.port.clone()),
+    );
     renamer.facts.blocks.insert(
         core::ptr::from_ref(block),
         BlockProof {
@@ -3184,5 +3278,9 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
             tail_types: scan.tail_types,
         },
     );
-    renamer.push_facts(BlockFacts { plans, permutation });
+    renamer.push_facts(BlockFacts {
+        plans,
+        permutation,
+        original,
+    });
 }

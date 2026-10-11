@@ -106,7 +106,7 @@ fn target(text: &str) -> TargetScan {
 fn algebra_contextual_function_groups_preserve_modules_owners_and_neighbours() {
     let text = include_str!("fixtures/algebraws/src/lib.rs");
     let target = target(text);
-    for threshold in [0, 30] {
+    for threshold in [0, 10] {
         let report = Dejadoc::default()
             .functions()
             .fn_min_tokens(threshold)
@@ -133,7 +133,7 @@ fn algebra_contextual_function_groups_preserve_modules_owners_and_neighbours() {
                 vec!["algebra::right::first", "algebra::right::same"],
             ]
         );
-        assert!(function_groups.iter().all(|group| group.tokens >= 30));
+        assert!(function_groups.iter().all(|group| group.tokens == 10));
         for group in function_groups {
             assert!(group.remedy.is_some());
             assert!(group.sites.iter().all(|site| {

@@ -1032,7 +1032,7 @@ mod tests {
             ("let x = -0;", "let x = 0;"),
             ("let x = -0u8;", "let x = 0u8;"),
             ("let x = -0.0f32;", "let x = 0.0f32;"),
-            ("let x = -1i8;", "let x = 1i8;"),
+            ("let x = -1i8; g(x);", "let x = 1i8; g(x);"),
             (
                 "let f: for<'a, 'b> fn(&'a u8, &'b u8) = read;",
                 "let f: fn(&u8, &u8) = read;",

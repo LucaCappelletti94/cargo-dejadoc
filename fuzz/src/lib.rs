@@ -450,3 +450,149 @@ pub fn check_boolean_schedules(data: &[u8]) {
         ]]
     );
 }
+
+/// Primitive value folds keep exact membership and distinct value, storage and evaluation neighbors.
+pub fn check_value_schedules(data: &[u8]) {
+    let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
+    let mask = byte(0);
+    let lo = byte(1) % 128;
+    let bias = 1 + (byte(1) + byte(2)) % 255;
+    let shift = byte(2) % 32;
+    let dead = (byte(0) + byte(1) + byte(2) + 1) % 256;
+    let mask_stmt = format!("let mask=input&{mask}u32;");
+    let alias_stmt = "let copied=mask;";
+    let temp_stmt = format!("let temp=copied^{lo}u32;");
+    let tuple_stmt = format!("let (tx,ty)=(mask|{bias}u32,mask>>{shift}u32);");
+    let dead_stmt = format!("let dead={dead}u32;");
+    let flag_stmt = "let flag=tx>3u32;";
+    let n_stmt = "let n=if flag{true}else{false};";
+    let s: [&str; 7] = [
+        &mask_stmt,
+        alias_stmt,
+        &temp_stmt,
+        &tuple_stmt,
+        &dead_stmt,
+        flag_stmt,
+        n_stmt,
+    ];
+    let tx_stmt = format!("let tx=mask|{bias}u32;");
+    let ty_stmt = format!("let ty=mask>>{shift}u32;");
+    let fn_code = |parts: &[&str], output: &str| {
+        let prefix = "fn f(input:u32)->(u32,bool,u32){";
+        let capacity = prefix.len() + parts.iter().map(|part| part.len()).sum::<usize>() + output.len() + 1;
+        let mut code = String::with_capacity(capacity);
+        code.push_str(prefix);
+        for part in parts {
+            code.push_str(part);
+        }
+        code.push_str(output);
+        code.push('}');
+        code
+    };
+    let original = fn_code(
+        &[s[0], s[1], s[2], s[3], s[4], s[5], s[6]],
+        "(temp,n,ty)",
+    );
+    let v07_temp = format!("let temp=mask^{lo}u32;");
+    let v07 = fn_code(
+        &[s[0], &v07_temp, s[3], s[4], s[5], s[6]],
+        "(temp,n,ty)",
+    );
+    let v08 = fn_code(
+        &[s[0], s[1], s[3], s[4], s[5], s[6]],
+        &format!("(copied^{lo}u32,n,ty)"),
+    );
+    let v10 = fn_code(
+        &[
+            s[0],
+            s[1],
+            s[2],
+            tx_stmt.as_str(),
+            ty_stmt.as_str(),
+            s[4],
+            s[5],
+            s[6],
+        ],
+        "(temp,n,ty)",
+    );
+    let v18 = fn_code(&[s[0], s[1], s[2], s[3], s[5], s[6]], "(temp,n,ty)");
+    let combined = fn_code(
+        &[s[0], tx_stmt.as_str(), ty_stmt.as_str(), s[5], s[6]],
+        &format!("(mask^{lo}u32,n,ty)"),
+    );
+    let truth_stmt = "let n=if flag{false}else{true};";
+    let truth = fn_code(
+        &[s[0], s[1], s[2], s[3], s[4], s[5], truth_stmt],
+        "(temp,n,ty)",
+    );
+    let origin = fn_code(
+        &[s[0], s[1], s[2], s[3], s[4], s[5], s[6]],
+        "(temp,n,tx)",
+    );
+    let storage = fn_code(
+        &[
+            s[0],
+            s[1],
+            "let _=&copied;",
+            s[2],
+            s[3],
+            s[4],
+            s[5],
+            s[6],
+        ],
+        "(temp,n,ty)",
+    );
+    let evaluation_stmt = format!("let temp=copied|{}u32;", lo + 1);
+    let evaluation = fn_code(
+        &[s[0], s[1], evaluation_stmt.as_str(), s[3], s[4], s[5], s[6]],
+        "(temp,n,ty)",
+    );
+    let site = |item: &str, code: String| DocTest {
+        file: format!("src/{item}.rs"),
+        line: 1,
+        end: None,
+        item: format!("c::{item}"),
+        info: Vec::new(),
+        code,
+        allow: false,
+        self_type: None,
+        public: false,
+    };
+    let report = dejadoc::group(
+        &[
+            site("original", original),
+            site("v07", v07),
+            site("v08", v08),
+            site("v10", v10),
+            site("v18", v18),
+            site("combined", combined),
+            site("truth", truth),
+            site("origin", origin),
+            site("storage", storage),
+            site("evaluation", evaluation),
+        ],
+        2,
+        0,
+    );
+    let groups: Vec<_> = report
+        .groups
+        .iter()
+        .map(|group| {
+            let mut members: Vec<_> =
+                group.sites.iter().map(|site| site.item.as_str()).collect();
+            members.sort_unstable();
+            members
+        })
+        .collect();
+    assert_eq!(
+        groups,
+        [vec![
+            "c::combined",
+            "c::original",
+            "c::v07",
+            "c::v08",
+            "c::v10",
+            "c::v18",
+        ]]
+    );
+}

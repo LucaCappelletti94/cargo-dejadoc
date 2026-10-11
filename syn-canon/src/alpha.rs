@@ -725,6 +725,13 @@ impl<'env> Renamer<'env> {
             && !self.scopes.iter().any(|scope| scope.frozen)
     }
 
+    pub(crate) fn values_allowed(&self) -> bool {
+        self.constants_allowed()
+            && self.prim_fallback
+            && !self.glob_uncertain()
+            && !self.cfg_blocked()
+    }
+
     /// Whether an open frame carries a glob import that may shadow a
     /// type name.
     pub(crate) fn glob_uncertain(&self) -> bool {
@@ -1990,6 +1997,16 @@ impl VisitMut for Renamer<'_> {
             if self.constants_allowed() && !self.glob_uncertain() && !self.cfg_blocked() {
                 let facts = self.last_block_facts().expect("an analyzed block");
                 crate::algebra::normalize(self, block, facts);
+            }
+            if let Some(original) = self
+                .block_facts
+                .last_mut()
+                .expect("an analyzed block")
+                .original_on_exhaustion(block, self.depth - 1)
+            {
+                self.block_facts.pop();
+                *block = original;
+                schedule::record_all_opaque(self, block);
             }
         }
         let complete = analyzed

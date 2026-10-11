@@ -10,6 +10,7 @@ fuzz_target!(|data: &[u8]| {
     dejadoc_fuzz::on_large_stack(move || {
         dejadoc_fuzz::check_dependency_schedules(&data);
         dejadoc_fuzz::check_boolean_schedules(&data);
+        dejadoc_fuzz::check_value_schedules(&data);
         let Ok(code) = std::str::from_utf8(&data) else {
             return;
         };

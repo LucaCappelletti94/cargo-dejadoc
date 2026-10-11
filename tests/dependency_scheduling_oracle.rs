@@ -3,6 +3,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+#[path = "support/dependency_value_oracle.rs"]
+mod value_oracle;
+use value_oracle::{Value, operation};
+
 #[derive(Clone, Copy)]
 enum Producer {
     Argument(usize),
@@ -60,61 +64,21 @@ fn number(order: &[usize], node: usize) -> usize {
         .unwrap()
 }
 
-fn elements(producer: &Producer) -> (char, Vec<(u8, usize)>) {
-    match producer {
-        Producer::Argument(port) => ('&', vec![(0, 15), (1, *port)]),
-        Producer::Previous(input) => ('^', vec![(0, 1), (2, *input)]),
-        Producer::Pair(left, right) => {
-            let mut elems = vec![(2, *left), (2, *right)];
-            elems.sort_unstable();
-            ('^', elems)
-        }
-    }
-}
-
-fn element_text(elem: &(u8, usize)) -> String {
-    match elem.0 {
-        0 => format!("l{}", elem.1),
-        1 => format!("p{}", elem.1),
-        _ => format!("n{}", elem.1),
-    }
-}
-
 fn oracle(nodes: &[Producer], roots: [usize; 2]) -> String {
-    permutations(nodes.len())
-        .iter()
-        .map(|perm| {
-            let pos = |node: usize| {
-                perm.iter()
-                    .position(|&candidate| candidate == node)
-                    .unwrap()
-            };
-            let mut text = String::new();
-            for (slot, &node) in perm.iter().enumerate() {
-                let mark = if slot == pos(roots[0]) && slot == pos(roots[1]) {
-                    "12"
-                } else if slot == pos(roots[0]) {
-                    "1"
-                } else if slot == pos(roots[1]) {
-                    "2"
-                } else {
-                    ""
-                };
-                let (op, mut elems) = elements(&nodes[node]);
-                for elem in &mut elems {
-                    if elem.0 == 2 {
-                        elem.1 = pos(elem.1);
-                    }
-                }
-                elems.sort_unstable();
-                let body: Vec<_> = elems.iter().map(element_text).collect();
-                write!(text, "{mark}{op}{};", body.join(",")).unwrap();
+    let mut values: Vec<Value> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let value = match *node {
+            Producer::Argument(port) => {
+                operation('&', [Value::Parameter(port), Value::Literal(15)])
             }
-            write!(text, "t{},{}", pos(roots[0]), pos(roots[1])).unwrap();
-            text
-        })
-        .min()
-        .unwrap()
+            Producer::Previous(input) => operation('^', [values[input].clone(), Value::Literal(1)]),
+            Producer::Pair(left, right) => {
+                operation('^', [values[left].clone(), values[right].clone()])
+            }
+        };
+        values.push(value);
+    }
+    format!("{:?},{:?}", values[roots[0]], values[roots[1]])
 }
 
 fn source(nodes: &[Producer], roots: [usize; 2], order: &[usize], raw: bool) -> String {

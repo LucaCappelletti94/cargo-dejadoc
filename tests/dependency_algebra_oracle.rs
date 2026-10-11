@@ -3,6 +3,10 @@
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 
+#[path = "support/dependency_value_oracle.rs"]
+mod value_oracle;
+use value_oracle::{Value, operation};
+
 const OPS: [char; 3] = ['&', '|', '^'];
 
 #[derive(Clone, Copy)]
@@ -114,100 +118,36 @@ fn references(producer: &Producer) -> Vec<usize> {
     }
 }
 
-/// The canonical operand collection of a declaration after the explicit
-/// bitwise laws, kind zero for a bare value.
-fn collection(producer: &Producer) -> (u8, Vec<(u8, usize)>) {
-    match producer {
-        Producer::Argument(port) => (1, vec![(0, 15), (1, *port)]),
-        Producer::XorOne(input) => (3, vec![(0, 1), (2, *input)]),
-        Producer::OrOne(input) => (2, vec![(0, 1), (2, *input)]),
-        Producer::Copy(input) => (0, vec![(2, *input)]),
-        Producer::Flat(op, left, right) => bitwise(*op, vec![(2, *left), (2, *right)]),
-        Producer::Left(op, a, b, c) | Producer::Right(op, a, b, c) => {
-            bitwise(*op, vec![(2, *a), (2, *b), (2, *c)])
-        }
-        Producer::LitLeft(op, index, first, second)
-        | Producer::LitRight(op, index, first, second) => bitwise(
-            *op,
-            vec![
-                (2, *index),
-                (0, usize::from(*first)),
-                (0, usize::from(*second)),
-            ],
-        ),
-    }
-}
-
-fn bitwise(op: char, mut elems: Vec<(u8, usize)>) -> (u8, Vec<(u8, usize)>) {
-    let kind: u8 = match op {
-        '&' => 1,
-        '|' => 2,
-        _ => 3,
-    };
-    elems.sort_unstable();
-    if kind == 3 {
-        let literals: Vec<usize> = elems
-            .iter()
-            .filter(|elem| elem.0 == 0)
-            .map(|elem| elem.1)
-            .collect();
-        if literals.len() == 2 {
-            elems.retain(|elem| elem.0 != 0);
-            elems.push((0, literals[0] ^ literals[1]));
-            elems.sort_unstable();
-        }
-    } else {
-        elems.dedup();
-        if elems.len() == 1 {
-            return (0, elems);
-        }
-    }
-    (kind, elems)
-}
-
-fn element_text(elem: &(u8, usize)) -> String {
-    match elem.0 {
-        0 => format!("l{}", elem.1),
-        1 => format!("p{}", elem.1),
-        _ => format!("n{}", elem.1),
-    }
-}
-
 fn oracle(nodes: &[Producer], roots: [usize; 2]) -> String {
-    permutations(nodes.len())
-        .iter()
-        .map(|perm| {
-            let pos = |node: usize| {
-                perm.iter()
-                    .position(|&candidate| candidate == node)
-                    .unwrap()
-            };
-            let mut text = String::new();
-            for (slot, &node) in perm.iter().enumerate() {
-                let mark = if slot == pos(roots[0]) && slot == pos(roots[1]) {
-                    "12"
-                } else if slot == pos(roots[0]) {
-                    "1"
-                } else if slot == pos(roots[1]) {
-                    "2"
-                } else {
-                    ""
-                };
-                let (kind, mut elems) = collection(&nodes[node]);
-                for elem in &mut elems {
-                    if elem.0 == 2 {
-                        elem.1 = pos(elem.1);
-                    }
-                }
-                elems.sort_unstable();
-                let body: Vec<_> = elems.iter().map(element_text).collect();
-                write!(text, "{mark}{kind}{};", body.join(",")).unwrap();
+    let mut values: Vec<Value> = Vec::with_capacity(nodes.len());
+    for node in nodes {
+        let value = match *node {
+            Producer::Argument(port) => {
+                operation('&', [Value::Parameter(port), Value::Literal(15)])
             }
-            write!(text, "t{},{}", pos(roots[0]), pos(roots[1])).unwrap();
-            text
-        })
-        .min()
-        .unwrap()
+            Producer::XorOne(input) => operation('^', [values[input].clone(), Value::Literal(1)]),
+            Producer::OrOne(input) => operation('|', [values[input].clone(), Value::Literal(1)]),
+            Producer::Copy(input) => values[input].clone(),
+            Producer::Flat(op, left, right) => {
+                operation(op, [values[left].clone(), values[right].clone()])
+            }
+            Producer::Left(op, a, b, c) | Producer::Right(op, a, b, c) => operation(
+                op,
+                [values[a].clone(), values[b].clone(), values[c].clone()],
+            ),
+            Producer::LitLeft(op, input, first, second)
+            | Producer::LitRight(op, input, first, second) => operation(
+                op,
+                [
+                    values[input].clone(),
+                    Value::Literal(u32::from(first)),
+                    Value::Literal(u32::from(second)),
+                ],
+            ),
+        };
+        values.push(value);
+    }
+    format!("{:?},{:?}", values[roots[0]], values[roots[1]])
 }
 
 fn source(nodes: &[Producer], roots: [usize; 2], order: &[usize], raw: bool) -> String {
@@ -346,35 +286,24 @@ fn flip(cell: Cell) -> Cell {
     }
 }
 
-fn operand_element(operand: &Operand) -> (u8, usize) {
-    match operand {
-        Operand::Param(port) => (1, usize::from(*port)),
-        Operand::Lit(value) => (
-            0,
-            usize::try_from(*value).expect("the fixture literal fits usize"),
-        ),
-        Operand::Node(index) => (2, *index),
-    }
-}
-
-fn cell_elements(cell: &Cell) -> (u8, Vec<(u8, usize)>) {
-    let kind: u8 = match cell.op {
-        '&' => 1,
-        '|' => 2,
-        _ => 3,
+fn cell_value(cells: &[Cell], node: usize) -> Value {
+    let operand = |input: Operand| match input {
+        Operand::Param(port) => Value::Parameter(usize::from(port)),
+        Operand::Lit(value) => Value::Literal(value),
+        Operand::Node(parent) => cell_value(cells, parent),
     };
-    let mut elems = vec![operand_element(&cell.lhs), operand_element(&cell.rhs)];
-    elems.sort_unstable();
-    if kind != 3 {
-        elems.dedup();
-        if elems.len() == 1 {
-            return (0, elems);
-        }
-    }
-    (kind, elems)
+    let cell = cells[node];
+    operation(cell.op, [operand(cell.lhs), operand(cell.rhs)])
 }
 
 fn cross_graph(cells: &[Cell], obs: Option<[usize; 2]>, roots: [usize; 2]) -> String {
+    let Some(obs) = obs else {
+        return format!(
+            "t{:?},{:?}",
+            cell_value(cells, roots[0]),
+            cell_value(cells, roots[1])
+        );
+    };
     permutations(cells.len())
         .iter()
         .map(|perm| {
@@ -394,28 +323,51 @@ fn cross_graph(cells: &[Cell], obs: Option<[usize; 2]>, roots: [usize; 2]) -> St
                 } else {
                     ""
                 };
-                let (kind, mut elems) = cell_elements(&cells[node]);
-                for elem in &mut elems {
-                    if elem.0 == 2 {
-                        elem.1 = pos(elem.1);
+                let cell = cells[node];
+                let mut kind = match cell.op {
+                    '&' => 1,
+                    '|' => 2,
+                    _ => 3,
+                };
+                let mut elems: Vec<_> = [cell.lhs, cell.rhs]
+                    .into_iter()
+                    .map(|operand| match operand {
+                        Operand::Param(port) => (1, usize::from(port)),
+                        Operand::Lit(value) => (0, usize::try_from(value).unwrap()),
+                        Operand::Node(parent) => (2, pos(parent)),
+                    })
+                    .collect();
+                elems.sort_unstable();
+                if kind != 3 {
+                    elems.dedup();
+                    if elems.len() == 1 {
+                        kind = 0;
                     }
                 }
-                elems.sort_unstable();
-                let body: Vec<_> = elems.iter().map(element_text).collect();
-                write!(
-                    text,
-                    "g{}{}{}{};",
-                    cells[node].region,
-                    mark,
-                    kind,
-                    body.join(",")
-                )
-                .unwrap();
+                let body: Vec<_> = elems
+                    .iter()
+                    .map(|&(tag, port)| {
+                        format!(
+                            "{}{port}",
+                            match tag {
+                                0 => 'l',
+                                1 => 'p',
+                                _ => 'n',
+                            }
+                        )
+                    })
+                    .collect();
+                write!(text, "g{}{mark}{kind}{};", cell.region, body.join(",")).unwrap();
             }
-            if let Some(obs) = obs {
-                write!(text, "o{},{} ", pos(obs[0]), pos(obs[1])).unwrap();
-            }
-            write!(text, "t{},{}", pos(roots[0]), pos(roots[1])).unwrap();
+            write!(
+                text,
+                "o{},{} t{},{}",
+                pos(obs[0]),
+                pos(obs[1]),
+                pos(roots[0]),
+                pos(roots[1])
+            )
+            .unwrap();
             text
         })
         .min()
