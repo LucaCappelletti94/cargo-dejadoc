@@ -79,15 +79,22 @@ fn canon_float_str(s: &str) -> String {
 
 /// Fold arm braces, doc attributes, and `use` shapes in place. When `compiles`, also fold the
 /// spellings only a compiling program makes equivalent.
-pub(crate) fn normalize_file(file: &mut syn::File, compiles: bool) {
+pub(crate) fn normalize_file(
+    file: &mut syn::File,
+    compiles: bool,
+    helpers: &mut crate::helpers::HelperSyntax,
+) {
     if compiles {
         crate::const_items::inline_array_constants(file);
+        helpers.retain_file(file);
     }
     Drift {
         compiles,
+        helpers: Some(&mut *helpers),
         ..Drift::default()
     }
     .visit_file_mut(file);
+    helpers.retain_file(file);
 }
 
 /// The parse-only drift of one block, for an independent context normalization.
@@ -111,7 +118,7 @@ pub(crate) fn fold_fn_body(block: &mut syn::Block) {
 }
 
 #[derive(Default)]
-struct Drift {
+struct Drift<'a> {
     /// The code compiles, so an unneeded `mut` and the semicolon of a `()` block fold.
     compiles: bool,
     /// Inside an impl header's trait path or self type, where a path may not
@@ -119,9 +126,10 @@ struct Drift {
     in_impl_header: bool,
     /// Inside syntax read by a procedural macro.
     in_macro_input: bool,
+    helpers: Option<&'a mut crate::helpers::HelperSyntax>,
 }
 
-impl VisitMut for Drift {
+impl VisitMut for Drift<'_> {
     #[expect(
         clippy::result_large_err,
         reason = "a non-use entry goes back to the list"
@@ -145,6 +153,10 @@ impl VisitMut for Drift {
         reason = "a non-use entry goes back to the list"
     )]
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        let handles = self
+            .helpers
+            .as_mut()
+            .map(|helpers| helpers.take_block(block));
         drop_empty_stmts(&mut block.stmts);
         hoist_uses(
             &mut block.stmts,
@@ -158,6 +170,12 @@ impl VisitMut for Drift {
         semicolon_non_tail_macros(&mut block.stmts);
         if self.compiles {
             drop_block_statement_semicolons(&mut block.stmts);
+        }
+        if let Some(handles) = handles {
+            self.helpers
+                .as_mut()
+                .expect("tracked helper syntax")
+                .put_block(block, handles);
         }
         syn::visit_mut::visit_block_mut(self, block);
     }
@@ -677,7 +695,7 @@ impl VisitMut for Drift {
     }
 }
 
-impl Drift {
+impl Drift<'_> {
     fn enter_attrs(&mut self, attrs: &[syn::Attribute]) -> bool {
         let outer = self.in_macro_input;
         self.in_macro_input = outer || has_macro_attribute(attrs);

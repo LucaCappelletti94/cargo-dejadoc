@@ -84,7 +84,7 @@ fn summary_endpoint(extra: usize, reversed: bool, tail: &str) -> String {
         0 => {}
         1 => body.replace_range(..5, "!p;"),
         2 => body.push_str("p;"),
-        _ => unreachable!(),
+        _ => unreachable!("`extra` is 0, 1 or 2"),
     }
     let statements = if reversed {
         "let b=k(!p);let a=h(p);"
@@ -101,8 +101,9 @@ fn the_summary_domain_at_the_node_cap_still_schedules() {
     let a = summary_endpoint(0, false, "p");
     let b = summary_endpoint(0, true, "p");
     assert_eq!(declaration_nodes(&a, &["h", "g", "k"]), 16_384);
-    assert_eq!(form(&a), form(&b));
-    assert_ne!(form(&a), form(&summary_endpoint(0, false, "false")));
+    let first = form(&a);
+    assert_eq!(first, form(&b));
+    assert_ne!(first, form(&summary_endpoint(0, false, "false")));
 }
 
 #[test]
@@ -127,8 +128,9 @@ fn a_retained_region_keeps_its_dead_caller_binding() {
     let dead = plain.replacen("let a=h(p);", "let dead=true;let a=h(p);", 1);
     let reversed = dead.replacen("let a=h(p);let b=k(!p);", "let b=k(!p);let a=h(p);", 1);
     assert_eq!(declaration_nodes(&dead, &["h", "g", "k"]), 16_385);
-    assert_ne!(form(&dead), form(&plain));
-    assert_ne!(form(&dead), form(&reversed));
+    let with_dead = form(&dead);
+    assert_ne!(with_dead, form(&plain));
+    assert_ne!(with_dead, form(&reversed));
 }
 
 #[test]
@@ -226,13 +228,14 @@ fn exhausted_depth_summaries_keep_the_dead_caller_binding() {
         65,
         "the chain exceeds the summary depth cap"
     );
+    let with_dead = form(&dead);
     assert_ne!(
-        form(&dead),
+        with_dead,
         form(&reversed),
         "the exhausted summary keeps source order"
     );
     assert_ne!(
-        form(&dead),
+        with_dead,
         form(&plain),
         "summary exhaustion retains the dead binding"
     );
@@ -242,13 +245,14 @@ fn exhausted_depth_summaries_keep_the_dead_caller_binding() {
     );
     let dead = plain.replacen("let a=h();", "let dead=7u32;let a=h();", 1);
     let reversed = dead.replacen("let a=h();let b=k();", "let b=k();let a=h();", 1);
+    let with_dead = form(&dead);
     assert_ne!(
-        form(&dead),
+        with_dead,
         form(&reversed),
         "the exhausted nest keeps source order"
     );
     assert_ne!(
-        form(&dead),
+        with_dead,
         form(&plain),
         "lexical exhaustion retains the dead binding"
     );
@@ -520,10 +524,8 @@ fn original_helper_proof_work_retains_every_checked_branch() {
         };
         format!("{helpers}fn f(p:bool)->(bool,bool){{{binding}{statements}(a,b)}}")
     };
-    assert_ne!(
-        form(&build(5462, false, false)),
-        form(&build(5462, true, false))
-    );
+    let over = form(&build(5462, false, false));
+    assert_ne!(over, form(&build(5462, true, false)));
     assert_eq!(
         declaration_nodes(&build(5458, false, false), &["h", "k"]),
         16_383
@@ -532,10 +534,7 @@ fn original_helper_proof_work_retains_every_checked_branch() {
         declaration_nodes(&build(5459, false, false), &["h", "k"]),
         16_386
     );
-    assert_ne!(
-        form(&build(5462, false, true)),
-        form(&build(5462, false, false))
-    );
+    assert_ne!(form(&build(5462, false, true)), over);
     assert_eq!(
         form(&build(5458, false, false)),
         form(&build(5458, true, false))

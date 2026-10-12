@@ -108,17 +108,23 @@ fn number(order: &[usize], node: usize) -> usize {
         .unwrap()
 }
 
-fn references(producer: &Producer) -> Vec<usize> {
+fn references(producer: &Producer) -> impl Iterator<Item = usize> {
     match producer {
-        Producer::Argument(_) => Vec::new(),
-        Producer::XorOne(input) | Producer::OrOne(input) | Producer::Copy(input) => vec![*input],
-        Producer::Flat(_, left, right) => vec![*left, *right],
-        Producer::Left(_, a, b, c) | Producer::Right(_, a, b, c) => vec![*a, *b, *c],
-        Producer::LitLeft(_, index, _, _) | Producer::LitRight(_, index, _, _) => vec![*index],
+        Producer::Argument(_) => [None, None, None],
+        Producer::XorOne(input) | Producer::OrOne(input) | Producer::Copy(input) => {
+            [Some(*input), None, None]
+        }
+        Producer::Flat(_, left, right) => [Some(*left), Some(*right), None],
+        Producer::Left(_, a, b, c) | Producer::Right(_, a, b, c) => [Some(*a), Some(*b), Some(*c)],
+        Producer::LitLeft(_, index, _, _) | Producer::LitRight(_, index, _, _) => {
+            [Some(*index), None, None]
+        }
     }
+    .into_iter()
+    .flatten()
 }
 
-fn oracle(nodes: &[Producer], roots: [usize; 2]) -> String {
+fn oracle_values(nodes: &[Producer]) -> Vec<Value> {
     let mut values: Vec<Value> = Vec::with_capacity(nodes.len());
     for node in nodes {
         let value = match *node {
@@ -147,7 +153,7 @@ fn oracle(nodes: &[Producer], roots: [usize; 2]) -> String {
         };
         values.push(value);
     }
-    format!("{:?},{:?}", values[roots[0]], values[roots[1]])
+    values
 }
 
 fn source(nodes: &[Producer], roots: [usize; 2], order: &[usize], raw: bool) -> String {
@@ -198,29 +204,81 @@ fn all_small_algebra_graphs_match_the_independent_unordered_oracle() {
     for n in 1..=3 {
         let orders = permutations(n);
         for nodes in models(n) {
-            for first in 0..n {
-                for second in 0..n {
-                    let roots = [first, second];
-                    let graph = oracle(&nodes, roots);
-                    for order in &orders {
-                        if order.iter().any(|&node| {
-                            references(&nodes[node])
-                                .iter()
-                                .any(|&input| number(order, input) >= number(order, node))
-                        }) {
-                            continue;
-                        }
-                        for raw in [false, true] {
-                            let source = source(&nodes, roots, order, raw);
-                            let form = syn_canon::canonicalize(syn::parse_str(&source).unwrap())
-                                .to_string();
-                            if let Some(existing) = forms_by_graph.get(&graph) {
-                                assert_eq!(existing, &form, "legal schedule {source}");
+            let values = oracle_values(&nodes);
+            let graphs: Vec<String> = values
+                .iter()
+                .flat_map(|first| {
+                    values
+                        .iter()
+                        .map(move |second| format!("{first:?},{second:?}"))
+                })
+                .collect();
+            for order in &orders {
+                if order.iter().any(|&node| {
+                    references(&nodes[node])
+                        .any(|input| number(order, input) >= number(order, node))
+                }) {
+                    continue;
+                }
+                for raw in [false, true] {
+                    let template: syn::File =
+                        syn::parse_str(&source(&nodes, [0, 0], order, raw)).unwrap();
+                    let syn::Item::Fn(function) = &template.items[0] else {
+                        unreachable!("the graph source defines a function");
+                    };
+                    let paths: Vec<syn::Expr> = function.block.stmts[..n]
+                        .iter()
+                        .map(|stmt| {
+                            let syn::Stmt::Local(local) = stmt else {
+                                unreachable!("each graph producer is a local");
+                            };
+                            let syn::Pat::Ident(binding) = &local.pat else {
+                                unreachable!("each graph producer has an identifier");
+                            };
+                            syn::Expr::Path(syn::ExprPath {
+                                attrs: Vec::new(),
+                                qself: None,
+                                path: binding.ident.clone().into(),
+                            })
+                        })
+                        .collect();
+                    let mut names = [None; 3];
+                    for (position, &node) in order.iter().enumerate() {
+                        names[node] = Some(&paths[position]);
+                    }
+                    for first in 0..n {
+                        for second in 0..n {
+                            let roots = [first, second];
+                            let graph = &graphs[first * n + second];
+                            let mut input = template.clone();
+                            let syn::Item::Fn(function) = &mut input.items[0] else {
+                                unreachable!("the cloned graph defines a function");
+                            };
+                            let Some(syn::Stmt::Expr(syn::Expr::Tuple(tail), None)) =
+                                function.block.stmts.last_mut()
+                            else {
+                                unreachable!("the graph returns a tuple");
+                            };
+                            tail.elems[0] = names[first].unwrap().clone();
+                            tail.elems[1] = names[second].unwrap().clone();
+                            let form = syn_canon::canonicalize(input).to_string();
+                            if let Some(existing) = forms_by_graph.get(graph) {
+                                assert_eq!(
+                                    existing,
+                                    &form,
+                                    "legal schedule {}",
+                                    source(&nodes, roots, order, raw)
+                                );
                             } else {
                                 forms_by_graph.insert(graph.clone(), form.clone());
                             }
                             if let Some(existing) = graphs_by_form.get(&form) {
-                                assert_eq!(existing, &graph, "distinct graph {source}");
+                                assert_eq!(
+                                    existing,
+                                    graph,
+                                    "distinct graph {}",
+                                    source(&nodes, roots, order, raw)
+                                );
                             } else {
                                 graphs_by_form.insert(form, graph.clone());
                             }

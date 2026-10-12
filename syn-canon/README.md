@@ -32,7 +32,7 @@ Passing-mode comparison schedules proven scalar declarations by exact dependency
 
 Passing-mode comparison schedules calls to originally resolved acyclic helpers with total primitive signatures, bodies and arguments. Scoped primitive locals, total `if` branches and nested accepted calls qualify, while recursion, resources, observations, conditional definitions and unresolved or external calls retain their order. Helper origins, argument positions and call multiplicity stay distinct.
 
-Immutable summaries are built once per original context and borrowed by function views. Their 16,384-node transitive budget counts each called helper's owned original syntax once, including every checked branch, while uncalled nested bodies contribute only their declaration statements. Incomplete observer indexing or exhausted proofs retain complete caller regions.
+Immutable summaries are built once per original context and borrowed by function views, with original declaration, lexical and module identities carried through normalization. Their 16,384-node transitive budget counts each called helper's owned original syntax once, including every checked branch, while uncalled nested bodies contribute only their declaration statements. Incomplete observer indexing or exhausted proofs retain complete caller regions.
 
 ```rust
 let helpers = "fn low(x:u32)->u32{x&15u32}fn high(x:u32)->u32{x>>4}";

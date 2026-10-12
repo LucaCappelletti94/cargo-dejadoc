@@ -50,9 +50,7 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
             helper_table: None,
             helper_module: &[],
             helper_blocked: false,
-            helper_decls: None,
-            helper_scopes: None,
-            helper_calls: None,
+            helper_syntax: None,
         },
     )
 }

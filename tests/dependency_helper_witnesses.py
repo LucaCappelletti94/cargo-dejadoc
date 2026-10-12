@@ -7,9 +7,7 @@ import pathlib
 import sys
 import time
 
-sys.path.insert(0, str(pathlib.Path(__file__).resolve().parent))
-
-from dependency_witnesses import (  # noqa: E402
+from dependency_witnesses import (
     DEFAULT_TIMEOUT,
     EDITIONS,
     OVERFLOW_CHECKS,
@@ -783,6 +781,7 @@ def _verify_independent(report, cases):
 
 
 def main(argv=None):
+    """Run the helper witness matrix and return zero when every check matches."""
     parser = argparse.ArgumentParser(
         prog="dependency_helper_witnesses",
         description="Run the M6 helper scheduling witness matrix.",

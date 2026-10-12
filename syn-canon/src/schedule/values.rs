@@ -202,12 +202,14 @@ fn expression_bounds(expr: &syn::Expr, outer: usize) -> Bounds {
 
 fn expand(
     expr: &mut syn::Expr,
+    syntax: &mut crate::helpers::HelperSyntax,
     original: &BTreeMap<String, Value>,
     retained: &BTreeMap<String, Value>,
     replacements: &BTreeMap<Port, Expanded>,
     nodes: &mut usize,
 ) -> bool {
     struct Expansion<'a> {
+        syntax: &'a mut crate::helpers::HelperSyntax,
         original: &'a BTreeMap<String, Value>,
         retained: &'a BTreeMap<String, Value>,
         replacements: &'a BTreeMap<Port, Expanded>,
@@ -240,7 +242,8 @@ fn expand(
                         return;
                     }
                     *self.nodes = expanded;
-                    *expr = replacement.expr.clone();
+                    self.syntax.clear_expr(expr);
+                    *expr = self.syntax.clone_expr(&replacement.expr);
                 } else {
                     self.valid = self.retained.get(unraw(&name)) == Some(value);
                 }
@@ -250,6 +253,7 @@ fn expand(
         }
     }
     let mut expansion = Expansion {
+        syntax,
         original,
         retained,
         replacements,
@@ -394,7 +398,8 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
     if !erase.iter().any(|&erased| erased) {
         return Outcome::Unchanged;
     }
-    let mut rewritten = block.clone();
+    let mut syntax = crate::helpers::HelperSyntax::default();
+    let mut rewritten = renamer.helper_syntax.clone_block_into(block, &mut syntax);
     let mut retained = env.clone();
     let mut replacements = BTreeMap::new();
     let mut nodes = original_bounds.nodes;
@@ -421,10 +426,11 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
             removed.visit_stmt(original);
             nodes -= removed.nodes;
             for def in &defs[first_definition..definition_index] {
-                let mut expression = def.expr.clone();
+                let mut expression = renamer.helper_syntax.clone_expr_into(def.expr, &mut syntax);
                 let mut expansion_nodes = nodes;
                 if !expand(
                     &mut expression,
+                    &mut syntax,
                     &env,
                     &retained,
                     &replacements,
@@ -455,7 +461,14 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
                 _ => None,
             };
             if let Some(expr) = expr
-                && !expand(expr, &env, &retained, &replacements, &mut nodes)
+                && !expand(
+                    expr,
+                    &mut syntax,
+                    &env,
+                    &retained,
+                    &replacements,
+                    &mut nodes,
+                )
             {
                 return Outcome::Exhausted;
             }
@@ -476,5 +489,7 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
     if !bounds(&rewritten, renamer.depth() - 1).valid {
         return Outcome::Exhausted;
     }
+    syntax.retain_block(&rewritten);
+    renamer.helper_syntax.extend(syntax);
     Outcome::Rewritten(core::mem::replace(block, rewritten))
 }

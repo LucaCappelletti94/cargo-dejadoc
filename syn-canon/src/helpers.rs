@@ -6,6 +6,7 @@ use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
 use syn::visit::{self, Visit};
+use syn::visit_mut::{self, VisitMut};
 
 use crate::alpha::Renamer;
 use crate::context::{
@@ -46,6 +47,9 @@ struct ModuleNames {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct ScopeId(usize);
 
+#[derive(Clone, Copy)]
+pub(crate) struct ModuleRoute(*const syn::ItemMod);
+
 #[derive(Clone, Default)]
 pub(crate) struct HelperTable {
     entries: Vec<Entry>,
@@ -57,6 +61,7 @@ pub(crate) struct HelperTable {
     module_canons: BTreeMap<String, Vec<String>>,
     inherited: Vec<bool>,
     calls: BTreeMap<*const syn::Path, ScopeId>,
+    routes: BTreeMap<*const syn::ItemMod, Vec<String>>,
 }
 
 impl HelperTable {
@@ -84,10 +89,6 @@ impl HelperTable {
 
     pub(crate) fn declaration(&self, body: &syn::Block) -> Option<HelperId> {
         self.declarations.get(&core::ptr::from_ref(body)).copied()
-    }
-
-    pub(crate) fn declarations(&self) -> &BTreeMap<*const syn::Block, HelperId> {
-        &self.declarations
     }
 
     pub(crate) fn closure_nodes(&self, roots: &BTreeSet<HelperId>) -> usize {
@@ -155,20 +156,16 @@ impl HelperTable {
         self.by_name(module, last)
     }
 
-    pub(crate) fn scopes(&self) -> &BTreeMap<*const syn::Block, ScopeId> {
-        &self.block_scopes
-    }
-
-    pub(crate) fn call_scopes(&self) -> &BTreeMap<*const syn::Path, ScopeId> {
-        &self.calls
-    }
-
     pub(crate) fn scope(&self, id: ScopeId) -> Option<&Frame> {
         self.frames.get(id.0).map(|environment| &environment.frame)
     }
 
     pub(crate) fn scope_known(&self, id: ScopeId) -> bool {
         self.frames[id.0].prim_fallback
+    }
+
+    pub(crate) fn module_route(&self, route: ModuleRoute) -> Option<&[String]> {
+        self.routes.get(&route.0).map(Vec::as_slice)
     }
 
     pub(crate) fn inherited_canon(&self, id: HelperId) -> Option<&str> {
@@ -193,6 +190,400 @@ impl HelperTable {
             return self.resolve_names(module, &names[1..]);
         }
         self.resolve_names(&environment.module, &names)
+    }
+}
+
+/// Original handles keyed by owned child storage that survives syntax movement.
+#[derive(Default)]
+pub(crate) struct HelperSyntax {
+    declarations: BTreeMap<*const syn::Stmt, HelperId>,
+    scopes: BTreeMap<*const syn::Stmt, ScopeId>,
+    calls: BTreeMap<*const syn::PathSegment, ScopeId>,
+    modules: BTreeMap<*const syn::Item, ModuleRoute>,
+}
+
+#[derive(Default)]
+struct SyntaxHandles {
+    blocks: Vec<(Option<HelperId>, Option<ScopeId>)>,
+    paths: Vec<Option<ScopeId>>,
+    modules: Vec<Option<ModuleRoute>>,
+}
+
+#[derive(Clone, Copy)]
+enum SyntaxSource<'a> {
+    Original(&'a HelperTable),
+    Owned(&'a HelperSyntax),
+}
+
+struct CollectSyntax<'a> {
+    source: SyntaxSource<'a>,
+    handles: SyntaxHandles,
+}
+
+impl<'ast> Visit<'ast> for CollectSyntax<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.handles.blocks.push(match self.source {
+            SyntaxSource::Original(table) => (
+                table.declaration(block),
+                table.block_scopes.get(&core::ptr::from_ref(block)).copied(),
+            ),
+            SyntaxSource::Owned(syntax) => (syntax.declaration(block), syntax.scope(block)),
+        });
+        visit::visit_block(self, block);
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        self.handles.paths.push(match self.source {
+            SyntaxSource::Original(table) => table.calls.get(&core::ptr::from_ref(path)).copied(),
+            SyntaxSource::Owned(syntax) => syntax.call_scope(path),
+        });
+        visit::visit_path(self, path);
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        self.handles.modules.push(match self.source {
+            SyntaxSource::Original(table) => {
+                let key = core::ptr::from_ref(item);
+                table.routes.contains_key(&key).then_some(ModuleRoute(key))
+            }
+            SyntaxSource::Owned(syntax) => syntax.module(item),
+        });
+        visit::visit_item_mod(self, item);
+    }
+}
+
+struct AttachSyntax<'a> {
+    syntax: &'a mut HelperSyntax,
+    blocks: alloc::vec::IntoIter<(Option<HelperId>, Option<ScopeId>)>,
+    paths: alloc::vec::IntoIter<Option<ScopeId>>,
+    modules: alloc::vec::IntoIter<Option<ModuleRoute>>,
+}
+
+impl VisitMut for AttachSyntax<'_> {
+    fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        let (declaration, scope) = self.blocks.next().expect("matching block clone");
+        if declaration.is_some() || scope.is_some() {
+            block
+                .stmts
+                .reserve(usize::from(block.stmts.capacity() == 0));
+        }
+        if let Some(key) = block_key(block) {
+            self.syntax.declarations.remove(&key);
+            self.syntax.scopes.remove(&key);
+            if let Some(id) = declaration {
+                self.syntax.declarations.insert(key, id);
+            }
+            if let Some(id) = scope {
+                self.syntax.scopes.insert(key, id);
+            }
+        }
+        visit_mut::visit_block_mut(self, block);
+    }
+
+    fn visit_path_mut(&mut self, path: &mut syn::Path) {
+        let scope = self.paths.next().expect("matching path clone");
+        if let Some(key) = path_key(path) {
+            self.syntax.calls.remove(&key);
+            if let Some(id) = scope {
+                self.syntax.calls.insert(key, id);
+            }
+        }
+        visit_mut::visit_path_mut(self, path);
+    }
+
+    fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
+        let route = self.modules.next().expect("matching module clone");
+        if route.is_some()
+            && let Some((_, items)) = &mut item.content
+        {
+            items.reserve(usize::from(items.capacity() == 0));
+        }
+        if let Some(key) = module_key(item) {
+            self.syntax.modules.remove(&key);
+            if let Some(route) = route {
+                self.syntax.modules.insert(key, route);
+            }
+        }
+        visit_mut::visit_item_mod_mut(self, item);
+    }
+}
+
+fn block_key(block: &syn::Block) -> Option<*const syn::Stmt> {
+    (block.stmts.capacity() != 0).then_some(block.stmts.as_ptr())
+}
+
+fn path_key(path: &syn::Path) -> Option<*const syn::PathSegment> {
+    if path.segments.trailing_punct() {
+        return None;
+    }
+    // The final unpunctuated segment owns boxed storage.
+    path.segments.last().map(core::ptr::from_ref)
+}
+
+fn module_key(item: &syn::ItemMod) -> Option<*const syn::Item> {
+    let (_, items) = item.content.as_ref()?;
+    (items.capacity() != 0).then_some(items.as_ptr())
+}
+
+impl HelperSyntax {
+    fn is_empty(&self) -> bool {
+        self.declarations.is_empty()
+            && self.scopes.is_empty()
+            && self.calls.is_empty()
+            && self.modules.is_empty()
+    }
+
+    pub(crate) fn from_file(table: &HelperTable, file: &mut syn::File) -> Self {
+        if table.calls.is_empty() && table.routes.is_empty() {
+            return Self::default();
+        }
+        let mut collect = CollectSyntax {
+            source: SyntaxSource::Original(table),
+            handles: SyntaxHandles::default(),
+        };
+        collect.visit_file(file);
+        let mut syntax = Self::default();
+        syntax.attach(collect.handles).visit_file_mut(file);
+        syntax
+    }
+
+    pub(crate) fn cloned_function(
+        table: &HelperTable,
+        signature: &syn::Signature,
+        body: &syn::Block,
+        cloned: &mut syn::ItemFn,
+    ) -> Self {
+        if table.calls.is_empty() && table.routes.is_empty() {
+            return Self::default();
+        }
+        let mut collect = CollectSyntax {
+            source: SyntaxSource::Original(table),
+            handles: SyntaxHandles::default(),
+        };
+        collect.visit_signature(signature);
+        collect.visit_block(body);
+        let mut syntax = Self::default();
+        let mut attach = syntax.attach(collect.handles);
+        attach.visit_signature_mut(&mut cloned.sig);
+        attach.visit_block_mut(&mut cloned.block);
+        syntax
+    }
+
+    fn attach(&mut self, handles: SyntaxHandles) -> AttachSyntax<'_> {
+        AttachSyntax {
+            syntax: self,
+            blocks: handles.blocks.into_iter(),
+            paths: handles.paths.into_iter(),
+            modules: handles.modules.into_iter(),
+        }
+    }
+
+    pub(crate) fn clone_block_into(&self, original: &syn::Block, syntax: &mut Self) -> syn::Block {
+        if self.is_empty() && syntax.is_empty() {
+            return original.clone();
+        }
+        let mut collect = CollectSyntax {
+            source: SyntaxSource::Owned(self),
+            handles: SyntaxHandles::default(),
+        };
+        collect.visit_block(original);
+        let mut cloned = original.clone();
+        syntax.attach(collect.handles).visit_block_mut(&mut cloned);
+        cloned
+    }
+
+    pub(crate) fn clone_expr(&mut self, original: &syn::Expr) -> syn::Expr {
+        if self.is_empty() {
+            return original.clone();
+        }
+        let mut collect = CollectSyntax {
+            source: SyntaxSource::Owned(self),
+            handles: SyntaxHandles::default(),
+        };
+        collect.visit_expr(original);
+        let mut cloned = original.clone();
+        self.attach(collect.handles).visit_expr_mut(&mut cloned);
+        cloned
+    }
+
+    pub(crate) fn clone_expr_into(&self, original: &syn::Expr, syntax: &mut Self) -> syn::Expr {
+        if self.is_empty() && syntax.is_empty() {
+            return original.clone();
+        }
+        let mut collect = CollectSyntax {
+            source: SyntaxSource::Owned(self),
+            handles: SyntaxHandles::default(),
+        };
+        collect.visit_expr(original);
+        let mut cloned = original.clone();
+        syntax.attach(collect.handles).visit_expr_mut(&mut cloned);
+        cloned
+    }
+
+    pub(crate) fn declaration(&self, block: &syn::Block) -> Option<HelperId> {
+        self.declarations.get(&block_key(block)?).copied()
+    }
+
+    pub(crate) fn scope(&self, block: &syn::Block) -> Option<ScopeId> {
+        self.scopes.get(&block_key(block)?).copied()
+    }
+
+    pub(crate) fn call_scope(&self, path: &syn::Path) -> Option<ScopeId> {
+        self.calls.get(&path_key(path)?).copied()
+    }
+
+    pub(crate) fn module(&self, item: &syn::ItemMod) -> Option<ModuleRoute> {
+        self.modules.get(&module_key(item)?).copied()
+    }
+
+    pub(crate) fn take_block(&mut self, block: &syn::Block) -> (Option<HelperId>, Option<ScopeId>) {
+        let Some(key) = block_key(block) else {
+            return (None, None);
+        };
+        (self.declarations.remove(&key), self.scopes.remove(&key))
+    }
+
+    pub(crate) fn put_block(
+        &mut self,
+        block: &mut syn::Block,
+        handles: (Option<HelperId>, Option<ScopeId>),
+    ) {
+        let (declaration, scope) = handles;
+        if declaration.is_some() || scope.is_some() {
+            block
+                .stmts
+                .reserve(usize::from(block.stmts.capacity() == 0));
+        }
+        if let Some(key) = block_key(block) {
+            self.declarations.remove(&key);
+            self.scopes.remove(&key);
+            if let Some(id) = declaration {
+                self.declarations.insert(key, id);
+            }
+            if let Some(id) = scope {
+                self.scopes.insert(key, id);
+            }
+        }
+    }
+
+    pub(crate) fn retain_file(&mut self, file: &mut syn::File) {
+        if self.is_empty() {
+            return;
+        }
+        let mut collect = CollectSyntax {
+            source: SyntaxSource::Owned(self),
+            handles: SyntaxHandles::default(),
+        };
+        collect.visit_file(file);
+        let mut retained = Self::default();
+        retained.attach(collect.handles).visit_file_mut(file);
+        *self = retained;
+    }
+
+    pub(crate) fn retain_block(&mut self, block: &syn::Block) {
+        *self = self.snapshot_block(block);
+    }
+
+    pub(crate) fn snapshot_block(&self, block: &syn::Block) -> Self {
+        if self.is_empty() {
+            return Self::default();
+        }
+        let mut snapshot = SnapshotSyntax {
+            source: self,
+            syntax: Self::default(),
+        };
+        snapshot.visit_block(block);
+        snapshot.syntax
+    }
+
+    pub(crate) fn remove(&mut self, syntax: Self) {
+        for key in syntax.declarations.into_keys() {
+            self.declarations.remove(&key);
+        }
+        for key in syntax.scopes.into_keys() {
+            self.scopes.remove(&key);
+        }
+        for key in syntax.calls.into_keys() {
+            self.calls.remove(&key);
+        }
+        for key in syntax.modules.into_keys() {
+            self.modules.remove(&key);
+        }
+    }
+
+    pub(crate) fn extend(&mut self, syntax: Self) {
+        self.declarations.extend(syntax.declarations);
+        self.scopes.extend(syntax.scopes);
+        self.calls.extend(syntax.calls);
+        self.modules.extend(syntax.modules);
+    }
+
+    pub(crate) fn refresh_block(&mut self, before: Self, block: &syn::Block) {
+        let retained = self.snapshot_block(block);
+        self.remove(before);
+        self.extend(retained);
+    }
+
+    pub(crate) fn take_path(&mut self, path: &syn::Path) -> Option<ScopeId> {
+        self.calls.remove(&path_key(path)?)
+    }
+
+    pub(crate) fn put_path(&mut self, path: &syn::Path, scope: Option<ScopeId>) {
+        if let Some(key) = path_key(path) {
+            self.calls.remove(&key);
+            if let Some(scope) = scope {
+                self.calls.insert(key, scope);
+            }
+        }
+    }
+
+    pub(crate) fn clear_expr(&mut self, expr: &syn::Expr) {
+        if self.is_empty() {
+            return;
+        }
+        let mut snapshot = SnapshotSyntax {
+            source: self,
+            syntax: Self::default(),
+        };
+        snapshot.visit_expr(expr);
+        self.remove(snapshot.syntax);
+    }
+}
+
+struct SnapshotSyntax<'a> {
+    source: &'a HelperSyntax,
+    syntax: HelperSyntax,
+}
+
+impl<'ast> Visit<'ast> for SnapshotSyntax<'_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        if let Some(key) = block_key(block) {
+            if let Some(id) = self.source.declaration(block) {
+                self.syntax.declarations.insert(key, id);
+            }
+            if let Some(id) = self.source.scope(block) {
+                self.syntax.scopes.insert(key, id);
+            }
+        }
+        visit::visit_block(self, block);
+    }
+
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        if let Some(scope) = self.source.call_scope(path)
+            && let Some(key) = path_key(path)
+        {
+            self.syntax.calls.insert(key, scope);
+        }
+        visit::visit_path(self, path);
+    }
+
+    fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
+        if let Some(route) = self.source.module(item)
+            && let Some(key) = module_key(item)
+        {
+            self.syntax.modules.insert(key, route);
+        }
+        visit::visit_item_mod(self, item);
     }
 }
 
@@ -381,6 +772,7 @@ struct Collector<'a, 's> {
     module: Vec<String>,
     environment: usize,
     call_scopes: BTreeMap<*const syn::Path, ScopeId>,
+    callee: bool,
     blocked: bool,
     lexical_depth: usize,
     expression_depth: usize,
@@ -563,11 +955,16 @@ impl<'a> Visit<'a> for Collector<'a, '_> {
             return;
         }
         let blocked = self.blocked;
+        let callee = self.callee;
+        self.callee &= matches!(
+            expr,
+            syn::Expr::Paren(_) | syn::Expr::Group(_) | syn::Expr::Path(_)
+        );
         self.blocked |= blocking_attr(crate::drift::expr_attrs(expr));
         self.observe(blocking_attr(crate::drift::expr_attrs(expr)));
         self.expression_depth += 1;
-        if let syn::Expr::Call(call) = expr
-            && let syn::Expr::Path(path) = call.func.as_ref()
+        if self.callee
+            && let syn::Expr::Path(path) = expr
         {
             self.call_scopes
                 .insert(core::ptr::from_ref(&path.path), ScopeId(self.environment));
@@ -575,6 +972,17 @@ impl<'a> Visit<'a> for Collector<'a, '_> {
         visit::visit_expr(self, expr);
         self.expression_depth -= 1;
         self.blocked = blocked;
+        self.callee = callee;
+    }
+
+    fn visit_expr_call(&mut self, call: &'a syn::ExprCall) {
+        let callee = core::mem::replace(&mut self.callee, true);
+        self.visit_expr(&call.func);
+        self.callee = false;
+        for arg in &call.args {
+            self.visit_expr(arg);
+        }
+        self.callee = callee;
     }
 
     fn visit_block(&mut self, block: &'a syn::Block) {
@@ -1266,6 +1674,7 @@ fn source_collector<'a, 's>(scopes: &'s Scopes<'a>) -> Collector<'a, 's> {
         module: Vec::new(),
         environment: 0,
         call_scopes: BTreeMap::new(),
+        callee: false,
         blocked: false,
         lexical_depth: 0,
         expression_depth: 0,
@@ -1436,6 +1845,7 @@ pub(crate) fn module_table(scopes: &Scopes<'_>) -> HelperTable {
     collector.table.frames = collector.environments;
     collector.table.module_canons = collector.module_canons;
     collector.table.calls = collector.call_scopes;
+    collector.table.routes = scopes.local_routes.clone();
     collector.table
 }
 

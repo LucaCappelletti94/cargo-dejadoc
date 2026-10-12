@@ -18,38 +18,19 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  shard:
-    name: Mutation testing ${{ matrix.label }}/8
+  enumerate:
+    name: Enumerate mutations
     runs-on: ubuntu-latest
     timeout-minutes: 70
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - shard: 0/8
-            label: 1
-          - shard: 1/8
-            label: 2
-          - shard: 2/8
-            label: 3
-          - shard: 3/8
-            label: 4
-          - shard: 4/8
-            label: 5
-          - shard: 5/8
-            label: 6
-          - shard: 6/8
-            label: 7
-          - shard: 7/8
-            label: 8
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]')
+    outputs:
+      matrix: ${{ steps.inventory.outputs.matrix }}
     steps:
       - uses: actions/checkout@v4
         timeout-minutes: 3
-
       - name: Cache cargo downloads
         uses: actions/cache@v6
         timeout-minutes: 3
@@ -61,64 +42,113 @@ jobs:
           key: dl-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
           restore-keys: |
             dl-${{ runner.os }}-
-
       - uses: dtolnay/rust-toolchain@stable
         timeout-minutes: 5
-
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        timeout-minutes: 5
       - name: Install cargo-mutants
         timeout-minutes: 10
-        run: cargo install cargo-mutants --locked
+        run: taskset -c 0,1 nice -n 10 env RUSTC_WRAPPER=sccache CARGO_BUILD_JOBS=2 cargo install cargo-mutants --version 27.1.0 --locked
+      - name: Enumerate complete inventory
+        id: inventory
+        timeout-minutes: 2
+        run: >-
+          python3 -B .github/mutants.py enumerate
+          --request-id "MUTANTS-${{ github.run_id }}-${{ github.run_attempt }}"
+          --revision "${{ github.sha }}"
+      - name: Upload mutation inventory
+        uses: actions/upload-artifact@v4
+        timeout-minutes: 3
+        with:
+          name: mutation-inventory
+          path: mutation-inventory
+          if-no-files-found: error
 
-      # Slice sharding without shuffling keeps the ranges disjoint.
-      # Each -E drops a documented unobservable mutant (plans/dejadoc.md) whose observable siblings stay pinned by tests.
-      # Joint and alone punctuation tags remain a bijection when swapped.
+  shard:
+    name: Mutation testing ${{ matrix.label }}/${{ matrix.count }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    needs: enumerate
+    if: needs.enumerate.result == 'success'
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(needs.enumerate.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v4
+        timeout-minutes: 3
+      - name: Cache cargo downloads
+        uses: actions/cache@v6
+        timeout-minutes: 3
+        with:
+          path: |
+            ~/.cargo/registry/index
+            ~/.cargo/registry/cache
+            ~/.cargo/git/db
+          key: dl-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            dl-${{ runner.os }}-
+      - uses: dtolnay/rust-toolchain@stable
+        timeout-minutes: 5
+      - uses: mozilla-actions/sccache-action@v0.0.9
+        timeout-minutes: 5
+      - name: Install cargo-mutants
+        timeout-minutes: 10
+        run: taskset -c 0,1 nice -n 10 env RUSTC_WRAPPER=sccache CARGO_BUILD_JOBS=2 cargo install cargo-mutants --version 27.1.0 --locked
+      - name: Download mutation inventory
+        uses: actions/download-artifact@v4
+        timeout-minutes: 3
+        with:
+          name: mutation-inventory
+          path: mutation-inventory
       - name: Run mutants
         timeout-minutes: 42
         run: >-
-          cargo mutants --workspace --cap-lints true --timeout 180
-          --shard ${{ matrix.shard }} --sharding slice --no-shuffle
-          --test-workspace true
-          --jobs 2 --jobserver-tasks 2
-          -E 'delete match arm (syn::)?(ImplItem|TraitItem|ForeignItem)::Macro\(m\) in (impl_member|trait_member|foreign_member)'
-          -E 'replace match guard mac\.path\.is_ident\("concat"\) with true'
-          -E 'replace \|\| with && in single_segment_type_name'
-          -E 'replace \+ with [-*] in merge_parts'
-          -E 'replace > with >= in block_star_strip'
-          -E 'delete ! in block_star_strip'
-          -E 'replace == with != in block_star_strip'
-          -E 'replace \+ with - in flat_literal'
-          -E 'replace match guard rustdoc with (true|false) in mod_decls'
-          -E 'replace match guard path.exists\(\) with true in mod_decls'
-          -E '^syn-canon/src/const_items\.rs:\d+:\d+: replace match guard (!self\.hazard with true|mac\.ident\.is_some\(\) with false) in .*Analysis>::visit_item$'
-          -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Type::(Macro|Never)\(ty\) in type_attrs$'
-          -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Expr::(Continue|Lit|Macro)\(expr\) in expr_attrs$'
-          -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::ForeignItem::Macro\(v\) in <impl VisitMut for Drift>::visit_foreign_item_mut$'
-          -E '^syn-canon/src/form\.rs:\d+:\d+: replace == with != in framed_tree$'
-
-      # Step budgets leave four minutes for job overhead.
+          python3 -B .github/mutants.py shard
+          --request-id "MUTANTS-${{ github.run_id }}-${{ github.run_attempt }}"
+          --revision "${{ github.sha }}"
+          --index "${{ matrix.index }}"
       - name: Upload mutation outcome
         if: always()
         uses: actions/upload-artifact@v4
         timeout-minutes: 3
         with:
-          name: mutants-shard-${{ matrix.label }}-of-8
-          path: mutants.out
-          if-no-files-found: warn
+          name: mutants-shard-${{ matrix.label }}-of-${{ matrix.count }}
+          path: |
+            mutation-results
+            mutants.out
+          if-no-files-found: error
 
   aggregate:
     name: Mutation testing
     runs-on: ubuntu-latest
-    needs: shard
-    # always() so a cancelled shard fails this gate instead of skipping it.
+    timeout-minutes: 10
+    needs: [enumerate, shard]
     if: >-
       always() &&
       (github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]'))
     steps:
-      - name: Check shard results
+      - name: Check job results
+        env:
+          ENUMERATION_RESULT: ${{ needs.enumerate.result }}
+          SHARD_RESULT: ${{ needs.shard.result }}
         run: |
-          if [ "${{ needs.shard.result }}" != "success" ]; then
-            echo "Mutation shards finished as ${{ needs.shard.result }}"
+          if [ "$ENUMERATION_RESULT" != "success" ] || [ "$SHARD_RESULT" != "success" ]; then
+            echo "Mutation enumeration finished as $ENUMERATION_RESULT and shards as $SHARD_RESULT"
             exit 1
           fi
+      - uses: actions/checkout@v4
+        timeout-minutes: 3
+      - name: Download mutation artifacts
+        uses: actions/download-artifact@v4
+        timeout-minutes: 3
+        with:
+          path: mutation-artifacts
+      - name: Audit complete mutation outcomes
+        timeout-minutes: 2
+        run: >-
+          python3 -B .github/mutants.py aggregate
+          --request-id "MUTANTS-${{ github.run_id }}-${{ github.run_attempt }}"
+          --revision "${{ github.sha }}"
+          --inventory mutation-artifacts/mutation-inventory/inventory.json

@@ -25,6 +25,20 @@ fn scheduled(a: &str, b: &str) {
     assert_ne!(failing(a), failing(b), "{a}\n{b}");
 }
 
+fn with_module_stack(name: &str, check: impl FnOnce() + Send + 'static) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    let worker = std::thread::Builder::new()
+        .name(name.to_owned())
+        .stack_size(8 * 1024 * 1024)
+        .spawn(check)
+        .expect("the module witness thread can start");
+    while !worker.is_finished() && std::time::Instant::now() < deadline {
+        std::thread::sleep(std::time::Duration::from_millis(1));
+    }
+    assert!(worker.is_finished(), "{name} completes before its deadline");
+    worker.join().expect("the module witness completes");
+}
+
 #[test]
 fn helper_origins_keep_different_results_distinct() {
     let prefix = "fn low(x:u32)->u32{x&15u32} fn high(x:u32)->u32{x>>4}";
@@ -492,7 +506,7 @@ fn incomplete_public_item_nodes_cannot_supply_a_helper_proof() {
         ))
         .unwrap();
         let syn::Item::Fn(h) = &mut file.items[0] else {
-            unreachable!()
+            unreachable!("the fixture's first item is `fn h`")
         };
         h.block.stmts.insert(
             0,
@@ -558,26 +572,34 @@ fn constructed_receiver_and_scalar_call_nodes_keep_helpers_ordered() {
 
 #[test]
 fn deep_module_declarations_keep_independent_helper_summaries() {
-    let open = "mod m{".repeat(65);
-    let close = "}".repeat(65);
-    let prefix = "fn h(x:u32)->u32{x&15u32}";
-    scheduled(
-        &format!("{open}{prefix}fn f(x:u32)->(u32,u32){{let a=h(x);let b=h(x^1u32);(a,b)}}{close}"),
-        &format!("{open}{prefix}fn f(x:u32)->(u32,u32){{let b=h(x^1u32);let a=h(x);(a,b)}}{close}"),
-    );
+    with_module_stack("M6-DEEP-MODULE-SUMMARIES", || {
+        let open = "mod m{".repeat(65);
+        let close = "}".repeat(65);
+        let prefix = "fn h(x:u32)->u32{x&15u32}";
+        scheduled(
+            &format!(
+                "{open}{prefix}fn f(x:u32)->(u32,u32){{let a=h(x);let b=h(x^1u32);(a,b)}}{close}"
+            ),
+            &format!(
+                "{open}{prefix}fn f(x:u32)->(u32,u32){{let b=h(x^1u32);let a=h(x);(a,b)}}{close}"
+            ),
+        );
+    });
 }
 
 #[test]
 fn bounded_local_module_routes_keep_long_calls_ordered() {
-    let modules = format!(
-        "{}pub fn h(x:u32)->u32{{x&15u32}}{}",
-        "pub mod m{".repeat(65),
-        "}".repeat(65)
-    );
-    let callee = format!("{}h", "m::".repeat(65));
-    let build = |body: &str| format!("fn f(x:u32)->(u32,u32){{{modules}{body}}}");
-    ordered(
-        &build(&format!("let a={callee}(x);let b={callee}(x^1u32);(a,b)")),
-        &build(&format!("let b={callee}(x^1u32);let a={callee}(x);(a,b)")),
-    );
+    with_module_stack("M6-LOCAL-MODULE-CUTOFF", || {
+        let modules = format!(
+            "{}pub fn h(x:u32)->u32{{x&15u32}}{}",
+            "pub mod m{".repeat(65),
+            "}".repeat(65)
+        );
+        let callee = format!("{}h", "m::".repeat(65));
+        let build = |body: &str| format!("fn f(x:u32)->(u32,u32){{{modules}{body}}}");
+        ordered(
+            &build(&format!("let a={callee}(x);let b={callee}(x^1u32);(a,b)")),
+            &build(&format!("let b={callee}(x^1u32);let a={callee}(x);(a,b)")),
+        );
+    });
 }

@@ -109,6 +109,44 @@ fn qualified_calls_resolve_their_target_module() {
 }
 
 #[test]
+fn repeated_parent_module_segments_keep_the_helper_origin() {
+    let source = "pub fn low(p:bool)->bool{p}mod one{pub mod two{pub fn f(p:bool)->(bool,bool){let a=super::super::low(p);let b=super::super::low(!p);(a,b)}}}";
+    let reordered = source.replace(
+        "let a=super::super::low(p);let b=super::super::low(!p);",
+        "let b=super::super::low(!p);let a=super::super::low(p);",
+    );
+    assert_eq!(
+        syn_canon::canonicalize(syn::parse_str(source).unwrap()),
+        syn_canon::canonicalize(syn::parse_str(&reordered).unwrap())
+    );
+}
+
+#[test]
+fn interior_parent_segments_cannot_supply_a_helper_proof() {
+    let source = "mod one{}fn low(p:bool)->bool{p}fn f(p:bool)->(bool,bool){let a=self::one::super::low(p);let b=self::one::super::low(!p);(a,b)}";
+    let reordered = source.replace(
+        "let a=self::one::super::low(p);let b=self::one::super::low(!p);",
+        "let b=self::one::super::low(!p);let a=self::one::super::low(p);",
+    );
+    assert_ne!(
+        syn_canon::canonicalize(syn::parse_str(source).unwrap()),
+        syn_canon::canonicalize(syn::parse_str(&reordered).unwrap())
+    );
+}
+
+#[test]
+fn original_macro_scope_keeps_helper_calls_ordered() {
+    let source = "fn low(p:bool)->bool{p}fn first(p:bool)->(bool,bool){macro_rules! unused{()=>{}}let a=low(p);let b=low(!p);(a,b)}fn same(p:bool)->(bool,bool){macro_rules! unused{()=>{}}let b=low(!p);let a=low(p);(a,b)}";
+    assert_ne!(view(source, None, "first"), view(source, None, "same"));
+}
+
+#[test]
+fn original_external_crate_scope_keeps_helper_calls_ordered() {
+    let source = "fn low(p:bool)->bool{p}fn first(p:bool)->(bool,bool){extern crate core;let a=low(p);let b=low(!p);(a,b)}fn same(p:bool)->(bool,bool){extern crate core;let b=low(!p);let a=low(p);(a,b)}";
+    assert_ne!(view(source, None, "first"), view(source, None, "same"));
+}
+
+#[test]
 fn raw_identifiers_resolve_their_raw_spelling() {
     pair(
         "mod m { fn r#type(x: u32) -> u32 { x & 15u32 } pub fn first(input: u32) -> (u32, u32) { let a = r#type(input); let b = r#type(input ^ 1u32); (a, b) } pub fn same(input: u32) -> (u32, u32) { let b = r#type(input ^ 1u32); let a = r#type(input); (a, b) } }",
@@ -511,7 +549,7 @@ fn public_alias_ast_gaps_keep_helper_calls_ordered() {
             ))
             .unwrap();
             let syn::Item::Type(alias) = &mut file.items[0] else {
-                unreachable!()
+                unreachable!("the fixture's first item is a type alias")
             };
             if deep {
                 let mut ty = Box::new(syn::parse_str::<syn::Type>("u32").unwrap());
@@ -525,7 +563,7 @@ fn public_alias_ast_gaps_keep_helper_calls_ordered() {
                 alias.ty = ty;
             } else {
                 let syn::Type::Path(path) = alias.ty.as_mut() else {
-                    unreachable!()
+                    unreachable!("the alias target is a path")
                 };
                 path.path.segments.clear();
             }

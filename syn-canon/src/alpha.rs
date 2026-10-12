@@ -42,9 +42,7 @@ pub(crate) struct Options<'a> {
     pub(crate) helper_table: Option<&'a crate::helpers::HelperTable>,
     pub(crate) helper_module: &'a [String],
     pub(crate) helper_blocked: bool,
-    pub(crate) helper_decls: Option<&'a BTreeMap<*const syn::Block, crate::scope::HelperId>>,
-    pub(crate) helper_scopes: Option<&'a BTreeMap<*const syn::Block, crate::helpers::ScopeId>>,
-    pub(crate) helper_calls: Option<&'a BTreeMap<*const syn::Path, crate::helpers::ScopeId>>,
+    pub(crate) helper_syntax: Option<crate::helpers::HelperSyntax>,
 }
 
 /// A resolved name reference, its identity only, the canon resolves on render.
@@ -241,10 +239,7 @@ pub(crate) struct Renamer<'env> {
     pub(crate) helper_table: Cow<'env, crate::helpers::HelperTable>,
     helper_module: Vec<String>,
     helper_canons: BTreeMap<crate::scope::HelperId, FreeKey>,
-    helper_decls: Option<&'env BTreeMap<*const syn::Block, crate::scope::HelperId>>,
-    helper_scope_map: Option<&'env BTreeMap<*const syn::Block, crate::helpers::ScopeId>>,
-    helper_call_scopes: Option<&'env BTreeMap<*const syn::Path, crate::helpers::ScopeId>>,
-    helper_scopes: Vec<Option<crate::helpers::ScopeId>>,
+    pub(crate) helper_syntax: crate::helpers::HelperSyntax,
     pub(crate) helper_blocked: bool,
 }
 
@@ -282,10 +277,7 @@ impl<'env> Renamer<'env> {
             helper_table: Cow::Owned(crate::helpers::HelperTable::default()),
             helper_module: Vec::new(),
             helper_canons: BTreeMap::new(),
-            helper_decls: None,
-            helper_scope_map: None,
-            helper_call_scopes: None,
-            helper_scopes: Vec::new(),
+            helper_syntax: crate::helpers::HelperSyntax::default(),
             helper_blocked: false,
         }
     }
@@ -320,9 +312,7 @@ impl<'env> Renamer<'env> {
         }
         renamer.helper_module = options.helper_module.to_vec();
         renamer.helper_blocked = options.helper_blocked;
-        renamer.helper_decls = options.helper_decls;
-        renamer.helper_scope_map = options.helper_scopes;
-        renamer.helper_call_scopes = options.helper_calls;
+        renamer.helper_syntax = options.helper_syntax.unwrap_or_default();
         if let Some(canon) = options.self_canon {
             let id = BindingId(
                 renamer
@@ -421,9 +411,7 @@ impl<'env> Renamer<'env> {
     }
 
     fn helper_path_scope(&self, path: &syn::Path) -> Option<crate::helpers::ScopeId> {
-        self.helper_call_scopes
-            .and_then(|calls| calls.get(&core::ptr::from_ref(path)).copied())
-            .or_else(|| self.helper_scopes.last().copied().flatten())
+        self.helper_syntax.call_scope(path)
     }
 
     fn helpers_allowed(&self) -> bool {
@@ -446,15 +434,11 @@ impl<'env> Renamer<'env> {
     }
 
     pub(crate) fn helper_declaration(&self, block: &syn::Block) -> Option<crate::scope::HelperId> {
-        self.helper_decls
-            .and_then(|decls| decls.get(&core::ptr::from_ref(block)))
-            .copied()
+        self.helper_syntax.declaration(block)
     }
 
     pub(crate) fn helper_block_scope(&self, block: &syn::Block) -> Option<crate::helpers::ScopeId> {
-        self.helper_scope_map
-            .and_then(|scopes| scopes.get(&core::ptr::from_ref(block)).copied())
-            .or_else(|| self.helper_scopes.last().copied().flatten())
+        self.helper_syntax.scope(block)
     }
 
     pub(crate) fn helper_import_env(
@@ -1342,6 +1326,7 @@ impl<'env> Renamer<'env> {
             return self.rename_tokens(tokens);
         };
         for (index, expr) in args.iter_mut().enumerate() {
+            self.helper_syntax.clear_expr(expr);
             self.visit_expr_mut(expr);
             if Some(index) == format_at
                 && let syn::Expr::Lit(syn::ExprLit {
@@ -1948,10 +1933,7 @@ fn prebind(renamer: &mut Renamer<'_>, items: &[&syn::Item]) {
             renamer.top_bind(Ns::Value, &name, binding.clone());
         }
         if let syn::Item::Fn(function) = item
-            && let Some(helper) = renamer
-                .helper_decls
-                .and_then(|decls| decls.get(&core::ptr::from_ref(function.block.as_ref())))
-                .copied()
+            && let Some(helper) = renamer.helper_declaration(&function.block)
         {
             renamer
                 .frames
@@ -2213,8 +2195,7 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
         self.push();
-        let scope = self.helper_block_scope(block);
-        self.helper_scopes.push(scope);
+        let before_constants = self.helper_syntax.snapshot_block(block);
         let items: Vec<&syn::Item> = block
             .stmts
             .iter()
@@ -2233,6 +2214,8 @@ impl VisitMut for Renamer<'_> {
         if self.constants_allowed() {
             crate::constants::normalize_block(self, block);
         }
+        self.helper_syntax.refresh_block(before_constants, block);
+        let mut original_syntax = Some(self.helper_syntax.snapshot_block(block));
         let prepared = core::mem::replace(&mut self.constants_prepared, true);
         let analyzed = self.compiles
             && self.regions_active
@@ -2240,18 +2223,24 @@ impl VisitMut for Renamer<'_> {
             && self.macro_origins.is_none();
         if analyzed {
             schedule::analyze(self, block);
+            let before_algebra = self.helper_syntax.snapshot_block(block);
             if self.constants_allowed() && !self.glob_uncertain() && !self.cfg_blocked() {
                 let facts = self.last_block_facts().expect("an analyzed block");
                 crate::algebra::normalize(self, block, facts);
             }
+            self.helper_syntax.refresh_block(before_algebra, block);
             if let Some(original) = self
                 .block_facts
                 .last_mut()
                 .expect("an analyzed block")
                 .original_on_exhaustion(block, self.depth - 1)
             {
+                let before_rollback = self.helper_syntax.snapshot_block(block);
                 self.block_facts.pop();
                 *block = original;
+                self.helper_syntax
+                    .extend(original_syntax.take().expect("original helper syntax"));
+                self.helper_syntax.refresh_block(before_rollback, block);
                 schedule::record_all_opaque(self, block);
             }
         }
@@ -2259,6 +2248,7 @@ impl VisitMut for Renamer<'_> {
             && self
                 .last_block_facts()
                 .is_some_and(schedule::BlockFacts::can_rewrite);
+        let before_visit = self.helper_syntax.snapshot_block(block);
         let mut reachable = true;
         for stmt in &mut block.stmts {
             let boundary = matches!(
@@ -2274,7 +2264,10 @@ impl VisitMut for Renamer<'_> {
         self.constants_prepared = prepared;
         self.depth -= 1;
         self.pop();
-        self.helper_scopes.pop();
+        self.helper_syntax.refresh_block(before_visit, block);
+        if let Some(original_syntax) = original_syntax {
+            self.helper_syntax.refresh_block(original_syntax, block);
+        }
         if analyzed {
             let facts = self.block_facts.pop().expect("an analyzed block");
             facts.finish(block, &mut self.facts);
@@ -2513,8 +2506,18 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
-        let module = crate::scope::ident_name(&item.ident);
-        self.helper_module.push(module);
+        let previous_module = if let Some(route) = self
+            .helper_syntax
+            .module(item)
+            .and_then(|route| self.helper_table.module_route(route))
+        {
+            let route = route.to_vec();
+            Some(core::mem::replace(&mut self.helper_module, route))
+        } else {
+            self.helper_module
+                .push(crate::scope::ident_name(&item.ident));
+            None
+        };
         let id = self.rename_binder(Ns::Type, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
@@ -2532,7 +2535,11 @@ impl VisitMut for Renamer<'_> {
             self.observed = observed;
             self.mod_frames.insert(id, frame);
         }
-        self.helper_module.pop();
+        if let Some(previous) = previous_module {
+            self.helper_module = previous;
+        } else {
+            self.helper_module.pop();
+        }
     }
 
     fn visit_expr_closure_mut(&mut self, closure: &mut syn::ExprClosure) {
@@ -2708,12 +2715,14 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_path_mut(&mut self, path: &mut syn::Path) {
+        let helper_scope = self.helper_syntax.take_path(path);
         // Only the first segment names a local binder, and a leading
         // colon always names an extern crate.
         if !core::mem::take(&mut self.after_bare_qself) {
             self.resolve_path(path);
         }
         self.visit_path_arguments(path);
+        self.helper_syntax.put_path(path, helper_scope);
     }
 
     fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {

@@ -12,7 +12,7 @@ use syn::visit::Visit;
 
 use crate::alpha;
 use crate::form;
-use crate::scope::{Binding, BindingId, Frame, HelperId, Ns, Origin, PrimTy, ident_name, unraw};
+use crate::scope::{Binding, BindingId, Frame, Ns, Origin, PrimTy, ident_name, unraw};
 
 /// The original owner of a function.
 #[derive(Clone, PartialEq, Eq, Debug)]
@@ -107,9 +107,7 @@ impl FunctionView<'_> {
         if !matches!(self.entry.owner, Owner::Free) {
             sig.ident = syn::Ident::new("__dejadoc_method", sig.ident.span());
         }
-        let block = Box::new(self.block.clone());
-        let helpers = transfer_helpers(&self.ctx.helpers, self.block, &block);
-        let item = syn::ItemFn {
+        let mut item = syn::ItemFn {
             attrs: self
                 .entry
                 .attrs
@@ -120,8 +118,9 @@ impl FunctionView<'_> {
             vis: syn::Visibility::Inherited,
             modifiers: syn::FnModifiers::default(),
             sig,
-            block,
+            block: Box::new(self.block.clone()),
         };
+        let helpers = transfer_helpers(&self.ctx.helpers, self.sig, self.block, &mut item);
         let file = syn::File {
             shebang: None,
             frontmatter: None,
@@ -140,101 +139,19 @@ impl FunctionView<'_> {
                 helper_table: Some(&self.ctx.helpers),
                 helper_module: &self.entry.helper_module,
                 helper_blocked: self.entry.helper_blocked,
-                helper_decls: Some(&helpers.declarations),
-                helper_scopes: Some(&helpers.scopes),
-                helper_calls: Some(&helpers.calls),
+                helper_syntax: Some(helpers),
             },
         )
     }
 }
 
-struct HelperSyntax {
-    declarations: BTreeMap<*const syn::Block, HelperId>,
-    scopes: BTreeMap<*const syn::Block, crate::helpers::ScopeId>,
-    calls: BTreeMap<*const syn::Path, crate::helpers::ScopeId>,
-}
-
 fn transfer_helpers(
     helpers: &crate::helpers::HelperTable,
-    original: &syn::Block,
-    cloned: &syn::Block,
-) -> HelperSyntax {
-    struct Collect<'a> {
-        helpers: &'a crate::helpers::HelperTable,
-        handles: Vec<(Option<HelperId>, Option<crate::helpers::ScopeId>)>,
-        calls: Vec<Option<crate::helpers::ScopeId>>,
-    }
-    impl<'ast> Visit<'ast> for Collect<'_> {
-        fn visit_block(&mut self, block: &'ast syn::Block) {
-            self.handles.push((
-                self.helpers.declaration(block),
-                self.helpers
-                    .scopes()
-                    .get(&core::ptr::from_ref(block))
-                    .copied(),
-            ));
-            syn::visit::visit_block(self, block);
-        }
-
-        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-            let scope = match call.func.as_ref() {
-                syn::Expr::Path(path) => self
-                    .helpers
-                    .call_scopes()
-                    .get(&core::ptr::from_ref(&path.path))
-                    .copied(),
-                _ => None,
-            };
-            self.calls.push(scope);
-            syn::visit::visit_expr_call(self, call);
-        }
-    }
-    struct Attach<'a> {
-        handles: core::slice::Iter<'a, (Option<HelperId>, Option<crate::helpers::ScopeId>)>,
-        calls: core::slice::Iter<'a, Option<crate::helpers::ScopeId>>,
-        syntax: HelperSyntax,
-    }
-    impl<'ast> Visit<'ast> for Attach<'_> {
-        fn visit_block(&mut self, block: &'ast syn::Block) {
-            let (helper, scope) = self.handles.next().expect("cloned block traversal");
-            let key = core::ptr::from_ref(block);
-            if let Some(id) = helper {
-                self.syntax.declarations.insert(key, *id);
-            }
-            if let Some(id) = scope {
-                self.syntax.scopes.insert(key, *id);
-            }
-            syn::visit::visit_block(self, block);
-        }
-
-        fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
-            if let Some(Some(scope)) = self.calls.next()
-                && let syn::Expr::Path(path) = call.func.as_ref()
-            {
-                self.syntax
-                    .calls
-                    .insert(core::ptr::from_ref(&path.path), *scope);
-            }
-            syn::visit::visit_expr_call(self, call);
-        }
-    }
-    let mut collect = Collect {
-        helpers,
-        handles: Vec::new(),
-        calls: Vec::new(),
-    };
-    collect.visit_block(original);
-    let mut attach = Attach {
-        handles: collect.handles.iter(),
-        calls: collect.calls.iter(),
-        syntax: HelperSyntax {
-            declarations: BTreeMap::new(),
-            scopes: BTreeMap::new(),
-            calls: BTreeMap::new(),
-        },
-    };
-    attach.visit_block(cloned);
-    attach.syntax
+    signature: &syn::Signature,
+    body: &syn::Block,
+    cloned: &mut syn::ItemFn,
+) -> crate::helpers::HelperSyntax {
+    crate::helpers::HelperSyntax::cloned_function(helpers, signature, body, cloned)
 }
 
 impl<'a> SourceContext<'a> {
@@ -1303,6 +1220,9 @@ fn generics_frame(
 /// Index every function `items` declares, nested modules included.
 #[expect(
     clippy::too_many_arguments,
+    reason = "the index carries its original module and observer evidence"
+)]
+#[expect(
     clippy::too_many_lines,
     reason = "each item kind carries its original owner and ancestry"
 )]

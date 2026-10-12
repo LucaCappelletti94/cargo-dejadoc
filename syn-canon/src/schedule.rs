@@ -3348,6 +3348,43 @@ impl<'ast> Visit<'ast> for HelperCallScan<'_, '_> {
         self.shadows.pop();
     }
 
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        self.shadows.push(BTreeMap::new());
+        self.visit_pat(&arm.pat);
+        self.visit_expr(&arm.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr_for_loop(&mut self, for_loop: &'ast syn::ExprForLoop) {
+        self.visit_expr(&for_loop.expr);
+        self.shadows.push(BTreeMap::new());
+        self.visit_pat(&for_loop.pat);
+        self.visit_block(&for_loop.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
+        self.shadows.push(BTreeMap::new());
+        self.visit_expr(&expr.cond);
+        self.visit_block(&expr.then_branch);
+        self.shadows.pop();
+        if let Some((_, otherwise)) = &expr.else_branch {
+            self.visit_expr(otherwise);
+        }
+    }
+
+    fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+        self.shadows.push(BTreeMap::new());
+        self.visit_expr(&expr.cond);
+        self.visit_block(&expr.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr_let(&mut self, expr: &'ast syn::ExprLet) {
+        self.visit_expr(&expr.expr);
+        self.visit_pat(&expr.pat);
+    }
+
     fn visit_expr(&mut self, expr: &'ast syn::Expr) {
         if let syn::Expr::Call(call) = expr
             && let syn::Expr::Path(path) = call.func.as_ref()
