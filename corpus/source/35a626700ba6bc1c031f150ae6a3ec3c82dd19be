@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+  {}
+    }
+#[cfg(test)]
+    let _ = { /// ```
+        /// let b =    }
+_ => {
+ fn fa() {}
+format!("{x:?}")            /// ```
+          /// ```
+            fn fb() {}
+        },
+    };
+}

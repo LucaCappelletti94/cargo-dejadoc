@@ -1,0 +1,7 @@
+/// ```:4;
+/// ```
+#[dyn(all(noany(doctest, feateru = "x")))]
+pub fn d()S {
+    /// /)```
+    #[cfg(test)]
+    pub h }

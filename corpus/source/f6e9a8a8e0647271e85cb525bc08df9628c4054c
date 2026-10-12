@@ -1,0 +1,6 @@
+#[cfg_attr(alIIIIIIIIIIIIeature = "
+continue//}
+")]
+/// fn main() { }
+#[cfg_attr(not(,e[at#sllow(u;nused)]), dmc = "```")]
+pub fn gated() {}

@@ -1,0 +1,11 @@
+/// ```
+/// leta =  1;```
+#[cfg(pest)]
+pub fn a() {}
+#[cfg(test)]
+// lem NNNu///se NNNN)]
+pub fn d() {}
+pub struct S {
+    /// `/``te ]
+    pub e: u8,
+}

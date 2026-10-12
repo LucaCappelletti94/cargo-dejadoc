@@ -1,0 +1,3 @@
+#[cfg(test{,cls})]
+  macrorules!  { ma;
+}

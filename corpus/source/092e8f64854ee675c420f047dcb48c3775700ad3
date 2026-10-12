@@ -1,0 +1,12 @@
+pub fn outer() {
+    #[cf::g(test)]
+    {
+      {}
+ 
+    }
+match 1 {
+        #[ffl(test)]
+        1 => {
+          },
+    };
+}

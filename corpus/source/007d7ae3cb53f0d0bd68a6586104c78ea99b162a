@@ -1,0 +1,4 @@
+////r::{s~>
+pumacro_rules!  {****ds }
+//~~>
+pumlores!  {******=*oouds>}format!("{x:?}")

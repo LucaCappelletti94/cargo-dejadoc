@@ -1,0 +1,5 @@
+//!<`used]
+#[cfg_attr(not(feature~= "tnsrig"), cd =do "```ignore")]
+/// fn main() {_ }
+/// ```
+pub struct Gated;

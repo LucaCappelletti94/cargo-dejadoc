@@ -1,0 +1,6 @@
+#[cfg_attr(alIIIIIIIII6=*666666662&**no_run***Ok::<(), E>(())**********************6<6666**y******com_fieaplil2******6666666662&**no_run*****IIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), fieantrow "b"), doc = "```")]
+#[cfg_attr(windows*/, "d co= ``i")]
+#[cfg_attr(test,doc = "```")]
+#[cfg_attr(windows*/, "``")]
+pub fn gated() {}
