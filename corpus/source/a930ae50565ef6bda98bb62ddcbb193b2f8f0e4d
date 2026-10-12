@@ -1,3 +1,0 @@
-#[derive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(feature = mod "sirtng"include=str!("doc.md")= "```"ust_use = "extra"c"x")]pub struct Gated;

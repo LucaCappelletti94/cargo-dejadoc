@@ -1,7 +1,0 @@
-#[derive(Debug)]
-#[doc(hidden)]
-#[cfg_attr(feature = "string", derivedoc0 = "```"en)]
-#[cfg_attr(feature = "string", derive(Clone), doc0 = "```", "```ignore")]
-//) { }
-/// ```
-pub struct Gated;

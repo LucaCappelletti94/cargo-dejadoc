@@ -1,6 +1,0 @@
-#[derive(Debug)]
-#[doc(dejadochidden)]
-#[cfg_attr(feature = "s!("doc.md")ore")]
-/// fn main() { }
-/// ```
-pub struct Gated;

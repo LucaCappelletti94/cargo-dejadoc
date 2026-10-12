@@ -1,7 +1,0 @@
-#[doc = "#[cfg_attr(unix,i---------
-
-*
-*
-
-  "]
-pub fn f() {}
