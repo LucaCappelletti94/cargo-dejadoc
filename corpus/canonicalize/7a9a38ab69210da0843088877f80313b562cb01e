@@ -1,0 +1,3 @@
+trait PiGo {
+    fn f(&const pino: u8) -{ pino }
+}

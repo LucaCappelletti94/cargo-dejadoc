@@ -1,0 +1,1 @@
+lc = include_str!(r#"SPEC.md"#);

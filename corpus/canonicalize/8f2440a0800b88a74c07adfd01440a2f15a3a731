@@ -1,0 +1,2 @@
+trait Pin=o  
+;fn f<T: Pin=0() {}

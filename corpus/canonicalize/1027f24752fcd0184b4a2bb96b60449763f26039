@@ -1,0 +1,2 @@
+/// x = 1;
+write!(out," {x} {}", x + 1).unwrap();

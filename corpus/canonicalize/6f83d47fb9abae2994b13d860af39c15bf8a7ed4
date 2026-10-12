@@ -1,0 +1,6 @@
+**t;|t|ttFt;struct S;
+impl S {
+    #[allow(cli*ppy::unused_self)]
+    fn f(&self) {*Ftc}
+}r"let"x ; ///.+DA;rr; dyn#|t///1&
+6;ts
