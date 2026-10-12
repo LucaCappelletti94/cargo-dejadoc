@@ -30,6 +30,25 @@ Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit 
 
 Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving lexical value identities and distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 expression or block levels, or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
 
+Passing-mode comparison schedules calls to originally resolved acyclic helpers with total primitive signatures, bodies and arguments. Scoped primitive locals, total `if` branches and nested accepted calls qualify, while recursion, resources, observations, conditional definitions and unresolved or external calls retain their order. Helper origins, argument positions and call multiplicity stay distinct.
+
+Immutable summaries are built once per original context and borrowed by function views. Their 16,384-node transitive budget counts each called helper's owned original syntax once, including every checked branch, while uncalled nested bodies contribute only their declaration statements. Incomplete observer indexing or exhausted proofs retain complete caller regions.
+
+```rust
+let helpers = "fn low(x:u32)->u32{x&15u32}fn high(x:u32)->u32{x>>4}";
+let form = |body: &str| syn_canon::canonicalize(
+    syn::parse_str(&format!("{helpers}fn f(x:u32)->(u32,u32){{{body}(a,b)}}")).unwrap(),
+);
+assert_eq!(
+    form("let a=low(x);let b=high(x);"),
+    form("let b=high(x);let a=low(x);"),
+);
+assert_ne!(
+    form("let a=low(x);let b=high(x);"),
+    form("let a=high(x);let b=low(x);"),
+);
+```
+
 Passing-mode comparison evaluates closed fixed-width integer literal operations before dependency scheduling, checking every intermediate result and retaining the result's type. Compatible suffixes or a resolved immediate declaration establish the type, with signed minima and Rust's truncating left shifts preserved. Overflow, zero divisors, signed minimum division or remainder by `-1`, unresolved inference, pointer-sized arithmetic and syntax-observed regions retain their operations.
 
 ```rust

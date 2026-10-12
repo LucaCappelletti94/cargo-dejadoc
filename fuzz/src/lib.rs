@@ -479,7 +479,8 @@ pub fn check_value_schedules(data: &[u8]) {
     let ty_stmt = format!("let ty=mask>>{shift}u32;");
     let fn_code = |parts: &[&str], output: &str| {
         let prefix = "fn f(input:u32)->(u32,bool,u32){";
-        let capacity = prefix.len() + parts.iter().map(|part| part.len()).sum::<usize>() + output.len() + 1;
+        let capacity =
+            prefix.len() + parts.iter().map(|part| part.len()).sum::<usize>() + output.len() + 1;
         let mut code = String::with_capacity(capacity);
         code.push_str(prefix);
         for part in parts {
@@ -489,15 +490,9 @@ pub fn check_value_schedules(data: &[u8]) {
         code.push('}');
         code
     };
-    let original = fn_code(
-        &[s[0], s[1], s[2], s[3], s[4], s[5], s[6]],
-        "(temp,n,ty)",
-    );
+    let original = fn_code(&[s[0], s[1], s[2], s[3], s[4], s[5], s[6]], "(temp,n,ty)");
     let v07_temp = format!("let temp=mask^{lo}u32;");
-    let v07 = fn_code(
-        &[s[0], &v07_temp, s[3], s[4], s[5], s[6]],
-        "(temp,n,ty)",
-    );
+    let v07 = fn_code(&[s[0], &v07_temp, s[3], s[4], s[5], s[6]], "(temp,n,ty)");
     let v08 = fn_code(
         &[s[0], s[1], s[3], s[4], s[5], s[6]],
         &format!("(copied^{lo}u32,n,ty)"),
@@ -525,21 +520,9 @@ pub fn check_value_schedules(data: &[u8]) {
         &[s[0], s[1], s[2], s[3], s[4], s[5], truth_stmt],
         "(temp,n,ty)",
     );
-    let origin = fn_code(
-        &[s[0], s[1], s[2], s[3], s[4], s[5], s[6]],
-        "(temp,n,tx)",
-    );
+    let origin = fn_code(&[s[0], s[1], s[2], s[3], s[4], s[5], s[6]], "(temp,n,tx)");
     let storage = fn_code(
-        &[
-            s[0],
-            s[1],
-            "let _=&copied;",
-            s[2],
-            s[3],
-            s[4],
-            s[5],
-            s[6],
-        ],
+        &[s[0], s[1], "let _=&copied;", s[2], s[3], s[4], s[5], s[6]],
         "(temp,n,ty)",
     );
     let evaluation_stmt = format!("let temp=copied|{}u32;", lo + 1);
@@ -578,8 +561,7 @@ pub fn check_value_schedules(data: &[u8]) {
         .groups
         .iter()
         .map(|group| {
-            let mut members: Vec<_> =
-                group.sites.iter().map(|site| site.item.as_str()).collect();
+            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
             members.sort_unstable();
             members
         })
@@ -594,5 +576,156 @@ pub fn check_value_schedules(data: &[u8]) {
             "c::v10",
             "c::v18",
         ]]
+    );
+}
+
+/// Pure helper schedules preserve origins, effects, shadowing and argument order.
+pub fn check_helper_schedules(data: &[u8]) {
+    let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
+    let mask = byte(0);
+    let shift = byte(1) % 32;
+    let bias = byte(3);
+    let attr = if byte(2) & 2 == 0 {
+        "#[track_caller]"
+    } else {
+        "#[cfg(all())]"
+    };
+    let (h1, h2, low, b2, value) = if byte(2) & 1 == 0 {
+        ("one", "two", "low", "two", "x")
+    } else {
+        ("r#type", "r#loop", "r#const", "r#match", "r#value")
+    };
+    let a_helpers = |h1: &str, h2: &str, mask: u32| {
+        format!(
+            "fn {h1}({value}:u32,q:bool)->u32{{let y={value}&{mask}u32;if q{{y}}else{{{value}>>{shift}u32}}}}fn {h2}({value}:u32)->u32{{{value}>>{shift}u32}}"
+        )
+    };
+    let b_helpers = format!(
+        "fn {low}({value}:u32)->u32{{{value}&{mask}u32}}fn {h1}({value}:u32)->u32{{{low}({value})}}fn {b2}({value}:u32)->u32{{{low}({value})}}"
+    );
+    let a_call = format!("let a={h1}(input,flag);");
+    let b_call = format!("let b={h2}(input);");
+    let a_h2 = format!("let a={h2}(input);");
+    let b_h1 = format!("let b={h1}(input,flag);");
+    let t_a_h1 = format!("let a={h1}(input);");
+    let t_b_b2 = format!("let b={b2}(input);");
+    let t_a_b2 = format!("let a={b2}(input);");
+    let t_b_h1 = format!("let b={h1}(input);");
+    let f_a = |body: &str| format!("fn f(input:u32,flag:bool)->(u32,u32){{{body}}}");
+    let f_b = |body: &str| format!("fn f(input:u32)->(u32,u32){{{body}}}");
+    let a_original = f_a(&format!("{a_call}{b_call}(a,b)"));
+    let a_scheduled = f_a(&format!("{b_call}{a_call}(a,b)"));
+    let a_renamed = f_a("let a=lo(input,flag);let b=hi(input);(a,b)");
+    let n_origin = f_a(&format!("{a_h2}{b_h1}(a,b)"));
+    let n_value = f_a(&format!("{a_call}{b_call}(a,b)"));
+    let n_port = f_a(&format!("{a_call}{b_call}(b,a)"));
+    let b_original = f_b(&format!("{t_a_h1}{t_b_b2}(a,b)"));
+    let b_scheduled = f_b(&format!("{t_b_b2}{t_a_h1}(a,b)"));
+    let n_origin_b = f_b(&format!("{t_a_b2}{t_b_h1}(a,b)"));
+    let pair_a = format!("let a=helper(x);let b=helper(x^{bias}u32);");
+    let pair_b = format!("let b=helper(x^{bias}u32);let a=helper(x);");
+    let f_pair = |helper: &str, lead: &str, statements: &str| {
+        format!("{helper}fn f(x:u32)->(u32,u32){{{lead}{statements}(a,b)}}")
+    };
+    let lead_shadow = "let helper=|v:u32|{println!(\"{v}\");v};";
+    let n_shadow_a = f_pair(
+        &format!("fn helper(x:u32)->u32{{x&{mask}u32}}"),
+        lead_shadow,
+        &pair_a,
+    );
+    let n_shadow_b = f_pair(
+        &format!("fn helper(x:u32)->u32{{x&{mask}u32}}"),
+        lead_shadow,
+        &pair_b,
+    );
+    let n_recursive_a = f_pair("fn helper(x:u32)->u32{helper(x)}", "", &pair_a);
+    let n_recursive_b = f_pair("fn helper(x:u32)->u32{helper(x)}", "", &pair_b);
+    let n_diverge_a = f_pair("fn helper(x:u32)->u32{loop{}}", "", &pair_a);
+    let n_diverge_b = f_pair("fn helper(x:u32)->u32{loop{}}", "", &pair_b);
+    let n_observer_a = f_pair(
+        &format!("{attr}fn helper(x:u32)->u32{{x&{mask}u32}}"),
+        "",
+        &pair_a,
+    );
+    let n_observer_b = f_pair(
+        &format!("{attr}fn helper(x:u32)->u32{{x&{mask}u32}}"),
+        "",
+        &pair_b,
+    );
+    let helper_effect = "fn effect(x:u32)->u32{println!(\"{x}\");x}";
+    let impure_a = format!("let a={h1}(effect(input),flag);let b={h2}(input);(a,b)");
+    let impure_b = format!("let b={h2}(input);let a={h1}(effect(input),flag);(a,b)");
+    let n_impure_a = f_a(&impure_a);
+    let n_impure_b = f_a(&impure_b);
+    let total_a = format!("let a={h1}(loop{{}},flag);let b={h2}(input);(a,b)");
+    let total_b = format!("let b={h2}(input);let a={h1}(loop{{}},flag);(a,b)");
+    let n_total_a = f_a(&total_a);
+    let n_total_b = f_a(&total_b);
+    let a_code = a_helpers(h1, h2, mask);
+    let a_code_renamed = a_helpers("lo", "hi", mask);
+    let a_code_value = a_helpers(h1, h2, mask.wrapping_add(1));
+    let main_a = "fn main(){let _=f(0u32,false);}";
+    let main_b = "fn main(){let _=f(0u32);}";
+    let site = |item: &str, code: String| DocTest {
+        file: format!("src/{item}.rs"),
+        line: 1,
+        end: None,
+        item: format!("c::{item}"),
+        info: Vec::new(),
+        code,
+        allow: false,
+        self_type: None,
+        public: false,
+    };
+    let report = dejadoc::group(
+        &[
+            site("a_original", format!("{a_code}{a_original}{main_a}")),
+            site("a_scheduled", format!("{a_code}{a_scheduled}{main_a}")),
+            site("a_renamed", format!("{a_code_renamed}{a_renamed}{main_a}")),
+            site("b_original", format!("{b_helpers}{b_original}{main_b}")),
+            site("b_scheduled", format!("{b_helpers}{b_scheduled}{main_b}")),
+            site("n_origin", format!("{a_code}{n_origin}{main_a}")),
+            site("n_origin_b", format!("{b_helpers}{n_origin_b}{main_b}")),
+            site("n_value", format!("{a_code_value}{n_value}{main_a}")),
+            site("n_port", format!("{a_code}{n_port}{main_a}")),
+            site(
+                "n_impure_a",
+                format!("{a_code}{helper_effect}{n_impure_a}{main_a}"),
+            ),
+            site(
+                "n_impure_b",
+                format!("{a_code}{helper_effect}{n_impure_b}{main_a}"),
+            ),
+            site("n_shadow_a", format!("{n_shadow_a}{main_b}")),
+            site("n_shadow_b", format!("{n_shadow_b}{main_b}")),
+            site("n_recursive_a", format!("{n_recursive_a}{main_b}")),
+            site("n_recursive_b", format!("{n_recursive_b}{main_b}")),
+            site("n_diverge_a", format!("{n_diverge_a}{main_b}")),
+            site("n_diverge_b", format!("{n_diverge_b}{main_b}")),
+            site("n_observer_a", format!("{n_observer_a}{main_b}")),
+            site("n_observer_b", format!("{n_observer_b}{main_b}")),
+            site("n_total_a", format!("{a_code}{n_total_a}{main_a}")),
+            site("n_total_b", format!("{a_code}{n_total_b}{main_a}")),
+        ],
+        2,
+        0,
+    );
+    let mut groups: Vec<Vec<&str>> = report
+        .groups
+        .iter()
+        .map(|group| {
+            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
+            members.sort_unstable();
+            members
+        })
+        .collect();
+    groups.sort_unstable();
+    assert_eq!(
+        groups,
+        [
+            vec!["c::a_original", "c::a_renamed", "c::a_scheduled"],
+            vec!["c::b_original", "c::b_scheduled"],
+            vec!["c::n_origin", "c::n_port"],
+        ]
     );
 }

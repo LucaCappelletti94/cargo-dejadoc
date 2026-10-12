@@ -13,6 +13,7 @@ mod constants;
 mod context;
 mod drift;
 mod form;
+mod helpers;
 mod reference;
 mod schedule;
 mod scope;
@@ -46,6 +47,12 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
             self_canon: None,
             prim_fallback: true,
             observed: false,
+            helper_table: None,
+            helper_module: &[],
+            helper_blocked: false,
+            helper_decls: None,
+            helper_scopes: None,
+            helper_calls: None,
         },
     )
 }

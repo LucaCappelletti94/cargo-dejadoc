@@ -1,6 +1,7 @@
 //! Shared alpha-renaming for whole files, lexical contexts, and seeded
 //! views, with the dependency scheduler embedded in its block visits.
 
+use alloc::borrow::Cow;
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::collections::BTreeSet;
@@ -37,6 +38,13 @@ pub(crate) struct Options<'a> {
     pub(crate) prim_fallback: bool,
     /// A live observer attribute on the declaration or an enclosing item.
     pub(crate) observed: bool,
+    /// The source context's helper summary table, when one is indexed.
+    pub(crate) helper_table: Option<&'a crate::helpers::HelperTable>,
+    pub(crate) helper_module: &'a [String],
+    pub(crate) helper_blocked: bool,
+    pub(crate) helper_decls: Option<&'a BTreeMap<*const syn::Block, crate::scope::HelperId>>,
+    pub(crate) helper_scopes: Option<&'a BTreeMap<*const syn::Block, crate::helpers::ScopeId>>,
+    pub(crate) helper_calls: Option<&'a BTreeMap<*const syn::Path, crate::helpers::ScopeId>>,
 }
 
 /// A resolved name reference, its identity only, the canon resolves on render.
@@ -48,6 +56,7 @@ struct Resolved {
     origin: Origin,
     prim: Option<PrimTy>,
     target: Option<usize>,
+    helper: Option<crate::scope::HelperId>,
 }
 
 #[derive(Clone, Copy)]
@@ -229,6 +238,14 @@ pub(crate) struct Renamer<'env> {
     macro_origins: Option<Vec<Resolution>>,
     /// The reference provenance and block facts the pass recorded.
     pub(crate) facts: ReferenceFacts,
+    pub(crate) helper_table: Cow<'env, crate::helpers::HelperTable>,
+    helper_module: Vec<String>,
+    helper_canons: BTreeMap<crate::scope::HelperId, FreeKey>,
+    helper_decls: Option<&'env BTreeMap<*const syn::Block, crate::scope::HelperId>>,
+    helper_scope_map: Option<&'env BTreeMap<*const syn::Block, crate::helpers::ScopeId>>,
+    helper_call_scopes: Option<&'env BTreeMap<*const syn::Path, crate::helpers::ScopeId>>,
+    helper_scopes: Vec<Option<crate::helpers::ScopeId>>,
+    pub(crate) helper_blocked: bool,
 }
 
 impl<'env> Renamer<'env> {
@@ -262,6 +279,14 @@ impl<'env> Renamer<'env> {
             block_facts: Vec::new(),
             macro_origins: None,
             facts: ReferenceFacts::default(),
+            helper_table: Cow::Owned(crate::helpers::HelperTable::default()),
+            helper_module: Vec::new(),
+            helper_canons: BTreeMap::new(),
+            helper_decls: None,
+            helper_scope_map: None,
+            helper_call_scopes: None,
+            helper_scopes: Vec::new(),
+            helper_blocked: false,
         }
     }
 
@@ -290,6 +315,14 @@ impl<'env> Renamer<'env> {
         renamer.observed = options.observed;
         renamer.seed = options.seed;
         renamer.generics = options.generics;
+        if let Some(table) = options.helper_table {
+            renamer.helper_table = Cow::Borrowed(table);
+        }
+        renamer.helper_module = options.helper_module.to_vec();
+        renamer.helper_blocked = options.helper_blocked;
+        renamer.helper_decls = options.helper_decls;
+        renamer.helper_scope_map = options.helper_scopes;
+        renamer.helper_call_scopes = options.helper_calls;
         if let Some(canon) = options.self_canon {
             let id = BindingId(
                 renamer
@@ -313,10 +346,21 @@ impl<'env> Renamer<'env> {
                     value_port: None,
                     target: None,
                     raw: false,
+                    helper: None,
                 },
             );
             renamer.self_frame = Some(frame);
         }
+        renamer
+    }
+
+    pub(crate) fn scratch_ref(frame: &Frame, prim_fallback: bool) -> Renamer<'_> {
+        let mut renamer = Renamer::contextual(Inherited {
+            frames: core::slice::from_ref(frame),
+            mod_frames: &EMPTY_MOD_FRAMES,
+            targets: &[],
+        });
+        renamer.prim_fallback = prim_fallback;
         renamer
     }
 
@@ -343,6 +387,147 @@ impl<'env> Renamer<'env> {
         let id = BindingId(self.next_id);
         self.next_id += 1;
         id
+    }
+
+    pub(crate) fn helper_closure_sum(&self, roots: &BTreeSet<crate::scope::HelperId>) -> usize {
+        self.helper_table.closure_nodes(roots)
+    }
+
+    pub(crate) fn helper_id(
+        &self,
+        env: &BTreeMap<String, schedule::Value>,
+        path: &syn::Path,
+    ) -> Option<crate::scope::HelperId> {
+        if !self.helpers_allowed()
+            || path.leading_colon.is_some()
+            || path.segments.len() > schedule::MAX_BLOCK_DEPTH
+            || path
+                .segments
+                .iter()
+                .any(|segment| !segment.arguments.is_none())
+        {
+            return None;
+        }
+        let scope = self.helper_path_scope(path)?;
+        if !self.helper_table.scope_known(scope) {
+            return None;
+        }
+        let first = path.segments.first()?;
+        let name = crate::scope::ident_name(&first.ident);
+        if path.segments.len() == 1 {
+            return env.get(&name).and_then(|value| value.helper);
+        }
+        self.helper_table.resolve_in_scope(scope, path)
+    }
+
+    fn helper_path_scope(&self, path: &syn::Path) -> Option<crate::helpers::ScopeId> {
+        self.helper_call_scopes
+            .and_then(|calls| calls.get(&core::ptr::from_ref(path)).copied())
+            .or_else(|| self.helper_scopes.last().copied().flatten())
+    }
+
+    fn helpers_allowed(&self) -> bool {
+        !self.helper_blocked
+            && !self.glob_uncertain()
+            && !self.cfg_blocked()
+            && !self.scopes.last().is_some_and(|scope| scope.frozen)
+    }
+
+    fn helper_canon(&self, helper: crate::scope::HelperId) -> Option<&str> {
+        match self.helper_canons.get(&helper) {
+            Some(FreeKey::Resolved(canon)) => Some(canon),
+            _ => self.helper_table.inherited_canon(helper),
+        }
+    }
+
+    pub(crate) fn helper_identity(&self, helper: crate::scope::HelperId) -> Option<FreeKey> {
+        self.helper_canon(helper)
+            .map(|canon| FreeKey::Resolved(canon.to_string()))
+    }
+
+    pub(crate) fn helper_declaration(&self, block: &syn::Block) -> Option<crate::scope::HelperId> {
+        self.helper_decls
+            .and_then(|decls| decls.get(&core::ptr::from_ref(block)))
+            .copied()
+    }
+
+    pub(crate) fn helper_block_scope(&self, block: &syn::Block) -> Option<crate::helpers::ScopeId> {
+        self.helper_scope_map
+            .and_then(|scopes| scopes.get(&core::ptr::from_ref(block)).copied())
+            .or_else(|| self.helper_scopes.last().copied().flatten())
+    }
+
+    pub(crate) fn helper_import_env(
+        &self,
+        block: &syn::Block,
+        env: &mut BTreeMap<String, schedule::Value>,
+    ) {
+        let Some(scope) = self.helper_block_scope(block) else {
+            return;
+        };
+        let frame = self
+            .helper_table
+            .scope(scope)
+            .expect("indexed helper scope");
+        for stmt in &block.stmts {
+            if let syn::Stmt::Item(item) = stmt {
+                if let syn::Item::Use(import) = item {
+                    if !crate::helpers::use_tree_known(&import.tree, 0) {
+                        for value in env.values_mut() {
+                            value.helper = None;
+                        }
+                        continue;
+                    }
+                    crate::helpers::walk_imports(
+                        &import.tree,
+                        &mut Vec::new(),
+                        0,
+                        &mut |_, alias| {
+                            let Some(binding) = frame.lookup(Ns::Value, alias) else {
+                                return;
+                            };
+                            if binding.origin != Origin::Use {
+                                return;
+                            }
+                            let helper = binding
+                                .helper
+                                .or_else(|| self.helper_table.by_canon(&binding.canon));
+                            let key = helper
+                                .and_then(|helper| self.helper_identity(helper))
+                                .unwrap_or_else(|| FreeKey::Unresolved(alias.to_string()));
+                            env.insert(
+                                alias.to_string(),
+                                schedule::Value {
+                                    port: schedule::Port::Free(key),
+                                    prim: binding.prim,
+                                    helper,
+                                },
+                            );
+                        },
+                    );
+                } else if let Some((namespace, ident)) = item_binding(item)
+                    && (namespace == Ns::Value
+                        || matches!(item, syn::Item::Struct(item) if !matches!(item.fields, syn::Fields::Named(_))))
+                {
+                    let name = crate::scope::ident_name(ident);
+                    let helper = match item {
+                        syn::Item::Fn(function) => self.helper_declaration(&function.block),
+                        _ => None,
+                    };
+                    let key = helper
+                        .and_then(|helper| self.helper_identity(helper))
+                        .unwrap_or_else(|| FreeKey::Unresolved(name.clone()));
+                    env.insert(
+                        name,
+                        schedule::Value {
+                            port: schedule::Port::Free(key),
+                            prim: None,
+                            helper,
+                        },
+                    );
+                }
+            }
+        }
     }
 
     /// The next local canonical name, positional in the traversal.
@@ -412,6 +597,7 @@ impl<'env> Renamer<'env> {
             value_port,
             target: None,
             raw: false,
+            helper: None,
         };
         self.local_canons.insert(id, canon);
         self.top_bind(ns, name, binding.clone());
@@ -436,6 +622,7 @@ impl<'env> Renamer<'env> {
             value_port: None,
             target,
             raw: false,
+            helper: None,
         };
         self.local_canons.insert(id, canon);
         self.top_bind(Ns::Value, name, binding.clone());
@@ -518,6 +705,7 @@ impl<'env> Renamer<'env> {
             origin: binding.origin,
             prim: binding.prim,
             target: binding.target,
+            helper: binding.helper,
         }
     }
 
@@ -847,6 +1035,7 @@ impl<'env> Renamer<'env> {
                 env.entry(name.clone()).or_insert_with(|| schedule::Value {
                     port,
                     prim: binding.prim,
+                    helper: binding.helper,
                 });
             }
         }
@@ -887,6 +1076,7 @@ impl<'env> Renamer<'env> {
                 value_port: None,
                 target: None,
                 raw: false,
+                helper: None,
             },
         );
     }
@@ -1239,6 +1429,23 @@ impl<'env> Renamer<'env> {
         ident: &Ident,
         alias: &Ident,
     ) -> syn::UseTree {
+        let mut helper_path = syn::Path {
+            leading_colon: rooted.then(syn::token::PathSep::default),
+            segments: prefix
+                .iter()
+                .map(|part| {
+                    syn::PathSegment::from(if let Some(raw) = part.strip_prefix("r#") {
+                        Ident::new_raw(raw, Span::call_site())
+                    } else {
+                        Ident::new(part, Span::call_site())
+                    })
+                })
+                .collect(),
+        };
+        helper_path
+            .segments
+            .push(syn::PathSegment::from(ident.clone()));
+        let helper = self.helper_table.resolve(&self.helper_module, &helper_path);
         let target = self.context.then(|| {
             let mut path = prefix.to_vec();
             path.push(ident.to_string());
@@ -1247,6 +1454,13 @@ impl<'env> Renamer<'env> {
             self.store_target(rooted, segments)
         });
         let binding = self.bind_value_and_type(&alias.to_string(), target, Origin::Use);
+        if let Some(helper) = helper {
+            self.frames.last_mut().expect("a scope frame").set_helper(
+                Ns::Value,
+                &alias.to_string(),
+                helper,
+            );
+        }
         syn::UseTree::Rename(syn::UseRename {
             rename: Ident::new(&binding.canon, alias.span()),
             ident: ident.clone(),
@@ -1728,6 +1942,26 @@ fn prebind(renamer: &mut Renamer<'_>, items: &[&syn::Item]) {
             Origin::Item
         };
         let binding = renamer.bind_proven(ns, &name, origin, prim);
+        if let syn::Item::Struct(item) = item
+            && !matches!(item.fields, syn::Fields::Named(_))
+        {
+            renamer.top_bind(Ns::Value, &name, binding.clone());
+        }
+        if let syn::Item::Fn(function) = item
+            && let Some(helper) = renamer
+                .helper_decls
+                .and_then(|decls| decls.get(&core::ptr::from_ref(function.block.as_ref())))
+                .copied()
+        {
+            renamer
+                .frames
+                .last_mut()
+                .expect("a scope frame")
+                .set_helper(Ns::Value, &name, helper);
+            renamer
+                .helper_canons
+                .insert(helper, FreeKey::Resolved(binding.canon.clone()));
+        }
         if let syn::Item::Mod(syn::ItemMod {
             content: Some((_, module_items)),
             ..
@@ -1942,6 +2176,7 @@ impl VisitMut for Renamer<'_> {
         self.observed |= crate::context::live_attr(&file.attrs);
         self.constants_observed |= crate::context::live_attr(&file.attrs);
         self.prim_fallback &= crate::context::scope_primitives_known(&file.items);
+        self.helper_blocked |= crate::context::blocking_attr(&file.attrs);
         let items: Vec<&syn::Item> = file.items.iter().collect();
         prebind(self, &items);
         syn::visit_mut::visit_file_mut(self, file);
@@ -1953,10 +2188,14 @@ impl VisitMut for Renamer<'_> {
             crate::drift::item_attrs(item).is_some_and(|attrs| crate::context::live_attr(attrs));
         let prepared = core::mem::replace(&mut self.constants_prepared, false);
         let regions_active = core::mem::replace(&mut self.regions_active, true);
+        let helper_blocked = self.helper_blocked;
+        self.helper_blocked |= crate::drift::item_attrs(item)
+            .is_some_and(|attrs| crate::context::blocking_attr(attrs));
         syn::visit_mut::visit_item_mut(self, item);
         self.constants_prepared = prepared;
         self.regions_active = regions_active;
         self.constants_observed = observed;
+        self.helper_blocked = helper_blocked;
     }
 
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
@@ -1974,6 +2213,8 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
         self.push();
+        let scope = self.helper_block_scope(block);
+        self.helper_scopes.push(scope);
         let items: Vec<&syn::Item> = block
             .stmts
             .iter()
@@ -1983,6 +2224,11 @@ impl VisitMut for Renamer<'_> {
             })
             .collect();
         prebind(self, &items);
+        for item in &items {
+            if let syn::Item::Use(import) = item {
+                self.prebind_use_tree(&import.tree);
+            }
+        }
         self.depth += 1;
         if self.constants_allowed() {
             crate::constants::normalize_block(self, block);
@@ -2028,6 +2274,7 @@ impl VisitMut for Renamer<'_> {
         self.constants_prepared = prepared;
         self.depth -= 1;
         self.pop();
+        self.helper_scopes.pop();
         if analyzed {
             let facts = self.block_facts.pop().expect("an analyzed block");
             facts.finish(block, &mut self.facts);
@@ -2108,6 +2355,7 @@ impl VisitMut for Renamer<'_> {
                 value_port: None,
                 target: None,
                 raw: false,
+                helper: None,
             },
         );
         begin_generics(self, &mut item.generics);
@@ -2146,6 +2394,7 @@ impl VisitMut for Renamer<'_> {
                     value_port: None,
                     target: None,
                     raw: false,
+                    helper: None,
                 },
             );
         }
@@ -2264,6 +2513,8 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
+        let module = crate::scope::ident_name(&item.ident);
+        self.helper_module.push(module);
         let id = self.rename_binder(Ns::Type, &mut item.ident);
         self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
@@ -2274,13 +2525,14 @@ impl VisitMut for Renamer<'_> {
             self.observed |= crate::context::live_attr(&item.attrs);
             self.frames.push(frame);
             for sub_item in items.iter_mut() {
-                syn::visit_mut::visit_item_mut(self, sub_item);
+                self.visit_item_mut(sub_item);
             }
             let frame = self.frames.pop().expect("a scope frame");
             self.prim_fallback = primitive;
             self.observed = observed;
             self.mod_frames.insert(id, frame);
         }
+        self.helper_module.pop();
     }
 
     fn visit_expr_closure_mut(&mut self, closure: &mut syn::ExprClosure) {
@@ -2372,6 +2624,63 @@ impl VisitMut for Renamer<'_> {
         let outer = core::mem::replace(&mut self.in_type, true);
         syn::visit_mut::visit_expr_struct_mut(self, expr);
         self.in_type = outer;
+    }
+
+    fn visit_expr_call_mut(&mut self, call: &mut syn::ExprCall) {
+        let helper = if self.compiles
+            && self.regions_active
+            && self.macro_origins.is_none()
+            && self.helpers_allowed()
+        {
+            match call.func.as_ref() {
+                syn::Expr::Path(path)
+                    if path.qself.is_none()
+                        && self
+                            .helper_path_scope(&path.path)
+                            .is_none_or(|scope| self.helper_table.scope_known(scope)) =>
+                {
+                    let helper = if let Some(ident) = path.path.get_ident() {
+                        self.lookup(&[Ns::Value], &ident.to_string())
+                            .and_then(|binding| binding.helper)
+                    } else {
+                        self.helper_id(&BTreeMap::new(), &path.path)
+                    };
+                    helper.filter(|helper| {
+                        self.helper_table.get(*helper).is_some()
+                            && self.helper_canon(*helper).is_some()
+                    })
+                }
+                _ => None,
+            }
+        } else {
+            None
+        };
+        syn::visit_mut::visit_expr_call_mut(self, call);
+        if let Some(helper) = helper
+            && let syn::Expr::Path(path) = call.func.as_mut()
+        {
+            while path.path.segments.len() > 1 {
+                path.path.segments.pop();
+            }
+            path.path.segments.pop_punct();
+            path.path.leading_colon = None;
+            rename(
+                &mut path.path.segments.first_mut().expect("a helper path").ident,
+                self.helper_canon(helper)
+                    .expect("an admitted helper identity"),
+            );
+            self.facts.paths.insert(
+                core::ptr::from_ref(&path.path),
+                Resolution {
+                    kind: if self.helper_canons.contains_key(&helper) {
+                        ReferenceKind::Owned
+                    } else {
+                        ReferenceKind::Inherited
+                    },
+                    prim: None,
+                },
+            );
+        }
     }
 
     fn visit_expr_path_mut(&mut self, expr: &mut syn::ExprPath) {

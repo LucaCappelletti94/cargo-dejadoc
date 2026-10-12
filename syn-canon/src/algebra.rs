@@ -74,12 +74,14 @@ pub(crate) fn normalize(renamer: &Renamer<'_>, block: &mut syn::Block, facts: &B
                         Value {
                             port: plan.port.clone(),
                             prim: if plan.active { plan.prim } else { None },
+                            helper: None,
                         }
                     } else {
                         walker.locals += 1;
                         Value {
                             port: Port::Local(walker.locals),
                             prim: None,
+                            helper: None,
                         }
                     };
                     walker.env.insert(name, value);
@@ -94,6 +96,7 @@ pub(crate) fn normalize(renamer: &Renamer<'_>, block: &mut syn::Block, facts: &B
                         Value {
                             port: Port::Local(walker.locals),
                             prim: None,
+                            helper: None,
                         },
                     );
                 }

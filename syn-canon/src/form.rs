@@ -104,6 +104,25 @@ pub(crate) fn canonical_file_with_options(
     compiles: bool,
     options: crate::alpha::Options<'_>,
 ) -> CanonicalForm {
+    let helpers = (compiles && options.helper_table.is_none())
+        .then(|| crate::helpers::module_table(&crate::helpers::Scopes::from_file(&file)));
+    let options = crate::alpha::Options {
+        helper_table: options.helper_table.or(helpers.as_ref()),
+        helper_decls: options.helper_decls.or_else(|| {
+            helpers
+                .as_ref()
+                .map(crate::helpers::HelperTable::declarations)
+        }),
+        helper_scopes: options
+            .helper_scopes
+            .or_else(|| helpers.as_ref().map(crate::helpers::HelperTable::scopes)),
+        helper_calls: options.helper_calls.or_else(|| {
+            helpers
+                .as_ref()
+                .map(crate::helpers::HelperTable::call_scopes)
+        }),
+        ..options
+    };
     crate::drift::normalize_file(&mut file, compiles);
     let facts = crate::alpha::normalize_file(&mut file, compiles, options);
     from_node(&file, &facts)

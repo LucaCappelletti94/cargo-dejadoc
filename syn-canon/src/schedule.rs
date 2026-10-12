@@ -13,7 +13,7 @@ use syn::visit::Visit;
 
 use crate::alpha::{MacroArgs, Renamer};
 use crate::reference::{BlockProof, ReferenceFacts};
-use crate::scope::{FreeKey, PrimTy, unraw};
+use crate::scope::{FreeKey, Ns, PrimTy, unraw};
 
 mod values;
 
@@ -89,11 +89,12 @@ pub(crate) enum Port {
     Free(FreeKey),
 }
 
-/// A value reference with its proven scalar type.
+/// A reference and its separate helper-cache handle.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) struct Value {
     pub(crate) port: Port,
     pub(crate) prim: Option<PrimTy>,
+    pub(crate) helper: Option<crate::scope::HelperId>,
 }
 
 /// A labeled node of the expression language the analysis reads.
@@ -120,6 +121,9 @@ pub(crate) enum Lbl {
     Future(usize, Option<PrimTy>),
     /// An ordered root and its sharing-preserving future definitions.
     Graph(Box<Lbl>, Vec<Lbl>),
+    /// A total call of an accepted helper: callee identity, ordered
+    /// argument labels, and the helper's result type.
+    Call(Box<Lbl>, Vec<Lbl>, PrimTy),
 }
 
 impl Lbl {
@@ -129,7 +133,9 @@ impl Lbl {
             Self::Int(_, prim) => *prim,
             Self::Bool(_) | Self::Not(_) => Some(PrimTy::Bool),
             Self::Ref(value) => value.prim,
-            Self::Op(_, _, _, prim) | Self::Flat(_, _, prim) => Some(*prim),
+            Self::Op(_, _, _, prim) | Self::Flat(_, _, prim) | Self::Call(_, _, prim) => {
+                Some(*prim)
+            }
             _ => None,
         }
     }
@@ -687,6 +693,9 @@ fn label_nodes(lbl: &Lbl) -> usize {
         Lbl::Flat(_, leaves, _) | Lbl::Other(_, leaves) => {
             1 + leaves.iter().map(label_nodes).sum::<usize>()
         }
+        Lbl::Call(callee, args, _) => {
+            1 + label_nodes(callee) + args.iter().map(label_nodes).sum::<usize>()
+        }
         _ => 1,
     }
 }
@@ -972,7 +981,10 @@ fn label_path(env: &BTreeMap<String, Value>, path: &syn::Path) -> (Lbl, Vec<Site
         let name = path.segments[0].ident.to_string();
         return match env.get(unraw(&name)) {
             Some(value) => (
-                Lbl::Ref(value.clone()),
+                Lbl::Ref(Value {
+                    helper: None,
+                    ..value.clone()
+                }),
                 vec![Site {
                     port: value.port.clone(),
                     ctx: Ctx::Value,
@@ -982,6 +994,7 @@ fn label_path(env: &BTreeMap<String, Value>, path: &syn::Path) -> (Lbl, Vec<Site
                 Lbl::Ref(Value {
                     port: Port::Free(FreeKey::Unresolved(unraw(&name).to_string())),
                     prim: None,
+                    helper: None,
                 }),
                 Vec::new(),
             ),
@@ -1056,7 +1069,7 @@ fn value_sites(label: &Lbl, sites: &mut Vec<Site>) {
             value_sites(left, sites);
             value_sites(right, sites);
         }
-        Lbl::Flat(_, leaves, _) => {
+        Lbl::Flat(_, leaves, _) | Lbl::Call(_, leaves, _) => {
             for leaf in leaves {
                 value_sites(leaf, sites);
             }
@@ -1083,7 +1096,7 @@ fn label_tuple(
     (Lbl::Other("t".into(), children), sites)
 }
 
-/// The label of a call, its callee and arguments in operand order.
+/// Label a call with its resolved callee and independently total ordered arguments.
 fn label_call(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
@@ -1092,13 +1105,52 @@ fn label_call(
     locals: &mut usize,
 ) -> (Lbl, Vec<Site>) {
     let (callee, mut sites) = label_expr(renamer, env, &call.func, consumer, locals);
-    let mut children = vec![callee];
+    let mut args: Vec<Lbl> = Vec::new();
     for arg in &call.args {
         let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals);
-        children.push(label);
+        args.push(label);
         sites.extend(a_sites);
     }
+    if let syn::Expr::Path(path) = call.func.as_ref()
+        && path.qself.is_none()
+        && let Some(helper) = renamer.helper_id(env, &path.path)
+        && let Some(result) = total_helper(renamer, helper, &args, call)
+        && let Some(key) = renamer.helper_identity(helper)
+    {
+        let identity = Lbl::Ref(Value {
+            port: Port::Free(key),
+            prim: None,
+            helper: None,
+        });
+        let label = Lbl::Call(Box::new(identity), args, result);
+        sites.clear();
+        value_sites(&label, &mut sites);
+        return (label, sites);
+    }
+    let mut children = vec![callee];
+    children.extend(args);
     (Lbl::Other("c".into(), children), sites)
+}
+
+fn total_helper(
+    renamer: &Renamer,
+    helper: crate::scope::HelperId,
+    args: &[Lbl],
+    call: &syn::ExprCall,
+) -> Option<PrimTy> {
+    let facts = renamer.helper_table.get(helper)?;
+    if !call.attrs.is_empty() || !crate::drift::expr_attrs(&call.func).is_empty() {
+        return None;
+    }
+    if call.args.len() != facts.params.len() {
+        return None;
+    }
+    for (arg, param) in args.iter().zip(&facts.params) {
+        if arg.prim() != Some(*param) {
+            return None;
+        }
+    }
+    Some(facts.result)
 }
 
 /// The label of a method call, the receiver's sites marked on its storage,
@@ -1225,12 +1277,24 @@ pub(crate) fn condition_polarity(expr: &syn::Expr) -> (&syn::Expr, bool) {
     }
 }
 
-struct BranchScan {
-    attributed: bool,
-    depth: usize,
-    expr_depth: usize,
-    nodes: usize,
-    valid: bool,
+pub(crate) struct BranchScan {
+    pub(crate) attributed: bool,
+    pub(crate) depth: usize,
+    pub(crate) expr_depth: usize,
+    pub(crate) nodes: usize,
+    pub(crate) valid: bool,
+}
+
+impl BranchScan {
+    pub(crate) fn new() -> Self {
+        Self {
+            attributed: false,
+            depth: 0,
+            expr_depth: 0,
+            nodes: 0,
+            valid: true,
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for BranchScan {
@@ -1289,13 +1353,7 @@ pub(crate) fn branches_unattributed(
     if !attrs.is_empty() {
         return false;
     }
-    let mut scan = BranchScan {
-        attributed: false,
-        depth: 0,
-        expr_depth: 0,
-        nodes: 0,
-        valid: true,
-    };
+    let mut scan = BranchScan::new();
     scan.visit_block(then);
     scan.visit_expr_block(otherwise);
     scan.valid && !scan.attributed
@@ -1441,6 +1499,7 @@ fn label_for_loop(
             Value {
                 port: Port::Local(*locals),
                 prim: None,
+                helper: None,
             },
         );
         *locals += 1;
@@ -1495,6 +1554,7 @@ fn label_match_expr(
                 Value {
                     port: Port::Local(*locals),
                     prim: None,
+                    helper: None,
                 },
             );
             *locals += 1;
@@ -1535,6 +1595,7 @@ fn label_closure(
                 Value {
                     port: Port::Local(*locals),
                     prim,
+                    helper: None,
                 },
             );
             *locals += 1;
@@ -1845,6 +1906,7 @@ fn label_block(
     locals: &mut usize,
 ) -> (Lbl, Vec<Site>) {
     let mut inner = env.clone();
+    renamer.helper_import_env(block, &mut inner);
     let mut children = Vec::new();
     let mut sites = Vec::new();
     for (position, stmt) in block.stmts.iter().enumerate() {
@@ -1863,6 +1925,7 @@ fn label_block(
                 Value {
                     port: Port::Local(*locals),
                     prim,
+                    helper: None,
                 },
             );
             *locals += 1;
@@ -2018,6 +2081,13 @@ fn color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
                 .map(|definition| color_substitute(definition, colors))
                 .collect(),
         ),
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(color_substitute(callee, colors)),
+            args.iter()
+                .map(|arg| color_substitute(arg, colors))
+                .collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2065,6 +2135,13 @@ fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
                 .map(|child| future_rank_substitute(child, ranks))
                 .collect(),
         ),
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(future_rank_substitute(callee, ranks)),
+            args.iter()
+                .map(|arg| future_rank_substitute(arg, ranks))
+                .collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2096,6 +2173,13 @@ fn future_color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
                 .map(|child| future_color_substitute(child, colors))
                 .collect(),
         ),
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(future_color_substitute(callee, colors)),
+            args.iter()
+                .map(|arg| future_color_substitute(arg, colors))
+                .collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2111,6 +2195,12 @@ fn future_refs(lbl: &Lbl, visit: &mut impl FnMut(usize)) {
         Lbl::Flat(_, children, _) | Lbl::Other(_, children) => {
             for child in children {
                 future_refs(child, visit);
+            }
+        }
+        Lbl::Call(callee, args, _) => {
+            future_refs(callee, visit);
+            for arg in args {
+                future_refs(arg, visit);
             }
         }
         _ => {}
@@ -2265,6 +2355,11 @@ fn future_summary(lbl: &Lbl) -> Lbl {
         Lbl::Other(kind, children) => {
             Lbl::Other(kind.clone(), children.iter().map(future_summary).collect())
         }
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(future_summary(callee)),
+            args.iter().map(future_summary).collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2462,12 +2557,14 @@ impl RegionProjection<'_> {
             return Some(Lbl::Ref(Value {
                 port: Port::Node(slot),
                 prim: value.prim,
+                helper: None,
             }));
         }
         if let Some((region, slot)) = self.sealed[id] {
             return Some(Lbl::Ref(Value {
                 port: Port::Sealed(region, slot),
                 prim: value.prim,
+                helper: None,
             }));
         }
         let index = if let Some(&index) = self.future.get(&id) {
@@ -2484,6 +2581,10 @@ impl RegionProjection<'_> {
         Some(Lbl::Future(index, value.prim))
     }
 
+    fn labels(&mut self, labels: &[Lbl]) -> Option<Vec<Lbl>> {
+        labels.iter().map(|label| self.label(label)).collect()
+    }
+
     fn label(&mut self, lbl: &Lbl) -> Option<Lbl> {
         Some(match lbl {
             Lbl::Ref(value) => match value.port {
@@ -2498,20 +2599,14 @@ impl RegionProjection<'_> {
                 *prim,
             ),
             Lbl::Flat(op, leaves, prim) => {
-                let mut leaves = leaves
-                    .iter()
-                    .map(|leaf| self.label(leaf))
-                    .collect::<Option<Vec<_>>>()?;
+                let mut leaves = self.labels(leaves)?;
                 leaves.sort();
                 Lbl::Flat(*op, leaves, *prim)
             }
-            Lbl::Other(kind, children) => Lbl::Other(
-                kind.clone(),
-                children
-                    .iter()
-                    .map(|child| self.label(child))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
+            Lbl::Other(kind, children) => Lbl::Other(kind.clone(), self.labels(children)?),
+            Lbl::Call(callee, args, prim) => {
+                Lbl::Call(Box::new(self.label(callee)?), self.labels(args)?, *prim)
+            }
             other => other.clone(),
         })
     }
@@ -2694,6 +2789,11 @@ fn label_affected(lbl: &Lbl, affected: &[bool]) -> bool {
         Lbl::Flat(_, children, _) | Lbl::Other(_, children) => {
             children.iter().any(|child| label_affected(child, affected))
         }
+        Lbl::Call(callee, args, _) => {
+            label_affected(callee, affected) || {
+                args.iter().any(|arg| label_affected(arg, affected))
+            }
+        }
         _ => false,
     }
 }
@@ -2712,6 +2812,7 @@ fn region_context(
             descendants.push(Lbl::Ref(Value {
                 port: Port::Node(index),
                 prim: Some(producer.prim),
+                helper: None,
             }));
         }
     }
@@ -2961,6 +3062,7 @@ impl BlockScan {
                 Value {
                     port: Port::Local(self.locals),
                     prim: init.prim(),
+                    helper: None,
                 },
             );
             self.locals += 1;
@@ -3005,6 +3107,7 @@ impl BlockScan {
             Value {
                 port: Port::Node(id),
                 prim: Some(prim),
+                helper: None,
             },
         );
     }
@@ -3047,6 +3150,7 @@ impl BlockScan {
             Value {
                 port: Port::Local(self.locals),
                 prim: None,
+                helper: None,
             },
         );
         self.locals += 1;
@@ -3183,7 +3287,113 @@ impl BlockScan {
     }
 }
 
+struct HelperCallScan<'a, 'env> {
+    renamer: &'a Renamer<'env>,
+    env: &'a BTreeMap<String, Value>,
+    shadows: Vec<BTreeMap<String, Option<crate::scope::HelperId>>>,
+    roots: BTreeSet<crate::scope::HelperId>,
+}
+
+impl<'ast> Visit<'ast> for HelperCallScan<'_, '_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let mut bindings = BTreeMap::new();
+        for stmt in &block.stmts {
+            if let syn::Stmt::Item(item) = stmt
+                && let Some((namespace, ident)) = crate::alpha::item_binding(item)
+            {
+                let helper = match item {
+                    syn::Item::Fn(function) => self.renamer.helper_declaration(&function.block),
+                    syn::Item::Struct(item) if !matches!(item.fields, syn::Fields::Named(_)) => {
+                        None
+                    }
+                    _ if namespace == Ns::Value => None,
+                    _ => continue,
+                };
+                bindings.insert(crate::scope::ident_name(ident), helper);
+            }
+        }
+        self.shadows.push(bindings);
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt);
+        }
+        self.shadows.pop();
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let Some(init) = &local.init {
+            self.visit_expr(&init.expr);
+            if let Some((_, otherwise)) = &init.diverge {
+                self.visit_expr(otherwise);
+            }
+        }
+        self.visit_pat(&local.pat);
+    }
+
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.shadows
+            .last_mut()
+            .expect("caller shadow frame")
+            .insert(crate::scope::ident_name(&pattern.ident), None);
+        syn::visit::visit_pat_ident(self, pattern);
+    }
+
+    fn visit_item(&mut self, _: &'ast syn::Item) {}
+
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        self.shadows.push(BTreeMap::new());
+        for input in &closure.inputs {
+            self.visit_pat(input);
+        }
+        self.visit_expr(&closure.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        if let syn::Expr::Call(call) = expr
+            && let syn::Expr::Path(path) = call.func.as_ref()
+            && path.qself.is_none()
+        {
+            let helper = if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
+                let name = crate::scope::ident_name(&path.path.segments[0].ident);
+                self.shadows
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(&name))
+                    .copied()
+                    .unwrap_or_else(|| self.renamer.helper_id(self.env, &path.path))
+            } else {
+                self.renamer.helper_id(self.env, &path.path)
+            };
+            if let Some(helper) = helper
+                && self.renamer.helper_table.has_domain(helper)
+            {
+                self.roots.insert(helper);
+            }
+        }
+        syn::visit::visit_expr(self, expr);
+    }
+}
+
+fn called_helper_roots(
+    renamer: &Renamer,
+    env: &BTreeMap<String, Value>,
+    block: &syn::Block,
+) -> BTreeSet<crate::scope::HelperId> {
+    let mut scan = HelperCallScan {
+        renamer,
+        env,
+        shadows: Vec::new(),
+        roots: BTreeSet::new(),
+    };
+    scan.visit_block(block);
+    scan.roots
+}
+
 /// Resolve original statements and plan delayed region permutations.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the complete region proof and its atomic fallbacks stay together"
+)]
 pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
     let (frozen, mut seq, locals) = {
         let scope = renamer.scopes.last_mut().expect("a fn scope");
@@ -3204,6 +3414,14 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
         record_all_opaque(renamer, block);
         return;
     }
+    let mut env = BTreeMap::new();
+    renamer.frame_env(&mut env);
+    renamer.helper_import_env(block, &mut env);
+    let roots = called_helper_roots(renamer, &env, block);
+    if !roots.is_empty() && renamer.helper_closure_sum(&roots) > MAX_REGION_NODES {
+        record_all_opaque(renamer, block);
+        return;
+    }
     let original = match values::normalize(renamer, block) {
         values::Outcome::Unchanged => None,
         values::Outcome::Rewritten(original) => Some(original),
@@ -3212,8 +3430,6 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
             return;
         }
     };
-    let mut env = BTreeMap::new();
-    renamer.frame_env(&mut env);
     let mut scan = BlockScan::new(env, locals, block.stmts.len());
     for (index, stmt) in block.stmts.iter().enumerate() {
         scan.statement(renamer, index, stmt, index + 1 == block.stmts.len());

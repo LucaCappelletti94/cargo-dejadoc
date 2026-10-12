@@ -69,6 +69,10 @@ fn graph_shadowing_origins() {
     scheduled("D06_shadowing");
 }
 #[test]
+fn graph_local_pure_helpers() {
+    scheduled("D07_local_pure_calls");
+}
+#[test]
 fn graph_literal_provenance() {
     scheduled("D08_literal_provenance");
 }

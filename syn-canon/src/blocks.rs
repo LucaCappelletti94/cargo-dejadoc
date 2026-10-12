@@ -171,6 +171,7 @@ fn prebind_items<'a>(
                 value_port: None,
                 target: None,
                 raw: false,
+                helper: None,
             },
         );
         if let syn::Item::Mod(syn::ItemMod {
@@ -226,6 +227,7 @@ impl Walker<'_> {
                 value_port: None,
                 target: None,
                 raw: false,
+                helper: None,
             },
         );
         binding_id
@@ -257,6 +259,7 @@ impl Walker<'_> {
             value_port: None,
             target,
             raw: false,
+            helper: None,
         };
         self.top_bind(Ns::Value, name, binding.clone());
         self.top_bind(Ns::Type, name, binding);
@@ -598,6 +601,7 @@ impl Visit<'_> for Walker<'_> {
                 value_port: None,
                 target: None,
                 raw: false,
+                helper: None,
             },
         );
         syn::visit::visit_item_trait(self, item);
