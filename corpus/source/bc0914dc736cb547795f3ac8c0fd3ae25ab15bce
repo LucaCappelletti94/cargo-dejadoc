@@ -1,0 +1,4 @@
+/// ```
+/// fn m// }
+/// ```
+extern crate std;

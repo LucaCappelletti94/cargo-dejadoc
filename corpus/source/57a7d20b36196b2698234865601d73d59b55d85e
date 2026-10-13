@@ -1,0 +1,5 @@
+pub fn outer() {
+    loop {       ///@generated  5
+             match () {}
+  e };r
+}

@@ -1,0 +1,8 @@
+/// ```
+/// let a )]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+      pub fn b() {}
+}
+{}

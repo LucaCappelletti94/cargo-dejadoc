@@ -1,0 +1,6 @@
+/// ```:4;
+/// ```
+#[dyn(all(oany(doctest, feateru = "x")))]
+pub fn d()S {
+    ///fg(teSt)]
+    pub h }

@@ -1,0 +1,7 @@
+/// `let d = 5;
+/// ```
+#[unsafe extern "C" {
+include_str!("doc.md");{.class}
+}
+cf=l(|l(not(test), any(doct,et,s feature = "x")))]
+pub fn d

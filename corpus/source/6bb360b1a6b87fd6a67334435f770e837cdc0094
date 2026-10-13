@@ -1,0 +1,6 @@
+extern "C" {
+  fn main() {}
+    /// `b`
+  static S: i3*;
+A  ;
+}

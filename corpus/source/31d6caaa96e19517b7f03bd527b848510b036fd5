@@ -1,0 +1,11 @@
+#[derive(Deen)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main(b)]
+#[cfg_attr(feature ="stgnore")]
+///rive(Deen)]
+#[cfg_attr(feature ="stgnore")]
+/// fn main(b)]
+#[cfg_attr(feature ="stgnornore")]
+/// fn main() { }
+/// ```
+pub struct Gated;

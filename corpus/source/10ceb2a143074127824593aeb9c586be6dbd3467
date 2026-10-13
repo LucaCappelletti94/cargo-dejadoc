@@ -1,0 +1,2 @@
+#[drustoc = b"x =``
+"]pub fn g() {}

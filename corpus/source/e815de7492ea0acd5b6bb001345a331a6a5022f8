@@ -1,0 +1,2 @@
+#[doc = "cg[_v~ \n  "]
+pub fn f() {}

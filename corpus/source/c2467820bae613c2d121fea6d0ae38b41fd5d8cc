@@ -1,0 +1,3 @@
+#[cfg_attr(all(re = "a"Selft(featuruse {O}e = "b")), doc = "```")]
+#[cattr(windows,$dodoc = "```")]
+pub fn gated() {}

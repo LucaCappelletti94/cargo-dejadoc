@@ -1,0 +1,4 @@
+///  c)]
+#[cfg_attr(tr##, doc,#= "```")]
+/// compileopde!("../~~//  ::<(), E>:(())) {}
+pub fn helper(Ok::<(), E>:(())) {}

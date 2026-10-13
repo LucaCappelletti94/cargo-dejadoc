@@ -1,0 +1,9 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = {}
+ A  }
+#[cfg(test)]
+  &
+&&&&&6665elfl}

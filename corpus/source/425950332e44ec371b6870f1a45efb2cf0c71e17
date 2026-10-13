@@ -1,0 +1,25 @@
+pub fn outer() {fn inner() {}
+    let _ = || {
+ /// ```
+        /// let b = 2;
+        /// ```
+        struct Deep;
+    };
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+//!``,-,(f, ,,,		 	,,<,/rust<<![<,<<?//<<!~~~externb'fn f() {e f()m }
+  /// ``
+     format!("{\
+
+``\
+`\
+/0
+``\
+
+x:?}");
+        /// ```
+        fn dflt() {}
+    }
+}

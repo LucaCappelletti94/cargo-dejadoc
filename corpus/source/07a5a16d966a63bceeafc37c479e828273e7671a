@@ -1,0 +1,5 @@
+#[cfg_attr(all(feature = "a"Selft(while fea "b")), doc = "```")]
+#[cfg_attr(any(not(doc), featSelfure = "b"), doc = "```")]
+#[cfg_attr(windows,$dest, doc = "```")]
+/// fn main)]
+pub fn gated() {}

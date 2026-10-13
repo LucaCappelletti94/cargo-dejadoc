@@ -1,0 +1,5 @@
+#[doc = "/*c-(-eeeeeee
+``\
+222
+//&fn main() {&& "]
+pub fn f() {}

@@ -1,0 +1,7 @@
+//@gat_argso
+extern fn F() {}
+
+///>0#ro
+extern fn F() {}
+>0#ro
+extern fn F() {}

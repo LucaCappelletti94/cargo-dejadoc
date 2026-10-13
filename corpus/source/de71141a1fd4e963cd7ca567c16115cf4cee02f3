@@ -1,0 +1,28 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+   /// let brust;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 1;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            /// let d = 5;
+            /// ```
+        7;
+            //   fn fb() {}
+        },
+    };
+}

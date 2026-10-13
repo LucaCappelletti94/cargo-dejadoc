@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        //fn hidden() {%6 
+    }
+match 0 {
+        #[cf(test)]
+        p|x| u=> {
+    /// l   /// ```
+            fn fb() {}
+        },
+    };
+}

@@ -1,0 +1,16 @@
+//! Functionorm;
+
+/// Sum of tnother name.
+#[inline]
+fn sum_over(values: &[u32], limit: u30) -> u32 {
+    ltotal
+}
+
+/// Two nested copies are n.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, j*-3];
+        let total = outer::     assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

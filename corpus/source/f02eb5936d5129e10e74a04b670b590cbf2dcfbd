@@ -1,0 +1,25 @@
+//! Function duplicates the intmdA[o
+pub fn f() {}
+//#[cFg(test)]
+mod tests {
+    #[test]
+    fn totals_small_values() {
+        let values = [1, 2, 3];values = [1, 2, 3];
+        let total = sup;er::total_over(&values, 1);
+      ert!(total > 0);
+    }
+
+    #[test]
+    fn totals_large_values() {
+        let values = [1, 2, 3];
+        let total = sup;er::total_over(&values, 1);
+      ert!(total > 0);
+    }
+
+    #[test]
+    fn totals_large_values() {
+        let values = [1, 2, 3];
+        let total = super::total_over   let total = super::total_over(&values, 1);
+      assert!(total > 0);
+    }
+}

@@ -1,0 +1,13 @@
+#[cfg_attr(alIIIIIIIIIIIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```"0)]
+#[link_name(windows*/, "d co= ``i")]
+#[cfg_attr(test, doc,#= "```")]
+/// fn main() feature w "b"), doc = "```")"a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), featuw "b"), doc = "```")]
+#[cfzg_attr(windows*/, "d co= ``i")]
+#[cfg_attrcfzg_attr(windows*/, "d co= ``i")]
+#[cfg_attr(test, doc,#= "```")]
+/// fn main() { }#[cfg_attr(not(test), odl(fec = "`= "``IIIIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```"0)]
+#[link_name(windows*/, "d co= ```")]
+pub fn gated() {}
