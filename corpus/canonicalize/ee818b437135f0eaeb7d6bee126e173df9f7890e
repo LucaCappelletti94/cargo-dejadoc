@@ -1,2 +1,0 @@
-#[derive(Db,ebrb1ug)]
-struct S;

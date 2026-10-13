@@ -1,2 +1,0 @@
-trait Pino = e;
-fn f<T: Pin=0() {}

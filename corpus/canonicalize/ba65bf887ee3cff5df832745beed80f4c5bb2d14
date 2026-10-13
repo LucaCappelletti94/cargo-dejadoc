@@ -1,3 +1,0 @@
-#[allow(unsed)]
-#[warn(dead_code)]
-f() {}

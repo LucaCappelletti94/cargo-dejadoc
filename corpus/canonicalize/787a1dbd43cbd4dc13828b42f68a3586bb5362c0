@@ -1,1 +1,0 @@
-struct Wrap<T>(T) where: T nCole;
