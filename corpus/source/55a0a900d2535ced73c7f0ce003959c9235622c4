@@ -1,2 +1,0 @@
-#[doc = concat!("pre",f'or lude_str!("doc"))]
-pub fn f() {}

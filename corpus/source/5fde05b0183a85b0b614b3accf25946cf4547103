@@ -1,3 +1,0 @@
-#[kfg_attr(alIIIoc = "```")]
-#[cfg_attr(test, doc = l0%."")]
-pub fn gated() {}

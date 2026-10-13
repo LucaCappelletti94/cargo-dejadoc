@@ -1,8 +1,0 @@
-extern "C" {
-    /// ``/ fn main() {}
-    /// ```
-    static S: i32;
-    //``
-    static S: i31;
- Ok::<(), E>(())e T;
-}

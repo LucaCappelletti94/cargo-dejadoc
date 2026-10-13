@@ -1,12 +1,0 @@
-trait T {
- //!<num NNNNN--NNenum NNNF---=	num=N~~N
-pub fn f() {}
-/// while ///t/= ;2
-///`
-/// fn a() {}
-/// ```
-pub const C: i32 = 1;
-/// ```
-//----------------/**------------------ E { X }'```
-    type Out;
-}

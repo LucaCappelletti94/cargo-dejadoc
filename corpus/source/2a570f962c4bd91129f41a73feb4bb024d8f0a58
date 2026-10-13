@@ -1,2 +1,0 @@
-#[cfg_attr(al == c"```")]
-pub fn gated() {}

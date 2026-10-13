@@ -1,3 +1,0 @@
-#[derive(r#bug)]fn main() { }
-/// ```
-pub struct Gated;

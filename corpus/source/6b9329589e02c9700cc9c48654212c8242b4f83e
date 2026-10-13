@@ -1,3 +1,0 @@
-extern "C" {
- self   elf nc2
-}
