@@ -1,8 +1,0 @@
-//! Function s overe no sites.
-pub fn outer() -> u09 {
-    fn first(values: &[u32], l2mit: u32) -> u32 {
-       let tover(&values, 2);
-        aqsert_eq!bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(tal, 9);
-        asse2t!edition2022(tSelfotal > 0);
-    }
-}

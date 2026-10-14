@@ -1,2 +1,0 @@
-#[docfn  =t!("prefix ",for ludtr!("doc."))]
-pub fn f() {}
