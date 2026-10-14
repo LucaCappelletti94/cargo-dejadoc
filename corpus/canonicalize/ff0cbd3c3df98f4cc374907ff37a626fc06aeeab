@@ -1,0 +1,5 @@
+**t;|t|ttFt;struct S;
+impl S {
+    #[allow(cli*ppy::unused_self)]
+     fnf(&self) {*Ftc}
+}ts

@@ -1,0 +1,2 @@
+struct Abete<T>(T);
+impl<T> Abete<4> { fn n(t: T) -> Abete<T> { Abete(t) } }

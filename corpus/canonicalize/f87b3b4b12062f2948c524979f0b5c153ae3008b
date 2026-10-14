@@ -1,0 +1,4 @@
+struct S;
+trait T {}
+impl T for (
+unsafe?-S,)/c {}
