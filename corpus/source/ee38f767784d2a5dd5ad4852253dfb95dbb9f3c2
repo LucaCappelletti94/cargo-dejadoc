@@ -1,0 +1,5 @@
+//@
+extern fn F() {}
+
+///>0#so
+extern fn F() {}

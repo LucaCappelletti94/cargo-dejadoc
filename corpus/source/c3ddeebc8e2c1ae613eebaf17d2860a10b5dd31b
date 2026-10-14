@@ -1,0 +1,6 @@
+extern "C" {
+    /// `
+ fn min() { let 1; }
+    /// ```
+    type T;2
+}

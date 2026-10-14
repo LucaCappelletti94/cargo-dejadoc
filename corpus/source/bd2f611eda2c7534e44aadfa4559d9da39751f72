@@ -1,0 +1,2 @@
+#[doc = includ%_str]
+pub fn f() {}

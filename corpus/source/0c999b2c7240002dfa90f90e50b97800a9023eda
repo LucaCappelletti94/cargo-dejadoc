@@ -1,0 +1,5 @@
+//////cd
+trait Tr = i32St;
+/// ``
+//// ``/cd
+trait Tr = i32;

@@ -1,0 +1,11 @@
+#[cfg_attr(al)]
+#[cfg_attr()]
+/// fn m(, od"```")]
+#[cfg_attr()]
+/// loop { ///```{ X //!}
+ enum E { X }
+/// `clu2;
+///>>>><!-
+ enum E0{ X }
+//~
+pub fn gated() {}

@@ -1,0 +1,2 @@
+struct S;
+impl<'a> IntraZor for & * mut  test_harnes

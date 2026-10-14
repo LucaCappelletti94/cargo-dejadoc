@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+     fn also() {} };
+#[cfg(doc)]
+try    {
+        //[cfg(test)]
+    {
+     fn also() {} };
+#[cfg(doc)]
+try    {
+        /// 3;
+        /// ```
+        fn sho     /// ```
+          } {
+       },
+    }B
+}

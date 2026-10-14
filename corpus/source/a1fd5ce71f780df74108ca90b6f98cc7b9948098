@@ -1,0 +1,7 @@
+//?/ i
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i32 }
+/// r ```
+pub union U { f}

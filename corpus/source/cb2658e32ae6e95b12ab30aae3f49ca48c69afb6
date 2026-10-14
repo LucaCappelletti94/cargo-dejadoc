@@ -1,0 +1,17 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hso() {} };
+#[cfg(doc)]
+try    {
+        /// d``
+        /compile_fail// let c = 3;
+        /// ```
+> {
+            /// ```
+      },
+    }B
+}

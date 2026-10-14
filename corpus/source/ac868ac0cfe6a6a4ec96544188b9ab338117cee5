@@ -1,0 +1,28 @@
+pub fn outer() {
+    #[cfgx(test)]
+    {
+        //fn hidden() {}
+ 
+    }
+match 0 {
+        #[cf(test)]
+        pu=> {
+    /// l   /// ```
+            fn fb() {}
+        },
+    };
+pub fn outer() {
+    #[cfgx(test)]
+    {
+        //fn hidden() {}
+ 
+    }
+match 0 {
+        #[cf(test)]
+        pu=> {
+    /// l   /// ```
+            fn fb() {}
+        },
+    };
+}
+}

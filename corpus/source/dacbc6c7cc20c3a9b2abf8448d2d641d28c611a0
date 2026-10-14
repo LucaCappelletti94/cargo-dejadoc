@@ -1,0 +1,2 @@
+#[expect ]
+pub fn f() {a>_}

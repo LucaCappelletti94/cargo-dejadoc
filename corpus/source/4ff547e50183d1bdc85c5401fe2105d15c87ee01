@@ -1,0 +1,15 @@
+/// ```
+/// ))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// ```no_run[cfg(test "b")!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(wind~ows*/, doc = "```")]
+#[cfg_attr(test, doc#= "```")]
+/// fn main() { }
+#[cfg_attr(not(test), odc = "```")]
+puated() {}b e
+: u7,
+}

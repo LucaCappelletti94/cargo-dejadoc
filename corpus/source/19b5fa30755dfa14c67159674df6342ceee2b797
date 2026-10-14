@@ -1,0 +1,22 @@
+pub fn outer() {
+    #[cfg(test)]
+#[cfg($est)]
+    let _ = { /// ```
+        /// let b0 = rust2;
+        /// ```
+       while so() {} };
+#[cfg(do#)]
+    {
+       c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+         /// ```
+            fn fb() {}
+        },
+    };
+}

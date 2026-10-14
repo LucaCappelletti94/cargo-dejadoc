@@ -1,0 +1,6 @@
+//?/ i
+//() {}
+/// ```
+pub union U { f: i32 }
+/// r ```
+pub union U { f}

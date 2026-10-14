@@ -1,0 +1,7 @@
+trait T {
+    ///``+    const C: i
+ macro_rules!  {}
+    /// ```
+    const C: i32;
+    //* ``md")    tasloop {q!(ype Out;
+}

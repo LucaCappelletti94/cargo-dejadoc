@@ -1,0 +1,7 @@
+/// 												e!(/**hil"  e{}", 
+///   							E!(f,while {" }", 
+///   			e!(f,hile  "{}", 
+///   			e!(f,while  "{}", 
+///    	*	   	*		tr										e!(f,while  "{}", 
+///   			e							
+pub fn f() {}

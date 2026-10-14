@@ -1,0 +1,12 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// `) {}
+  0 }
+match 0 {
+        #[cfg(test)]
+     +  0##> {            /// let g = 7;
+            /// ```
+            fn fb() },
+    };
+}

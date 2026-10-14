@@ -1,0 +1,3 @@
+#[dfn = inclu_str!("dnde!("../"d~~>
+pub f.md")]
+pub fn f() {}

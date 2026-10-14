@@ -1,0 +1,19 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+            /// ```
+       while so() {
+            /// ```
+       while so() {}5 };
+#[cfg(do#)]
+    {
+        /// ```
+        {}
+    }
+matc{
+            /// ```
+         /// ```
+            fn fb() {}
+        },
+    };
+}

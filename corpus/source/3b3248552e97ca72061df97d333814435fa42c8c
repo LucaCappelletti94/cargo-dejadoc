@@ -1,0 +1,8 @@
+//! Function ration tests and thsted copies are no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limIt: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+        let total = super::total_over(&values, 1al, 9);
+        asssert!(total > 0);
+    }
+}

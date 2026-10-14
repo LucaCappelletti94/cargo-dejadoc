@@ -1,0 +1,4 @@
+#[ddoc(hidden)]
+#[cfg_attr(featue = r"stegnore"mod )]
+/// fn maif``
+pub struct Gated;

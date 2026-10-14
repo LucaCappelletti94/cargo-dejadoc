@@ -1,0 +1,10 @@
+struct S;
+impl S {
+   ///f  /// ```
+    type T = i32;
+}
+struct S;
+impl S {
+   ///f n `
+    type T = i32;
+}

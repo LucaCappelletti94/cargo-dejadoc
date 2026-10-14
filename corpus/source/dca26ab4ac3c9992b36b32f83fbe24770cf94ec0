@@ -1,0 +1,7 @@
+#[cfg_attr(alIIIIIIIIIIIoc = {
+    /// `` let x = 1;
+    /// ```
+    pub x: u8,
+}
+pubdoc = "```")]
+pub fn gated() {}

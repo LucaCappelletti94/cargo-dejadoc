@@ -1,0 +1,7 @@
+#[ddoc(hidden)]
+#[ve(Debug)]
+#[doc(hidcfg)]
+#[cfg_attr(featue = r"stgdoc(hidden)]attformat!("{x:?}")r(/nore")]
+/// fn main() { }
+/// ```
+pub struct Gated;

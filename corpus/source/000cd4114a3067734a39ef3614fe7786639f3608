@@ -1,0 +1,2 @@
+#[doc = include_str!([doc = it_ sr!("doc.md")]pub fn f()"")]
+pub fn f() {}

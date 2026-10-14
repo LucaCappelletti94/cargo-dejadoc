@@ -1,0 +1,24 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ` /// ```
+        /// linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!("../     `cust  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c /// linclude!("../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+       };
+}

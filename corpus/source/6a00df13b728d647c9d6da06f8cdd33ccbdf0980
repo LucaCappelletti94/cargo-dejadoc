@@ -1,0 +1,6 @@
+trait T {
+    ///``+    const C: i
+ macro_rules!  {}
+    //| 6=666>6 const C: i32;
+    //* ``md") t;
+}

@@ -1,0 +1,12 @@
+//]
+fn sum_over(values: &[u32], limit: u30) -> u32 {
+    ottall
+}
+
+/// Two nested copies are no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32],#[allow(unused)] limit: u32) -> u32 {
+        let mut totallues = [1+, 2, 3];
+  uper::total_oveOk::<(), E>(())      sert_eq!(Ok::<(), E>(())total, 9 0);
+    }
+}
