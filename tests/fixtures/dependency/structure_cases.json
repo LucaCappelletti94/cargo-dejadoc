@@ -1,0 +1,706 @@
+[
+  {
+    "id": "S01_three_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:u32)->bool{match input{1|2|3=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->bool{match input{3|1|2=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "S02_suffixed_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:u32)->bool{match input{2u32|1u32=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->bool{match input{1u32|2u32=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "S03_field_temporaries",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let x=input&15u32;let y=input>>4;let s=S{x:x,y:y};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{y:input>>4,x:input&15u32};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      }
+    }
+  },
+  {
+    "id": "S04_effectful_fields",
+    "family": "fields",
+    "a": "fn fx(input:u32)->u32{println!(\"fx\");input&7u32}\nfn fy(input:u32)->u32{println!(\"fy\");input>>4}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{x:fx(input),y:fy(input)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn fx(input:u32)->u32{println!(\"fx\");input&7u32}\nfn fy(input:u32)->u32{println!(\"fy\");input>>4}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{y:fy(input),x:fx(input)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "fx\nfy\n(0, 0)\nfx\nfy\n(1, 0)\nfx\nfy\n(7, 0)\nfx\nfy\n(0, 1)\nfx\nfy\n(7, 1)\nfx\nfy\n(7, 15)\nfx\nfy\n(7, 4095)\nfx\nfy\n(7, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "fy\nfx\n(0, 0)\nfy\nfx\n(1, 0)\nfy\nfx\n(7, 0)\nfy\nfx\n(0, 1)\nfy\nfx\n(7, 1)\nfy\nfx\n(7, 15)\nfy\nfx\n(7, 4095)\nfy\nfx\n(7, 268435455)\n"
+      }
+    }
+  },
+  {
+    "id": "S05_panic_field_order",
+    "family": "fields",
+    "a": "fn px(input:u32)->u32{println!(\"x\");panic!(\"x-init\")}\nfn py(input:u32)->u32{println!(\"y\");panic!(\"y-init\")}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->u32{let s=S{x:px(input),y:py(input)};s.x}\nfn main(){f(1u32);}",
+    "b": "fn px(input:u32)->u32{println!(\"x\");panic!(\"x-init\")}\nfn py(input:u32)->u32{println!(\"y\");panic!(\"y-init\")}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->u32{let s=S{y:py(input),x:px(input)};s.x}\nfn main(){f(1u32);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "exit": 101,
+        "stdout": "x\n",
+        "stderr": "x-init"
+      },
+      "b": {
+        "exit": 101,
+        "stdout": "y\n",
+        "stderr": "y-init"
+      }
+    }
+  },
+  {
+    "id": "S06_update_base_fields",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}\nfn base(input:u32)->S{S{x:input,y:input}}\nfn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:input>>4,..base(input)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u32,y:u32}\nfn base(input:u32)->S{S{x:input,y:input}}\nfn f(input:u32)->(u32,u32){let s=S{y:input>>4,x:input&15u32,..base(input)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      }
+    }
+  },
+  {
+    "id": "S07_drop_field_order",
+    "family": "fields",
+    "a": "struct Cell(u8);\nimpl Drop for Cell{fn drop(&mut self){println!(\"D{}\",self.0);}}\nstruct S{p:Cell,q:Cell}\nfn f(input:u32)->(u8,u8){let p=u8::try_from(input&1u32).expect(\"fits\");let q=u8::try_from((input>>4)&0xFFu32).expect(\"fits\");let s=S{p:Cell(p),q:Cell(q)};(s.p.0,s.q.0)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct Cell(u8);\nimpl Drop for Cell{fn drop(&mut self){println!(\"D{}\",self.0);}}\nstruct S{p:Cell,q:Cell}\nfn f(input:u32)->(u8,u8){let p=u8::try_from(input&1u32).expect(\"fits\");let q=u8::try_from((input>>4)&0xFFu32).expect(\"fits\");let s=S{q:Cell(q),p:Cell(p)};(s.p.0,s.q.0)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "D0\nD0\n(0, 0)\nD1\nD0\n(1, 0)\nD1\nD0\n(1, 0)\nD0\nD1\n(0, 1)\nD1\nD1\n(1, 1)\nD1\nD15\n(1, 15)\nD1\nD255\n(1, 255)\nD1\nD255\n(1, 255)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "D0\nD0\n(0, 0)\nD1\nD0\n(1, 0)\nD1\nD0\n(1, 0)\nD0\nD1\n(0, 1)\nD1\nD1\n(1, 1)\nD1\nD15\n(1, 15)\nD1\nD255\n(1, 255)\nD1\nD255\n(1, 255)\n"
+      }
+    }
+  },
+  {
+    "id": "S08_swapped_initializers",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:input>>4};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{x:input>>4,y:input&15u32};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(0, 1)\n(0, 15)\n(1, 0)\n(1, 15)\n(15, 15)\n(4095, 15)\n(268435455, 15)\n"
+      }
+    }
+  },
+  {
+    "id": "S09_tuple_positional",
+    "family": "fields",
+    "a": "struct S(u32,u32);\nfn f(input:u32)->(u32,u32){let s=S(input&15u32,input>>4);(s.0,s.1)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S(u32,u32);\nfn f(input:u32)->(u32,u32){let s=S(input>>4,input&15u32);(s.0,s.1)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(0, 1)\n(0, 15)\n(1, 0)\n(1, 15)\n(15, 15)\n(4095, 15)\n(268435455, 15)\n"
+      }
+    }
+  },
+  {
+    "id": "S10_alias_shadowed_fields",
+    "family": "fields",
+    "a": "#[allow(non_camel_case_types)]type u32=Wrap;#[derive(Clone,Copy)]struct Wrap(::core::primitive::u32);impl ::core::ops::BitAnd<::core::primitive::u32> for Wrap{type Output=::core::primitive::u32;fn bitand(self,rhs: ::core::primitive::u32)->Self::Output{println!(\"mask {rhs}\");self.0&rhs}}struct S{x: ::core::primitive::u32,y: ::core::primitive::u32}fn f(input:u32)->(::core::primitive::u32,::core::primitive::u32){let s=S{x:input&15u32,y:input&31u32};(s.x,s.y)}fn main(){for input in [0,1,15,16,31,255,65535,::core::primitive::u32::MAX]{println!(\"{:?}\",f(Wrap(input)));}}",
+    "b": "#[allow(non_camel_case_types)]type u32=Wrap;#[derive(Clone,Copy)]struct Wrap(::core::primitive::u32);impl ::core::ops::BitAnd<::core::primitive::u32> for Wrap{type Output=::core::primitive::u32;fn bitand(self,rhs: ::core::primitive::u32)->Self::Output{println!(\"mask {rhs}\");self.0&rhs}}struct S{x: ::core::primitive::u32,y: ::core::primitive::u32}fn f(input:u32)->(::core::primitive::u32,::core::primitive::u32){let s=S{y:input&31u32,x:input&15u32};(s.x,s.y)}fn main(){for input in [0,1,15,16,31,255,65535,::core::primitive::u32::MAX]{println!(\"{:?}\",f(Wrap(input)));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "mask 15\nmask 31\n(0, 0)\nmask 15\nmask 31\n(1, 1)\nmask 15\nmask 31\n(15, 15)\nmask 15\nmask 31\n(0, 16)\nmask 15\nmask 31\n(15, 31)\nmask 15\nmask 31\n(15, 31)\nmask 15\nmask 31\n(15, 31)\nmask 15\nmask 31\n(15, 31)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "mask 31\nmask 15\n(0, 0)\nmask 31\nmask 15\n(1, 1)\nmask 31\nmask 15\n(15, 15)\nmask 31\nmask 15\n(0, 16)\nmask 31\nmask 15\n(15, 31)\nmask 31\nmask 15\n(15, 31)\nmask 31\nmask 15\n(15, 31)\nmask 31\nmask 15\n(15, 31)\n"
+      }
+    }
+  },
+  {
+    "id": "S11_duplicate_literal",
+    "family": "patterns",
+    "a": "fn f(input:u32)->bool{match input{1|1|2=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->bool{match input{1|2=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "S12_arm_order",
+    "family": "patterns",
+    "a": "fn f(input:u32)->u32{match input{2=>10u32,1=>20u32,_=>0u32}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->u32{match input{1=>20u32,2=>10u32,_=>0u32}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "0\n20\n10\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "0\n20\n10\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+      }
+    }
+  },
+  {
+    "id": "S13_guarded_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:u32)->bool{match input{1|2 if input!=0=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->bool{match input{2|1 if input!=0=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "S14_binding_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:u32)->u32{match input{n@1|n@2=>n,_=>0u32}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->u32{match input{n@2|n@1=>n,_=>0u32}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "0\n1\n2\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "0\n1\n2\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n0\n"
+      }
+    }
+  },
+  {
+    "id": "S15_range_alternative",
+    "family": "patterns",
+    "a": "fn f(input:u32)->bool{match input{1|2..=2=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u32)->bool{match input{2..=2|1=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "S16_macro_alternative",
+    "family": "patterns",
+    "a": "macro_rules!two{()=>{2u32}}\nfn f(input:u32)->bool{match input{two!()|1=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "macro_rules!two{()=>{2u32}}\nfn f(input:u32)->bool{match input{1|two!()=>true,_=>false}}\nfn main(){for input in [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31,32,33,34,35,36,37,38,39,40,41,42,43,44,45,46,47,48,49,50,51,52,53,54,55,56,57,58,59,60,61,62,63,64,65,66,67,68,69,70,71,72,73,74,75,76,77,78,79,80,81,82,83,84,85,86,87,88,89,90,91,92,93,94,95,96,97,98,99,100,101,102,103,104,105,106,107,108,109,110,111,112,113,114,115,116,117,118,119,120,121,122,123,124,125,126,127,128,129,130,131,132,133,134,135,136,137,138,139,140,141,142,143,144,145,146,147,148,149,150,151,152,153,154,155,156,157,158,159,160,161,162,163,164,165,166,167,168,169,170,171,172,173,174,175,176,177,178,179,180,181,182,183,184,185,186,187,188,189,190,191,192,193,194,195,196,197,198,199,200,201,202,203,204,205,206,207,208,209,210,211,212,213,214,215,216,217,218,219,220,221,222,223,224,225,226,227,228,229,230,231,232,233,234,235,236,237,238,239,240,241,242,243,244,245,246,247,248,249,250,251,252,253,254,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "false\ntrue\ntrue\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "S17_total_helper_field",
+    "family": "fields",
+    "a": "fn note(input:u32)->u32{input}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:note(input>>4)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn note(input:u32)->u32{input}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{y:note(input>>4),x:input&15u32};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(15, 0)\n(0, 1)\n(15, 1)\n(15, 15)\n(15, 4095)\n(15, 268435455)\n"
+      }
+    }
+  },
+  {
+    "id": "S18_non_total_helper_field",
+    "family": "fields",
+    "a": "fn fail(input:u32)->u32{if input>10u32{panic!(\"no\")}input}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:fail(input>>4)};(s.x,s.y)}\nfn main(){println!(\"{:?}\",f(1u32));}",
+    "b": "fn fail(input:u32)->u32{if input>10u32{panic!(\"no\")}input}\nstruct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{y:fail(input>>4),x:input&15u32};(s.x,s.y)}\nfn main(){println!(\"{:?}\",f(1u32));}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(1, 0)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(1, 0)\n"
+      }
+    }
+  },
+  {
+    "id": "S19_effectful_update_base",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}\nfn base(input:u32)->S{println!(\"base\");S{x:input,y:input}}\nfn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:input>>4,..base(input)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u32,y:u32}\nfn base(input:u32)->S{println!(\"base\");S{x:input,y:input}}\nfn f(input:u32)->(u32,u32){let s=S{y:input>>4,x:input&15u32,..base(input)};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "base\n(0, 0)\nbase\n(1, 0)\nbase\n(15, 0)\nbase\n(0, 1)\nbase\n(15, 1)\nbase\n(15, 15)\nbase\n(15, 4095)\nbase\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "base\n(0, 0)\nbase\n(1, 0)\nbase\n(15, 0)\nbase\n(0, 1)\nbase\n(15, 1)\nbase\n(15, 15)\nbase\n(15, 4095)\nbase\n(15, 268435455)\n"
+      }
+    }
+  },
+  {
+    "id": "S20_panic_update_base",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}fn base(input:u32)->S{println!(\"base {input}\");panic!(\"base-failure\")}fn f(input:u32)->u32{let s=S{x:input&15u32,y:input>>4,..base(input)};s.x}fn main(){f(17u32);}",
+    "b": "struct S{x:u32,y:u32}fn base(input:u32)->S{println!(\"base {input}\");panic!(\"base-failure\")}fn f(input:u32)->u32{let s=S{y:input>>4,x:input&15u32,..base(input)};s.x}fn main(){f(17u32);}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 101,
+        "stdout": "base 17\n",
+        "stderr": "base-failure"
+      },
+      "b": {
+        "exit": 101,
+        "stdout": "base 17\n",
+        "stderr": "base-failure"
+      }
+    }
+  },
+  {
+    "id": "S21_bool_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:bool)->u32{match input{true|false=>1u32}}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:bool)->u32{match input{false|true=>1u32}}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1\n1\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "1\n1\n"
+      }
+    }
+  },
+  {
+    "id": "S22_char_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:char)->u32{match input{'b'|'a'=>1u32,'z'=>2u32,_=>0u32}}\nfn main(){for input in ['a','b','z','x']{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:char)->u32{match input{'a'|'b'=>1u32,'z'=>2u32,_=>0u32}}\nfn main(){for input in ['a','b','z','x']{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1\n1\n2\n0\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "1\n1\n2\n0\n"
+      }
+    }
+  },
+  {
+    "id": "S23_byte_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:u8)->u32{match input{13u8|10u8=>1u32,_=>0u32}}\nfn main(){for input in [10u8,13u8,9u8,255u8]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:u8)->u32{match input{10u8|13u8=>1u32,_=>0u32}}\nfn main(){for input in [10u8,13u8,9u8,255u8]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1\n1\n0\n0\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "1\n1\n0\n0\n"
+      }
+    }
+  },
+  {
+    "id": "S24_string_alternatives",
+    "family": "patterns",
+    "a": "fn f(input:&str)->u32{match input{\"one\"|\"two\"=>1u32,\"three\"=>2u32,_=>0u32}}\nfn main(){for input in [\"one\",\"two\",\"three\",\"four\"]{println!(\"{:?}\",f(input));}}",
+    "b": "fn f(input:&str)->u32{match input{\"two\"|\"one\"=>1u32,\"three\"=>2u32,_=>0u32}}\nfn main(){for input in [\"one\",\"two\",\"three\",\"four\"]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1\n1\n2\n0\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "1\n1\n2\n0\n"
+      }
+    }
+  },
+  {
+    "id": "S25_u8_fields",
+    "family": "fields",
+    "a": "struct S{x:u8,y:u8}fn f(input:u8)->(u8,u8){let s=S{x:input&15u8,y:input>>4};(s.x,s.y)}fn main(){for input in [0u8,1u8,2u8,3u8,4u8,5u8,6u8,7u8,8u8,9u8,10u8,11u8,12u8,13u8,14u8,15u8,16u8,255u8]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u8,y:u8}fn f(input:u8)->(u8,u8){let s=S{y:input>>4,x:input&15u8};(s.x,s.y)}fn main(){for input in [0u8,1u8,2u8,3u8,4u8,5u8,6u8,7u8,8u8,9u8,10u8,11u8,12u8,13u8,14u8,15u8,16u8,255u8]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 15)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 15)\n"
+      }
+    }
+  },
+  {
+    "id": "S26_u16_fields",
+    "family": "fields",
+    "a": "struct S{x:u16,y:u16}fn f(input:u16)->(u16,u16){let s=S{x:input&15u16,y:input>>4};(s.x,s.y)}fn main(){for input in [0u16,1u16,2u16,3u16,4u16,5u16,6u16,7u16,8u16,9u16,10u16,11u16,12u16,13u16,14u16,15u16,16u16,65535u16]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u16,y:u16}fn f(input:u16)->(u16,u16){let s=S{y:input>>4,x:input&15u16};(s.x,s.y)}fn main(){for input in [0u16,1u16,2u16,3u16,4u16,5u16,6u16,7u16,8u16,9u16,10u16,11u16,12u16,13u16,14u16,15u16,16u16,65535u16]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 4095)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 4095)\n"
+      }
+    }
+  },
+  {
+    "id": "S27_u32_fields",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}fn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:input>>4};(s.x,s.y)}fn main(){for input in [0u32,1u32,2u32,3u32,4u32,5u32,6u32,7u32,8u32,9u32,10u32,11u32,12u32,13u32,14u32,15u32,16u32,4294967295u32]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u32,y:u32}fn f(input:u32)->(u32,u32){let s=S{y:input>>4,x:input&15u32};(s.x,s.y)}fn main(){for input in [0u32,1u32,2u32,3u32,4u32,5u32,6u32,7u32,8u32,9u32,10u32,11u32,12u32,13u32,14u32,15u32,16u32,4294967295u32]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 268435455)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 268435455)\n"
+      }
+    }
+  },
+  {
+    "id": "S28_u64_fields",
+    "family": "fields",
+    "a": "struct S{x:u64,y:u64}fn f(input:u64)->(u64,u64){let s=S{x:input&15u64,y:input>>4};(s.x,s.y)}fn main(){for input in [0u64,1u64,2u64,3u64,4u64,5u64,6u64,7u64,8u64,9u64,10u64,11u64,12u64,13u64,14u64,15u64,16u64,18446744073709551615u64]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u64,y:u64}fn f(input:u64)->(u64,u64){let s=S{y:input>>4,x:input&15u64};(s.x,s.y)}fn main(){for input in [0u64,1u64,2u64,3u64,4u64,5u64,6u64,7u64,8u64,9u64,10u64,11u64,12u64,13u64,14u64,15u64,16u64,18446744073709551615u64]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 1152921504606846975)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 1152921504606846975)\n"
+      }
+    }
+  },
+  {
+    "id": "S29_u128_fields",
+    "family": "fields",
+    "a": "struct S{x:u128,y:u128}fn f(input:u128)->(u128,u128){let s=S{x:input&15u128,y:input>>4};(s.x,s.y)}fn main(){for input in [0u128,1u128,2u128,3u128,4u128,5u128,6u128,7u128,8u128,9u128,10u128,11u128,12u128,13u128,14u128,15u128,16u128,340282366920938463463374607431768211455u128]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u128,y:u128}fn f(input:u128)->(u128,u128){let s=S{y:input>>4,x:input&15u128};(s.x,s.y)}fn main(){for input in [0u128,1u128,2u128,3u128,4u128,5u128,6u128,7u128,8u128,9u128,10u128,11u128,12u128,13u128,14u128,15u128,16u128,340282366920938463463374607431768211455u128]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 21267647932558653966460912964485513215)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(8, 0)\n(9, 0)\n(10, 0)\n(11, 0)\n(12, 0)\n(13, 0)\n(14, 0)\n(15, 0)\n(0, 1)\n(15, 21267647932558653966460912964485513215)\n"
+      }
+    }
+  },
+  {
+    "id": "S30_i8_fields",
+    "family": "fields",
+    "a": "struct S{x:i8,y:i8}fn f(input:i8)->(i8,i8){let s=S{x:input&15i8,y:input>>4};(s.x,s.y)}fn main(){for input in [-8i8,-7i8,-6i8,-5i8,-4i8,-3i8,-2i8,-1i8,0i8,1i8,2i8,3i8,4i8,5i8,6i8,7i8,15i8,16i8,-128i8,127i8]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:i8,y:i8}fn f(input:i8)->(i8,i8){let s=S{y:input>>4,x:input&15i8};(s.x,s.y)}fn main(){for input in [-8i8,-7i8,-6i8,-5i8,-4i8,-3i8,-2i8,-1i8,0i8,1i8,2i8,3i8,4i8,5i8,6i8,7i8,15i8,16i8,-128i8,127i8]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -8)\n(15, 7)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -8)\n(15, 7)\n"
+      }
+    }
+  },
+  {
+    "id": "S31_i16_fields",
+    "family": "fields",
+    "a": "struct S{x:i16,y:i16}fn f(input:i16)->(i16,i16){let s=S{x:input&15i16,y:input>>4};(s.x,s.y)}fn main(){for input in [-8i16,-7i16,-6i16,-5i16,-4i16,-3i16,-2i16,-1i16,0i16,1i16,2i16,3i16,4i16,5i16,6i16,7i16,15i16,16i16,-32768i16,32767i16]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:i16,y:i16}fn f(input:i16)->(i16,i16){let s=S{y:input>>4,x:input&15i16};(s.x,s.y)}fn main(){for input in [-8i16,-7i16,-6i16,-5i16,-4i16,-3i16,-2i16,-1i16,0i16,1i16,2i16,3i16,4i16,5i16,6i16,7i16,15i16,16i16,-32768i16,32767i16]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -2048)\n(15, 2047)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -2048)\n(15, 2047)\n"
+      }
+    }
+  },
+  {
+    "id": "S32_i32_fields",
+    "family": "fields",
+    "a": "struct S{x:i32,y:i32}fn f(input:i32)->(i32,i32){let s=S{x:input&15i32,y:input>>4};(s.x,s.y)}fn main(){for input in [-8i32,-7i32,-6i32,-5i32,-4i32,-3i32,-2i32,-1i32,0i32,1i32,2i32,3i32,4i32,5i32,6i32,7i32,15i32,16i32,-2147483648i32,2147483647i32]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:i32,y:i32}fn f(input:i32)->(i32,i32){let s=S{y:input>>4,x:input&15i32};(s.x,s.y)}fn main(){for input in [-8i32,-7i32,-6i32,-5i32,-4i32,-3i32,-2i32,-1i32,0i32,1i32,2i32,3i32,4i32,5i32,6i32,7i32,15i32,16i32,-2147483648i32,2147483647i32]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -134217728)\n(15, 134217727)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -134217728)\n(15, 134217727)\n"
+      }
+    }
+  },
+  {
+    "id": "S33_i64_fields",
+    "family": "fields",
+    "a": "struct S{x:i64,y:i64}fn f(input:i64)->(i64,i64){let s=S{x:input&15i64,y:input>>4};(s.x,s.y)}fn main(){for input in [-8i64,-7i64,-6i64,-5i64,-4i64,-3i64,-2i64,-1i64,0i64,1i64,2i64,3i64,4i64,5i64,6i64,7i64,15i64,16i64,-9223372036854775808i64,9223372036854775807i64]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:i64,y:i64}fn f(input:i64)->(i64,i64){let s=S{y:input>>4,x:input&15i64};(s.x,s.y)}fn main(){for input in [-8i64,-7i64,-6i64,-5i64,-4i64,-3i64,-2i64,-1i64,0i64,1i64,2i64,3i64,4i64,5i64,6i64,7i64,15i64,16i64,-9223372036854775808i64,9223372036854775807i64]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -576460752303423488)\n(15, 576460752303423487)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -576460752303423488)\n(15, 576460752303423487)\n"
+      }
+    }
+  },
+  {
+    "id": "S34_i128_fields",
+    "family": "fields",
+    "a": "struct S{x:i128,y:i128}fn f(input:i128)->(i128,i128){let s=S{x:input&15i128,y:input>>4};(s.x,s.y)}fn main(){for input in [-8i128,-7i128,-6i128,-5i128,-4i128,-3i128,-2i128,-1i128,0i128,1i128,2i128,3i128,4i128,5i128,6i128,7i128,15i128,16i128,-170141183460469231731687303715884105728i128,170141183460469231731687303715884105727i128]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:i128,y:i128}fn f(input:i128)->(i128,i128){let s=S{y:input>>4,x:input&15i128};(s.x,s.y)}fn main(){for input in [-8i128,-7i128,-6i128,-5i128,-4i128,-3i128,-2i128,-1i128,0i128,1i128,2i128,3i128,4i128,5i128,6i128,7i128,15i128,16i128,-170141183460469231731687303715884105728i128,170141183460469231731687303715884105727i128]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -10633823966279326983230456482242756608)\n(15, 10633823966279326983230456482242756607)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(8, -1)\n(9, -1)\n(10, -1)\n(11, -1)\n(12, -1)\n(13, -1)\n(14, -1)\n(15, -1)\n(0, 0)\n(1, 0)\n(2, 0)\n(3, 0)\n(4, 0)\n(5, 0)\n(6, 0)\n(7, 0)\n(15, 0)\n(0, 1)\n(0, -10633823966279326983230456482242756608)\n(15, 10633823966279326983230456482242756607)\n"
+      }
+    }
+  },
+  {
+    "id": "C01_duplicate_labels",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}\nfn main(){let _=S{x:1u32,x:2u32};}",
+    "b": "struct S{x:u32,y:u32}\nfn main(){let _=S{y:1u32,y:2u32};}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0062]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0062]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C02_unknown_field",
+    "family": "fields",
+    "a": "struct S{x:u32,y:u32}\nfn main(){let _=S{x:1u32,z:2u32};}",
+    "b": "struct S{x:u32,y:u32}\nfn main(){let _=S{z:1u32,y:2u32};}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0560]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0560]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C03_positional_arity",
+    "family": "fields",
+    "a": "struct S(u32,u32);\nfn main(){let _=S(1u32);}",
+    "b": "struct S(u32,u32);\nfn main(){let _=S(1u32,2u32,3u32);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0061]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0061]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C04_partial_binding",
+    "family": "patterns",
+    "a": "fn main(){let x:u32=1;let _=match x{n@1|2=>n,_=>0u32};}",
+    "b": "fn main(){let x:u32=1;let _=match x{2|n@1=>n,_=>0u32};}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0408]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0408]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C05_unsigned_negative",
+    "family": "patterns",
+    "a": "fn main(){let x:u32=1;let _=match x{1|-1=>true,_=>false};}",
+    "b": "fn main(){let x:u32=1;let _=match x{-1|1=>true,_=>false};}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0277]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0277]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "S35_literal_payload_observer",
+    "family": "patterns",
+    "expected": "different",
+    "a": "macro_rules! observe{($value:expr;$left:literal|$right:literal)=>{{println!(\"{} {}\",stringify!($left),stringify!($right));match $value{$left|$right=>true,_=>false}}}}fn main(){println!(\"{}\",observe!(2u32;1|2));}",
+    "b": "macro_rules! observe{($value:expr;$left:literal|$right:literal)=>{{println!(\"{} {}\",stringify!($left),stringify!($right));match $value{$left|$right=>true,_=>false}}}}fn main(){println!(\"{}\",observe!(2u32;2|1));}",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1 2\ntrue\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "2 1\ntrue\n"
+      }
+    }
+  }
+]

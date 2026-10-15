@@ -24,8 +24,7 @@ impl syn::visit::Visit<'_> for DeclarationNodes {
     }
 }
 
-fn declaration_nodes(source: &str, names: &[&str]) -> usize {
-    let file: syn::File = syn::parse_str(source).unwrap();
+fn declaration_nodes(file: &syn::File, names: &[&str]) -> usize {
     names
         .iter()
         .map(|name| {
@@ -59,8 +58,7 @@ impl syn::visit::Visit<'_> for ExprDepth {
     }
 }
 
-fn expression_depth(source: &str, name: &str) -> usize {
-    let file: syn::File = syn::parse_str(source).unwrap();
+fn expression_depth(file: &syn::File, name: &str) -> usize {
     let function = file
         .items
         .iter()
@@ -100,8 +98,9 @@ fn summary_endpoint(extra: usize, reversed: bool, tail: &str) -> String {
 fn the_summary_domain_at_the_node_cap_still_schedules() {
     let a = summary_endpoint(0, false, "p");
     let b = summary_endpoint(0, true, "p");
-    assert_eq!(declaration_nodes(&a, &["h", "g", "k"]), 16_384);
-    let first = form(&a);
+    let a_file: syn::File = syn::parse_str(&a).unwrap();
+    assert_eq!(declaration_nodes(&a_file, &["h", "g", "k"]), 16_384);
+    let first = syn_canon::canonicalize(a_file);
     assert_eq!(first, form(&b));
     assert_ne!(first, form(&summary_endpoint(0, false, "false")));
 }
@@ -110,16 +109,18 @@ fn the_summary_domain_at_the_node_cap_still_schedules() {
 fn a_summary_domain_one_node_over_the_cap_retains_source_order() {
     let a = summary_endpoint(1, false, "p");
     let b = summary_endpoint(1, true, "p");
-    assert_eq!(declaration_nodes(&a, &["h", "g", "k"]), 16_385);
-    assert_ne!(form(&a), form(&b));
+    let a_file: syn::File = syn::parse_str(&a).unwrap();
+    assert_eq!(declaration_nodes(&a_file, &["h", "g", "k"]), 16_385);
+    assert_ne!(syn_canon::canonicalize(a_file), form(&b));
 }
 
 #[test]
 fn a_summary_domain_two_nodes_over_the_cap_retains_source_order() {
     let a = summary_endpoint(2, false, "p");
     let b = summary_endpoint(2, true, "p");
-    assert_eq!(declaration_nodes(&a, &["h", "g", "k"]), 16_386);
-    assert_ne!(form(&a), form(&b));
+    let a_file: syn::File = syn::parse_str(&a).unwrap();
+    assert_eq!(declaration_nodes(&a_file, &["h", "g", "k"]), 16_386);
+    assert_ne!(syn_canon::canonicalize(a_file), form(&b));
 }
 
 #[test]
@@ -127,8 +128,9 @@ fn a_retained_region_keeps_its_dead_caller_binding() {
     let plain = summary_endpoint(1, false, "p");
     let dead = plain.replacen("let a=h(p);", "let dead=true;let a=h(p);", 1);
     let reversed = dead.replacen("let a=h(p);let b=k(!p);", "let b=k(!p);let a=h(p);", 1);
-    assert_eq!(declaration_nodes(&dead, &["h", "g", "k"]), 16_385);
-    let with_dead = form(&dead);
+    let dead_file: syn::File = syn::parse_str(&dead).unwrap();
+    assert_eq!(declaration_nodes(&dead_file, &["h", "g", "k"]), 16_385);
+    let with_dead = syn_canon::canonicalize(dead_file);
     assert_ne!(with_dead, form(&plain));
     assert_ne!(with_dead, form(&reversed));
 }
@@ -141,11 +143,12 @@ fn a_shared_helper_counts_once_in_the_summary_domain() {
     );
     let a = format!("{helpers}fn f(p:bool)->(bool,bool){{let a=h(p);let b=k(!p);(a,b)}}");
     let b = format!("{helpers}fn f(p:bool)->(bool,bool){{let b=k(!p);let a=h(p);(a,b)}}");
+    let a_file: syn::File = syn::parse_str(&a).unwrap();
     assert_eq!(
-        declaration_nodes(&a, &["h", "left", "right", "base", "k"]),
+        declaration_nodes(&a_file, &["h", "left", "right", "base", "k"]),
         16_384
     );
-    assert_eq!(form(&a), form(&b));
+    assert_eq!(syn_canon::canonicalize(a_file), form(&b));
 }
 
 #[test]
@@ -156,8 +159,9 @@ fn an_oversized_single_declaration_rejects_the_domain() {
     );
     let a = format!("{helpers}fn f(p:bool)->(bool,bool){{let a=big(p);let b=k(!p);(a,b)}}");
     let b = format!("{helpers}fn f(p:bool)->(bool,bool){{let b=k(!p);let a=big(p);(a,b)}}");
-    assert_eq!(declaration_nodes(&a, &["big"]), 16_385);
-    assert_ne!(form(&a), form(&b));
+    let a_file: syn::File = syn::parse_str(&a).unwrap();
+    assert_eq!(declaration_nodes(&a_file, &["big"]), 16_385);
+    assert_ne!(syn_canon::canonicalize(a_file), form(&b));
 }
 
 #[test]
@@ -173,16 +177,21 @@ fn an_expression_chain_at_the_depth_cap_still_summarizes() {
                 "^1u32".repeat(wraps)
             ),
         );
+        let a_file: syn::File = syn::parse_str(&a).unwrap();
         assert_eq!(
-            expression_depth(&a, "h"),
+            expression_depth(&a_file, "h"),
             wraps + 2,
             "the chain depth is counted from the tail expression"
         );
         if admitted {
-            assert_eq!(form(&a), form(&b), "the at-or-under-cap chain summarizes");
+            assert_eq!(
+                syn_canon::canonicalize(a_file),
+                form(&b),
+                "the at-or-under-cap chain summarizes"
+            );
         } else {
             assert_ne!(
-                form(&a),
+                syn_canon::canonicalize(a_file),
                 form(&b),
                 "the over-cap chain retains source order"
             );
@@ -223,8 +232,9 @@ fn exhausted_depth_summaries_keep_the_dead_caller_binding() {
         "let b=k(x^1u32);let a=h(x);",
         1,
     );
+    let plain_file: syn::File = syn::parse_str(&plain).unwrap();
     assert_eq!(
-        expression_depth(&plain, "h"),
+        expression_depth(&plain_file, "h"),
         65,
         "the chain exceeds the summary depth cap"
     );
@@ -236,7 +246,7 @@ fn exhausted_depth_summaries_keep_the_dead_caller_binding() {
     );
     assert_ne!(
         with_dead,
-        form(&plain),
+        syn_canon::canonicalize(plain_file),
         "summary exhaustion retains the dead binding"
     );
     let inner = "{ ".repeat(64) + "1u32" + &"}".repeat(64);
@@ -345,8 +355,7 @@ impl syn::visit::Visit<'_> for ChainNodes {
     }
 }
 
-fn chain_nodes(source: &str) -> (usize, usize) {
-    let file: syn::File = syn::parse_str(source).unwrap();
+fn chain_nodes(file: &syn::File) -> (usize, usize) {
     let function = file
         .items
         .iter()
@@ -370,7 +379,10 @@ fn chain_nodes(source: &str) -> (usize, usize) {
 
 #[test]
 fn final_syntax_exhaustion_retains_the_helper_region() {
-    let (exprs, leaves) = chain_nodes(&final_syntax(5460, true));
+    let over_first = final_syntax(5460, true);
+    let over_second = final_syntax(5460, false);
+    let over_file: syn::File = syn::parse_str(&over_first).unwrap();
+    let (exprs, leaves) = chain_nodes(&over_file);
     assert_eq!(
         exprs,
         3 * leaves,
@@ -381,13 +393,15 @@ fn final_syntax_exhaustion_retains_the_helper_region() {
         16_387,
         "the emitted final syntax exceeds the syntax budget"
     );
-    let over = (final_syntax(5460, true), final_syntax(5460, false));
     assert_ne!(
-        form(&over.0),
-        form(&over.1),
+        syn_canon::canonicalize(over_file),
+        form(&over_second),
         "the exhausted final syntax retains the whole helper region"
     );
-    let (exprs, leaves) = chain_nodes(&final_syntax(5459, true));
+    let within_first = final_syntax(5459, true);
+    let within_second = final_syntax(5459, false);
+    let within_file: syn::File = syn::parse_str(&within_first).unwrap();
+    let (exprs, leaves) = chain_nodes(&within_file);
     assert_eq!(
         exprs,
         3 * leaves,
@@ -398,10 +412,9 @@ fn final_syntax_exhaustion_retains_the_helper_region() {
         16_384,
         "the emitted final syntax reaches the syntax budget"
     );
-    let within = (final_syntax(5459, true), final_syntax(5459, false));
     assert_eq!(
-        form(&within.0),
-        form(&within.1),
+        syn_canon::canonicalize(within_file),
+        form(&within_second),
         "the within-syntax budget region schedules"
     );
 }
@@ -433,8 +446,7 @@ fn source_cap(literals: usize, wide_last: bool, wide_tail: bool, shuffled: bool)
     )
 }
 
-fn region_nodes(source: &str) -> usize {
-    let file: syn::File = syn::parse_str(source).unwrap();
+fn region_nodes(file: &syn::File) -> usize {
     for item in &file.items {
         if let syn::Item::Fn(function) = item
             && function.sig.ident == "f"
@@ -449,32 +461,30 @@ fn region_nodes(source: &str) -> usize {
 
 #[test]
 fn the_caller_source_cap_counts_helper_call_nodes() {
-    let at_cap = (
-        source_cap(3274, true, false, false),
-        source_cap(3274, true, false, true),
-    );
+    let first = source_cap(3274, true, false, false);
+    let second = source_cap(3274, true, false, true);
+    let first_file: syn::File = syn::parse_str(&first).unwrap();
     assert_eq!(
-        region_nodes(&at_cap.0),
+        region_nodes(&first_file),
         16_384,
         "the caller region with its helper call sits at the cap"
     );
     assert_eq!(
-        form(&at_cap.0),
-        form(&at_cap.1),
+        syn_canon::canonicalize(first_file),
+        form(&second),
         "the at-cap caller region schedules"
     );
-    let over = (
-        source_cap(3274, true, true, false),
-        source_cap(3274, true, true, true),
-    );
+    let over_first = source_cap(3274, true, true, false);
+    let over_second = source_cap(3274, true, true, true);
+    let over_file: syn::File = syn::parse_str(&over_first).unwrap();
     assert_eq!(
-        region_nodes(&over.0),
+        region_nodes(&over_file),
         16_386,
         "the caller region passes the cap"
     );
     assert_ne!(
-        form(&over.0),
-        form(&over.1),
+        syn_canon::canonicalize(over_file),
+        form(&over_second),
         "the over-cap caller region keeps source order"
     );
 }
@@ -526,17 +536,15 @@ fn original_helper_proof_work_retains_every_checked_branch() {
     };
     let over = form(&build(5462, false, false));
     assert_ne!(over, form(&build(5462, true, false)));
-    assert_eq!(
-        declaration_nodes(&build(5458, false, false), &["h", "k"]),
-        16_383
-    );
-    assert_eq!(
-        declaration_nodes(&build(5459, false, false), &["h", "k"]),
-        16_386
-    );
+    let admitted = build(5458, false, false);
+    let admitted_file: syn::File = syn::parse_str(&admitted).unwrap();
+    assert_eq!(declaration_nodes(&admitted_file, &["h", "k"]), 16_383);
+    let proof = build(5459, false, false);
+    let proof_file: syn::File = syn::parse_str(&proof).unwrap();
+    assert_eq!(declaration_nodes(&proof_file, &["h", "k"]), 16_386);
     assert_ne!(form(&build(5462, false, true)), over);
     assert_eq!(
-        form(&build(5458, false, false)),
+        syn_canon::canonicalize(admitted_file),
         form(&build(5458, true, false))
     );
 }
@@ -584,8 +592,9 @@ fn unindexed_nested_observers_exhaust_lexical_helper_ancestors() {
             "{helpers}fn f(p:bool)->(bool,bool){{let unused=false;let b=k(!p);let a=h(p);(a,b)}}"
         );
         let erased = first.replace("let unused=false;", "");
-        assert_ne!(form(&first), form(&same));
-        assert_ne!(form(&first), form(&erased));
+        let with_unused = form(&first);
+        assert_ne!(with_unused, form(&same));
+        assert_ne!(with_unused, form(&erased));
     }
 }
 
@@ -598,6 +607,7 @@ fn producer_exhaustion_retains_bindings_when_value_erasure_is_disabled() {
     }
     let first = format!("{prefix}fn f()->(bool,bool){{let a=true;let b=false;{bindings}(a,b)}}");
     let same = format!("{prefix}fn f()->(bool,bool){{let b=false;let a=true;{bindings}(a,b)}}");
-    assert_ne!(form(&first), form(&same));
-    assert_ne!(form(&first), form(&first.replace("let v16382=true;", "")));
+    let with_all = form(&first);
+    assert_ne!(with_all, form(&same));
+    assert_ne!(with_all, form(&first.replace("let v16382=true;", "")));
 }

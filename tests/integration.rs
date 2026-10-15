@@ -367,18 +367,6 @@ fn context_items(group: &dejadoc::ContextGroup) -> Vec<&str> {
 }
 
 #[test]
-fn context_blocks_are_off_by_default() {
-    let report = Dejadoc::default().run(CONTEXT_FIXTURE).unwrap();
-    assert_eq!(report.context_blocks, 0);
-    assert_eq!(report.unique_context_blocks, 0);
-    assert_eq!(report.context_groups.len(), 0);
-    assert_eq!(
-        dejadoc::exit_code(&report, false),
-        std::process::ExitCode::SUCCESS
-    );
-}
-
-#[test]
 fn renamed_locals_and_captures_group_across_functions() {
     let report = context_scan();
     let group = report

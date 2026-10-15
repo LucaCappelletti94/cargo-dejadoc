@@ -747,6 +747,19 @@ mod tests {
     use super::*;
     use alloc::vec;
 
+    #[test]
+    #[cfg(feature = "std")]
+    fn context_blocks_are_off_by_default() {
+        let report = Dejadoc::default().run("tests/fixtures/contextws").unwrap();
+        assert_eq!(report.context_blocks, 0);
+        assert_eq!(report.unique_context_blocks, 0);
+        assert_eq!(report.context_groups.len(), 0);
+        assert_eq!(
+            crate::exit_code(&report, false),
+            std::process::ExitCode::SUCCESS
+        );
+    }
+
     fn dt(file: &str, line: u32, item: &str, code: &str, allow: bool) -> DocTest {
         DocTest {
             file: file.to_string(),

@@ -729,3 +729,212 @@ pub fn check_helper_schedules(data: &[u8]) {
         ]
     );
 }
+
+/// Named field initializers and literal alternatives keep labels, effects and multiplicity.
+pub fn check_structure_schedules(data: &[u8]) {
+    let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
+    let mask = byte(0);
+    let shift = byte(1) % 26 + 4;
+    let low = 1 + byte(3) % 3;
+    let (fa, fb) = if mask & 1 == 0 {
+        ("a", "b")
+    } else {
+        ("r#type", "r#const")
+    };
+    let decl_p = format!("struct P{{{fa}:u32,{fb}:u32}}");
+    let init_a = format!("input&{mask}u32");
+    let init_b = format!("input>>{shift}u32");
+    let tail = format!("(s.{fa},s.{fb})");
+    let p_body =
+        |fields: &str| format!("{decl_p}fn f(input:u32)->(u32,u32){{let s=P{{{fields}}};{tail}}}");
+    let p_alias = |fields: &str| {
+        format!("{decl_p}fn f(input:u32)->(u32,u32){{let low={init_b};let s=P{{{fields}}};{tail}}}")
+    };
+    let p_helper = |fields: &str| {
+        format!(
+            "fn h(u:u32)->u32{{u&{mask}u32}}{decl_p}fn f(input:u32)->(u32,u32){{let s=P{{{fields}}};{tail}}}"
+        )
+    };
+    let p_base = |fields: &str| {
+        format!(
+            "{decl_p}fn f(input:u32)->(u32,u32){{let t=P{{{fa}:0u32,{fb}:0u32}};let s=P{{{fields},..t}};{tail}}}"
+        )
+    };
+    let s_renamed = format!(
+        "struct Q{{{fa}:u32,{fb}:u32}}fn g(input:u32)->(u32,u32){{let t=Q{{{fb}:{init_b},{fa}:{init_a}}};(t.{fa},t.{fb})}}"
+    );
+    let n_value = format!(
+        "{decl_p}fn f(input:u32)->(u32,u32){{let s=P{{{fa}:input&{}u32,{fb}:{init_b}}};{tail}}}",
+        mask + 1
+    );
+    let p_effect = |fields: &str| {
+        format!(
+            "fn eff(u:u32)->u32{{println!(\"{{u}}\");u}}{decl_p}fn f(input:u32)->(u32,u32){{let s=P{{{fields}}};{tail}}}"
+        )
+    };
+    let observer = "macro_rules! obs{($e:expr)=>{{println!(\"{}\",$e);$e}}}";
+    let p_macro = |fields: &str| {
+        format!("{observer}{decl_p}fn f(input:u32)->(u32,u32){{let s=P{{{fields}}};{tail}}}")
+    };
+    let p_observer = |fields: &str| {
+        format!(
+            "#[track_caller] fn obs(u:u32)->u32{{u&{mask}u32}}{decl_p}fn f(input:u32)->(u32,u32){{let s=P{{{fields}}};{tail}}}"
+        )
+    };
+    let n_tuple = format!(
+        "struct T(u32,u32);fn f(input:u32)->(u32,u32){{let s=T({init_b},{init_a});(s.0,s.1)}}"
+    );
+    let p_tuple_field = |fields: &str| {
+        format!(
+            "struct M{{{fa}:u32,t:(u32,u32)}}fn f(input:u32)->(u32,u32){{let s=M{{{fields}}};(s.{fa},s.t.0)}}"
+        )
+    };
+    let tuple_value = format!("({init_b},input>>{}u32)", shift + 2);
+    let la = low;
+    let lb = low + 1;
+    let lc = low + 2;
+    let arm = |alts: &str| format!("{alts}=>true,_=>false");
+    let match_fn = |arms: &str| format!("fn f(input:u32)->bool{{match input{{{arms}}}}}");
+    let l_renamed = format!("fn g(input:u32)->bool{{match input{{{lb}|{la}=>true,_=>false}}}}");
+    let l_alias =
+        format!("fn f(input:u32)->bool{{let v=input;match v{{{la}|{lb}=>true,_=>false}}}}");
+    let l_alias_rev =
+        format!("fn f(input:u32)->bool{{let v=input;match v{{{lb}|{la}=>true,_=>false}}}}");
+    let n_guard_a = format!(
+        "fn f(input:u32,flag:bool)->bool{{match input{{{la}|{lb} if flag=>true,_=>false}}}}"
+    );
+    let n_guard_b = format!(
+        "fn f(input:u32,flag:bool)->bool{{match input{{{lb}|{la} if flag=>true,_=>false}}}}"
+    );
+    let n_bind = format!("fn f(input:u32)->bool{{match input{{x=>x>{la}u32,_=>false}}}}");
+    let n_bind_a =
+        format!("fn f(input:u32)->bool{{match input{{x@{la}|x@{lb}=>x>0u32,_=>false}}}}");
+    let n_bind_b =
+        format!("fn f(input:u32)->bool{{match input{{x@{lb}|x@{la}=>x>0u32,_=>false}}}}");
+    let n_arm_a =
+        format!("fn f(input:u32)->bool{{match input{{{la}|{lb}=>true,x=>x>{la}u32,_=>false}}}}");
+    let n_arm_b =
+        format!("fn f(input:u32)->bool{{match input{{x=>x>{la}u32,{la}|{lb}=>true,_=>false}}}}");
+    let n_path =
+        format!("const m:u32={lb};fn f(input:u32)->bool{{match input{{{la}|m=>true,_=>false}}}}");
+    let n_macro_alt = format!(
+        "macro_rules! lit{{()=>{{1}}}}fn f(input:u32)->bool{{match input{{lit!()|{lb}=>true,_=>false}}}}"
+    );
+    let n_neg = format!("fn f(input:i32)->bool{{match input{{-{la}|{lb}=>true,_=>false}}}}");
+    let site = |item: &str, code: String| DocTest {
+        file: format!("src/{item}.rs"),
+        line: 1,
+        end: None,
+        item: format!("c::{item}"),
+        info: Vec::new(),
+        code,
+        allow: false,
+        self_type: None,
+        public: false,
+    };
+    let sites: Vec<DocTest> = vec![
+        site(
+            "s_original",
+            p_body(&format!("{fa}:{init_a},{fb}:{init_b}")),
+        ),
+        site(
+            "s_reversed",
+            p_body(&format!("{fb}:{init_b},{fa}:{init_a}")),
+        ),
+        site("s_renamed", s_renamed),
+        site("s_alias", p_alias(&format!("{fa}:{init_a},{fb}:low"))),
+        site("s_alias_rev", p_alias(&format!("{fb}:low,{fa}:{init_a}"))),
+        site(
+            "s_helper",
+            p_helper(&format!("{fa}:h(input),{fb}:{init_b}")),
+        ),
+        site(
+            "s_helper_rev",
+            p_helper(&format!("{fb}:{init_b},{fa}:h(input)")),
+        ),
+        site("s_base", p_base(&format!("{fa}:{init_a},{fb}:{init_b}"))),
+        site(
+            "s_base_rev",
+            p_base(&format!("{fb}:{init_b},{fa}:{init_a}")),
+        ),
+        site("n_value", n_value),
+        site("n_label", p_body(&format!("{fb}:{init_a},{fa}:{init_b}"))),
+        site(
+            "n_effect",
+            p_effect(&format!("{fa}:eff(input),{fb}:{init_b}")),
+        ),
+        site(
+            "n_effect_rev",
+            p_effect(&format!("{fb}:{init_b},{fa}:eff(input)")),
+        ),
+        site(
+            "n_macro",
+            p_macro(&format!("{fa}:obs!(input),{fb}:{init_b}")),
+        ),
+        site(
+            "n_macro_rev",
+            p_macro(&format!("{fb}:{init_b},{fa}:obs!(input)")),
+        ),
+        site(
+            "n_observer",
+            p_observer(&format!("{fa}:obs(input),{fb}:{init_b}")),
+        ),
+        site(
+            "n_observer_rev",
+            p_observer(&format!("{fb}:{init_b},{fa}:obs(input)")),
+        ),
+        site("n_tuple", n_tuple),
+        site(
+            "n_tuple_field",
+            p_tuple_field(&format!("{fa}:{init_a},t:{tuple_value}")),
+        ),
+        site(
+            "n_tuple_field_rev",
+            p_tuple_field(&format!("t:{tuple_value},{fa}:{init_a}")),
+        ),
+        site("l_original", match_fn(&arm(&format!("{la}|{lb}")))),
+        site("l_reversed", match_fn(&arm(&format!("{lb}|{la}")))),
+        site("l_renamed", l_renamed),
+        site("l_alias", l_alias),
+        site("l_alias_rev", l_alias_rev),
+        site("l_dup_a", match_fn(&arm(&format!("{la}|{la}|{lb}")))),
+        site("l_dup_b", match_fn(&arm(&format!("{lb}|{la}|{la}")))),
+        site("l_suf_a", match_fn(&arm(&format!("{la}u32|{lb}u32")))),
+        site("l_suf_b", match_fn(&arm(&format!("{lb}u32|{la}u32")))),
+        site("n_litval", match_fn(&arm(&format!("{lc}|{lb}")))),
+        site("n_guard_a", n_guard_a),
+        site("n_guard_b", n_guard_b),
+        site("n_bind", n_bind),
+        site("n_bind_a", n_bind_a),
+        site("n_bind_b", n_bind_b),
+        site("n_arm_a", n_arm_a),
+        site("n_arm_b", n_arm_b),
+        site("n_path", n_path),
+        site("n_neg", n_neg),
+        site("n_suf_mix", match_fn(&arm(&format!("{la}u32|{lb}")))),
+        site("n_macro_alt", n_macro_alt),
+    ];
+    let report = dejadoc::group(&sites, 2, 0);
+    let mut groups: Vec<Vec<&str>> = report
+        .groups
+        .iter()
+        .map(|group| {
+            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
+            members.sort_unstable();
+            members
+        })
+        .collect();
+    groups.sort_unstable();
+    let mut expected: Vec<Vec<&str>> = vec![
+        vec!["c::s_original", "c::s_renamed", "c::s_reversed"],
+        vec!["c::s_alias", "c::s_alias_rev"],
+        vec!["c::s_base", "c::s_base_rev"],
+        vec!["c::s_helper", "c::s_helper_rev"],
+        vec!["c::l_original", "c::l_renamed", "c::l_reversed"],
+        vec!["c::l_alias", "c::l_alias_rev"],
+        vec!["c::l_dup_a", "c::l_dup_b"],
+        vec!["c::l_suf_a", "c::l_suf_b"],
+    ];
+    expected.sort_unstable();
+    assert_eq!(groups, expected);
+}

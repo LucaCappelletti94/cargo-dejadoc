@@ -1,0 +1,1 @@
+struct T(u32,u32)fn f(input:u32)->u32{let s=T(input>>4,input&15u32);s.0}

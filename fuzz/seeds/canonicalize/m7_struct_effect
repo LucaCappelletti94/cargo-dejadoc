@@ -1,0 +1,1 @@
+struct P{a:u32,b:u32}fn e(u:u32)->u32{println!("{u}");u}fn f(input:u32)->u32{let s=P{a:e(input),b:input>>4};s.a}

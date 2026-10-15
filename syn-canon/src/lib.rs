@@ -17,6 +17,7 @@ mod helpers;
 mod reference;
 mod schedule;
 mod scope;
+mod structure;
 
 use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};

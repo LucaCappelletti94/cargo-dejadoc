@@ -2569,6 +2569,9 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
         self.push();
+        if self.regions_active && self.values_allowed() && self.macro_origins.is_none() {
+            crate::structure::literal_alternatives(arm);
+        }
         self.bind_pat(&mut arm.pat);
         syn::visit_mut::visit_expr_mut(self, &mut arm.body);
         self.pop();
@@ -2618,6 +2621,9 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_expr_struct_mut(&mut self, expr: &mut syn::ExprStruct) {
+        if self.regions_active && self.values_allowed() && self.macro_origins.is_none() {
+            crate::structure::named_fields(self, expr);
+        }
         // A shorthand `S { x }` prints only the member, so a bound `x`
         // takes the explicit form before the rewrite.
         for field in &mut expr.fields {

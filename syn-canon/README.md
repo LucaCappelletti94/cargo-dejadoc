@@ -121,6 +121,20 @@ assert_ne!(
 );
 ```
 
+Passing-mode comparison orders named-field initializers only with original total primitive proofs and orders unguarded literal-only pattern alternatives. Field labels, update bases, literal kinds, signs, suffixes and alternative multiplicity stay distinct. Attributes, observers, pattern bindings, unsupported alternatives, exhausted source bounds and failing-mode inputs retain their order.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+let fields = |members: &str| form(&format!(
+    "struct S{{x:u32,y:u32}} fn f()->S{{S{{{members}}}}}"
+));
+assert_eq!(fields("x:1u32,y:2u32"), fields("y:2u32,x:1u32"));
+let arms = |alternatives: &str| form(&format!(
+    "fn f(input:u32)->bool{{match input{{{alternatives}=>true,_=>false}}}}"
+));
+assert_eq!(arms("1|2"), arms("2|1"));
+```
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.

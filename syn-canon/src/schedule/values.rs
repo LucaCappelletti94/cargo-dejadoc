@@ -172,7 +172,7 @@ fn definitions<'ast>(
             return Vec::new();
         }
         let mut locals = 0;
-        let (label, sites) = super::label_expr(renamer, env, expr, 0, &mut locals);
+        let (label, sites) = super::label_expr(renamer, env, expr, 0, &mut locals, None);
         if label.prim().is_none() {
             return Vec::new();
         }
@@ -352,7 +352,7 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
             if let syn::Stmt::Expr(expr, None) = stmt {
                 admitted = !scan.unreachable
                     && value_shape(expr)
-                    && super::tail_root(renamer, &scan.env, expr);
+                    && super::tail_root(renamer, &scan.env, expr, None);
             }
             if !admitted {
                 scan.statement(renamer, index, stmt, false);

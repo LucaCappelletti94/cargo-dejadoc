@@ -1,12 +1,7 @@
 //! Original transitive helper budgets follow lexical binding lifetimes.
 
-fn form(source: &str) -> syn_canon::CanonicalForm {
-    syn_canon::canonicalize(syn::parse_str(source).unwrap())
-}
-
-fn view(source: &str) -> syn_canon::CanonicalForm {
-    let file: syn::File = syn::parse_str(source).unwrap();
-    let context = syn_canon::SourceContext::new(core::iter::once((&[][..], &file)));
+fn borrowed_form(file: &syn::File) -> syn_canon::CanonicalForm {
+    let context = syn_canon::SourceContext::new(core::iter::once((&[][..], file)));
     let function = file
         .items
         .iter()
@@ -22,16 +17,22 @@ fn view(source: &str) -> syn_canon::CanonicalForm {
 }
 
 fn pair(first: &str, second: &str, equal: bool) {
-    for (api, canonicalize) in [
-        ("standalone", form as fn(&str) -> syn_canon::CanonicalForm),
-        ("borrowed", view),
-    ] {
-        assert_eq!(
-            canonicalize(first) == canonicalize(second),
-            equal,
-            "{api} preserves the original helper union and binding scopes"
-        );
-    }
+    let first_file: syn::File = syn::parse_str(first).unwrap();
+    let second_file: syn::File = syn::parse_str(second).unwrap();
+    let borrowed_first = borrowed_form(&first_file);
+    let borrowed_second = borrowed_form(&second_file);
+    let standalone_first = syn_canon::canonicalize(first_file);
+    let standalone_second = syn_canon::canonicalize(second_file);
+    assert_eq!(
+        standalone_first == standalone_second,
+        equal,
+        "standalone preserves the original helper union and binding scopes"
+    );
+    assert_eq!(
+        borrowed_first == borrowed_second,
+        equal,
+        "borrowed preserves the original helper union and binding scopes"
+    );
 }
 
 fn source(prefix: &str, statements: &str, repetitions: usize) -> String {
@@ -74,8 +75,7 @@ impl syn::visit::Visit<'_> for DeclarationNodes {
     }
 }
 
-fn declaration_nodes(source: &str, names: &[&str]) -> usize {
-    let file: syn::File = syn::parse_str(source).unwrap();
+fn declaration_nodes(file: &syn::File, names: &[&str]) -> usize {
     let mut count = DeclarationNodes::default();
     for item in &file.items {
         if let syn::Item::Fn(function) = item
@@ -92,9 +92,11 @@ fn declaration_nodes(source: &str, names: &[&str]) -> usize {
 fn only_the_complete_transitive_union_exceeds_the_node_cap() {
     let exhausted = source("", "let a=h(p);let b=k(!p);", 8187);
     let admitted = source("", "let a=h(p);let b=k(!p);", 8182);
-    assert_eq!(declaration_nodes(&exhausted, &["h", "g"]), 16_382);
-    assert_eq!(declaration_nodes(&exhausted, &["h", "g", "k"]), 16_393);
-    assert_eq!(declaration_nodes(&admitted, &["h", "g", "k"]), 16_383);
+    let exhausted_file: syn::File = syn::parse_str(&exhausted).unwrap();
+    assert_eq!(declaration_nodes(&exhausted_file, &["h", "g"]), 16_382);
+    assert_eq!(declaration_nodes(&exhausted_file, &["h", "g", "k"]), 16_393);
+    let admitted_file: syn::File = syn::parse_str(&admitted).unwrap();
+    assert_eq!(declaration_nodes(&admitted_file, &["h", "g", "k"]), 16_383);
     pair(
         &exhausted,
         &source("", "let b=k(!p);let a=h(p);", 8187),

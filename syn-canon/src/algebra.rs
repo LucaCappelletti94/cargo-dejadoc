@@ -12,34 +12,47 @@ use crate::alpha::Renamer;
 use crate::schedule::{self, BitwiseOp, BlockFacts, Lbl, Port, TotalBinary, Value};
 use crate::scope::PrimTy;
 
-pub(crate) fn within_bounds(expr: &syn::Expr) -> bool {
-    struct Bound {
-        depth: usize,
-        nodes: usize,
-        valid: bool,
-    }
-    impl<'ast> Visit<'ast> for Bound {
-        fn visit_expr(&mut self, expr: &'ast syn::Expr) {
-            if !self.valid {
-                return;
-            }
-            self.nodes += 1;
-            self.depth += 1;
-            if self.depth > schedule::MAX_BLOCK_DEPTH || self.nodes > schedule::MAX_REGION_NODES {
-                self.valid = false;
-            } else {
-                visit::visit_expr(self, expr);
-            }
-            self.depth -= 1;
+struct Bound {
+    depth: usize,
+    nodes: usize,
+    valid: bool,
+}
+
+impl<'ast> Visit<'ast> for Bound {
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        if !self.valid {
+            return;
         }
-        fn visit_block(&mut self, _: &'ast syn::Block) {}
+        self.nodes += 1;
+        self.depth += 1;
+        if self.depth > schedule::MAX_BLOCK_DEPTH || self.nodes > schedule::MAX_REGION_NODES {
+            self.valid = false;
+        } else {
+            visit::visit_expr(self, expr);
+        }
+        self.depth -= 1;
     }
+
+    fn visit_block(&mut self, _: &'ast syn::Block) {}
+}
+
+pub(crate) fn within_bounds(expr: &syn::Expr) -> bool {
     let mut bound = Bound {
         depth: 0,
         nodes: 0,
         valid: true,
     };
     bound.visit_expr(expr);
+    bound.valid
+}
+
+pub(crate) fn within_struct_bounds(expr: &syn::ExprStruct) -> bool {
+    let mut bound = Bound {
+        depth: 1,
+        nodes: 1,
+        valid: true,
+    };
+    bound.visit_expr_struct(expr);
     bound.valid
 }
 
