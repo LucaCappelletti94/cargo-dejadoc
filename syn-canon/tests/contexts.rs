@@ -822,6 +822,43 @@ fn inline_module_imports_and_item_kinds_discover_const_blocks() {
 }
 
 #[test]
+fn cfg_exclusive_module_declarations_resolve_their_own_nested_modules() {
+    let (duplicated, _) = sites(
+        "#[cfg(test)]
+         mod compat {
+             mod inner { pub fn f() -> i32 { 1 } }
+             pub fn first() -> i32 { inner::f() + 1 }
+         }
+         #[cfg(not(test))]
+         mod compat {
+             mod other { pub fn f() -> i32 { 1 } }
+             pub fn second() -> i32 { other::f() + 1 }
+         }",
+    );
+    let (single, _) = sites(
+        "mod compat {
+             mod inner { pub fn f() -> i32 { 1 } }
+             pub fn first() -> i32 { inner::f() + 1 }
+             mod other { pub fn f() -> i32 { 1 } }
+             pub fn second() -> i32 { other::f() + 1 }
+         }",
+    );
+    let (unresolved, _) = sites("mod compat { pub fn first() -> i32 { inner::f() + 1 } }");
+    assert_eq!(
+        body_of(&duplicated, "compat::first"),
+        body_of(&single, "compat::first")
+    );
+    assert_eq!(
+        body_of(&duplicated, "compat::second"),
+        body_of(&single, "compat::second")
+    );
+    assert_ne!(
+        body_of(&single, "compat::first"),
+        body_of(&unresolved, "compat::first")
+    );
+}
+
+#[test]
 fn impl_and_trait_associated_items_discover_their_blocks() {
     let (a, _) = sites(
         "struct S;

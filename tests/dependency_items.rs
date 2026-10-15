@@ -443,6 +443,66 @@ fn items_compose_with_inherited_folds() {
     );
 }
 
+#[test]
+fn items_compose_with_named_field_order() {
+    folded(
+        "struct S { x: u32, y: u32 } impl S { fn one() -> u32 { 1 } } impl S { fn two() -> u32 { 2 } } fn make(input: u32) -> (u32, u32) { let a = input & 1u32; let b = input ^ 1u32; let s = S { x: b, y: a }; (s.x, s.y) } fn main() { println!(\"{:?}\", (S::one(), S::two(), make(5))); }",
+        "fn main() { println!(\"{:?}\", (S::one(), S::two(), make(5))); } struct S { x: u32, y: u32 } fn make(input: u32) -> (u32, u32) { let b = input ^ 1u32; let a = input & 1u32; let s = S { y: a, x: b }; (s.x, s.y) } impl S { fn one() -> u32 { 1 } fn two() -> u32 { 2 } }",
+    );
+    distinct(
+        "struct S { x: u32, y: u32 } impl S { fn one() -> u32 { 1 } } fn make(input: u32) -> (u32, u32) { let a = input & 1u32; let b = input ^ 1u32; let s = S { x: a, y: b }; (s.x, s.y) } fn main() { println!(\"{:?}\", (S::one(), make(5))); }",
+        "fn main() { println!(\"{:?}\", (S::one(), make(5))); } struct S { x: u32, y: u32 } fn make(input: u32) -> (u32, u32) { let b = input ^ 1u32; let a = input & 1u32; let s = S { y: a, x: b }; (s.x, s.y) } impl S { fn one() -> u32 { 1 } }",
+    );
+}
+
+#[test]
+fn items_compose_with_literal_alternatives() {
+    folded(
+        "struct S; impl S { fn one(x: u32) -> u32 { match x { 1 | 2 | 3 => 10, _ => 0 } } } impl S { fn two() -> u32 { 2 } } fn main() { println!(\"{:?}\", (S::one(1), S::two())); }",
+        "fn main() { println!(\"{:?}\", (S::one(1), S::two())); } struct S; impl S { fn one(x: u32) -> u32 { match x { 3 | 2 | 1 => 10, _ => 0 } } fn two() -> u32 { 2 } }",
+    );
+    distinct(
+        "struct S; impl S { fn one(x: u32) -> u32 { match x { 1 | 2 | 3 => 10, _ => 0 } } } fn main() { println!(\"{:?}\", S::one(1)); }",
+        "fn main() { println!(\"{:?}\", S::one(1)); } struct S; impl S { fn one(x: u32) -> u32 { match x { 1 | 2 | 4 => 10, _ => 0 } } }",
+    );
+}
+
+#[test]
+fn items_compose_with_local_pure_helpers() {
+    folded(
+        "fn low(x: u32) -> u32 { x & 15u32 } struct S; impl S { fn one(input: u32) -> u32 { low(input) ^ 1u32 } } impl S { fn two() -> u32 { 2 } } fn main() { println!(\"{:?}\", (S::one(7), S::two())); }",
+        "fn main() { println!(\"{:?}\", (S::one(7), S::two())); } struct S; fn low(x: u32) -> u32 { x & 15u32 } impl S { fn two() -> u32 { 2 } fn one(input: u32) -> u32 { low(input) ^ 1u32 } }",
+    );
+    distinct(
+        "fn low(x: u32) -> u32 { x & 15u32 } struct S; impl S { fn one(input: u32) -> u32 { low(input) ^ 1u32 } } fn main() { println!(\"{:?}\", S::one(7)); }",
+        "fn main() { println!(\"{:?}\", S::one(7)); } struct S; fn low(x: u32) -> u32 { x & 7u32 } impl S { fn one(input: u32) -> u32 { low(input) ^ 1u32 } }",
+    );
+}
+
+#[test]
+fn items_compose_with_boolean_laws() {
+    folded(
+        "fn gate(p: bool) -> bool { !!p } fn other() -> u32 { 1 } fn main() { println!(\"{:?}\", (gate(true), other())); }",
+        "fn main() { println!(\"{:?}\", (gate(true), other())); } fn other() -> u32 { 1 } fn gate(p: bool) -> bool { p }",
+    );
+    distinct(
+        "fn gate(p: bool) -> bool { !!p } fn other() -> u32 { 1 } fn main() { println!(\"{:?}\", (gate(true), other())); }",
+        "fn main() { println!(\"{:?}\", (gate(true), other())); } fn other() -> u32 { 2 } fn gate(p: bool) -> bool { p }",
+    );
+}
+
+#[test]
+fn items_compose_with_effect_barrier() {
+    folded(
+        "fn other() -> u32 { 1 } fn f(input: u32) -> u32 { let a = input & 15u32; println!(\"{:?}\", a); let b = input ^ 3u32; a ^ b } fn main() { println!(\"{:?}\", (f(5), other())); }",
+        "fn main() { println!(\"{:?}\", (f(5), other())); } fn other() -> u32 { 1 } fn f(input: u32) -> u32 { let a = input & 15u32; println!(\"{:?}\", a); let b = input ^ 3u32; a ^ b }",
+    );
+    distinct(
+        "fn other() -> u32 { 1 } fn f(input: u32) -> u32 { let a = input & 15u32; println!(\"{:?}\", a); let b = input ^ 3u32; a ^ b } fn main() { println!(\"{:?}\", (f(5), other())); }",
+        "fn main() { println!(\"{:?}\", (f(5), other())); } fn other() -> u32 { 1 } fn f(input: u32) -> u32 { let b = input ^ 3u32; println!(\"{:?}\", b); let a = input & 15u32; a ^ b }",
+    );
+}
+
 fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
     file.items
         .iter()

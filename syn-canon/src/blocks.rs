@@ -55,6 +55,7 @@ pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, CanonicalFor
     let mut walker = Walker {
         frames: vec![Frame::default()],
         mod_frames: BTreeMap::new(),
+        mod_origins: BTreeMap::new(),
         targets: Vec::new(),
         item_path: Vec::new(),
         id: 0,
@@ -149,6 +150,7 @@ fn fn_input_names<'a>(inputs: impl Iterator<Item = &'a syn::FnArg>) -> Vec<Strin
 fn prebind_items<'a>(
     frames: &mut Vec<Frame>,
     mod_frames: &mut BTreeMap<BindingId, Frame>,
+    mod_origins: &mut BTreeMap<*const syn::ItemMod, BindingId>,
     id: &mut usize,
     items: impl Iterator<Item = &'a syn::Item>,
 ) {
@@ -174,13 +176,16 @@ fn prebind_items<'a>(
                 helper: None,
             },
         );
-        if let syn::Item::Mod(syn::ItemMod {
-            content: Some((_, sub_items)),
-            ..
-        }) = item
+        if let syn::Item::Mod(
+            module @ syn::ItemMod {
+                content: Some((_, sub_items)),
+                ..
+            },
+        ) = item
         {
+            mod_origins.insert(core::ptr::from_ref(module), binding_id);
             frames.push(Frame::default());
-            prebind_items(frames, mod_frames, id, sub_items.iter());
+            prebind_items(frames, mod_frames, mod_origins, id, sub_items.iter());
             let frame = frames.pop().expect("a scope frame");
             mod_frames.insert(binding_id, frame);
         }
@@ -198,6 +203,9 @@ struct Walker<'w> {
     frames: Vec<Frame>,
     /// The item frames of local modules, by module binding id.
     mod_frames: BTreeMap<BindingId, Frame>,
+    /// The binding id of each inline module declaration by address, apart for `cfg`-exclusive
+    /// declarations sharing one name.
+    mod_origins: BTreeMap<*const syn::ItemMod, BindingId>,
     /// The interned alias targets.
     targets: Vec<Target>,
     /// The item path segments, outermost first.
@@ -489,6 +497,7 @@ impl Visit<'_> for Walker<'_> {
         prebind_items(
             &mut self.frames,
             &mut self.mod_frames,
+            &mut self.mod_origins,
             &mut self.id,
             file.items.iter(),
         );
@@ -504,6 +513,7 @@ impl Visit<'_> for Walker<'_> {
         prebind_items(
             &mut self.frames,
             &mut self.mod_frames,
+            &mut self.mod_origins,
             &mut self.id,
             block.stmts.iter().filter_map(|stmt| match stmt {
                 syn::Stmt::Item(item) => Some(item),
@@ -546,10 +556,10 @@ impl Visit<'_> for Walker<'_> {
     fn visit_item_mod(&mut self, item: &syn::ItemMod) {
         self.push_item_path(&item.ident);
         if let Some((_, items)) = &item.content {
-            let id = self
-                .lookup(&[Ns::Type], &item.ident.to_string())
-                .expect("a module is prebound")
-                .id;
+            let id = *self
+                .mod_origins
+                .get(&core::ptr::from_ref(item))
+                .expect("a module is prebound");
             let frame = self.mod_frames.remove(&id).unwrap_or_default();
             self.frames.push(frame);
             self.bind_scope_uses(items.iter().filter_map(|item| match item {

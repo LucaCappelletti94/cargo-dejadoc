@@ -412,3 +412,30 @@ fn structure_constructed_literal_attribute_retains_order() {
     };
     assert_ne!(attributed(&source("1|2")), attributed(&source("2|1")));
 }
+
+#[test]
+fn structure_field_order_composes_with_double_negation() {
+    let a = "struct S { x: u32, y: bool } fn f(input: u32, p: bool) -> (u32, bool) { let a = input & 1u32; let b = input ^ 1u32; let s = S { x: b, y: !!p }; (s.x, s.y) }";
+    let b = "struct S { x: u32, y: bool } fn f(input: u32, p: bool) -> (u32, bool) { let b = input ^ 1u32; let a = input & 1u32; let s = S { y: p, x: b }; (s.x, s.y) }";
+    assert_eq!(form(a), form(b));
+    assert_ne!(failing(a), failing(b));
+}
+
+#[test]
+fn structure_literal_alternatives_compose_with_inline_boolean_algebra() {
+    let a = "fn f(input: u32, p: bool) -> (bool, bool) { let m = match input { 1 | 2 => true, _ => false }; (!!p, m) }";
+    let b = "fn f(input: u32, p: bool) -> (bool, bool) { let m = match input { 2 | 1 => true, _ => false }; (p, m) }";
+    assert_eq!(form(a), form(b));
+    assert_ne!(failing(a), failing(b));
+}
+
+#[test]
+fn structure_literal_alternatives_match_presence_keeps_surrounding_scheduling_conservative() {
+    // A match statement is not a proven total primitive producer. Its
+    // presence anywhere in a block closes the open scheduling region, so a
+    // single-use boolean alias elsewhere in the same block stays retained
+    // rather than erased. Inline algebraic folds still apply independently.
+    let a = "fn f(input: u32, p: bool) -> (bool, u32) { let gate = !!p; let m = match input { 1u32 => 10u32, _ => 0u32 }; (gate, m) }";
+    let b = "fn f(input: u32, p: bool) -> (bool, u32) { let m = match input { 1u32 => 10u32, _ => 0u32 }; (p, m) }";
+    assert_ne!(form(a), form(b));
+}
