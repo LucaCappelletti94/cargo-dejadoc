@@ -1,7 +1,0 @@
-**t;|t|ttFt;struct S;
-impl S {
-    #[allow(cli*ppy::unused_self)]
-     fnf(&self) {*Ftc}
-}r"let"x ; ///1;
-6;rr; dyn#|t///1&
-6;ts
