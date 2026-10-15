@@ -1,4 +1,0 @@
-struct S;
-impl S {  //!/0/  typ  /// ```
-r!("d<c.")include_22
-}

@@ -1,6 +1,0 @@
-extern "C" {
-  fn ain() {}
-    /// `b`
-  static S: i3*;
-A  ;
-}

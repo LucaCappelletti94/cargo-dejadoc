@@ -1,7 +1,0 @@
-///ruct  St;
-/// d``e() {}
-////cd
-trait Tr = i32St;
-/// ``
-//// ``/cd
-trait Tr = i32;

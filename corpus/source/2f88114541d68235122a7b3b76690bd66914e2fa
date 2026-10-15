@@ -1,2 +1,0 @@
-#[doc = includ%_str!("g.mg.md")]
-pub fn f() {}

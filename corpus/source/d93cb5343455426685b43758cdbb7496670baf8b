@@ -1,7 +1,0 @@
-trait T {
-    ///``
-    const C: i32;
-    ///#[doi() {}
-    /// ```
-    const C: i64;traitOut;
-}

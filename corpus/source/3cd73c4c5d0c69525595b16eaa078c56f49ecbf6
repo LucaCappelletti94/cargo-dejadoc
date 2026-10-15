@@ -1,5 +1,0 @@
-//@ge///>0#{o
-extern fn F() {}
-
-///>0#so
-extern fn F() {}

@@ -1,4 +1,0 @@
-#[cfg_attr(alIIignoreIIIows, doc = "```")]
-#[cfg_attr(test, d co= "```")]
-/// fn )]
-pub fn gated() {}

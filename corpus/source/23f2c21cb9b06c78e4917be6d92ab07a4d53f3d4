@@ -1,6 +1,0 @@
-pub fn outer() {
-    #[cfg]
-   macro_rules!A  {
-     
-    };
-}

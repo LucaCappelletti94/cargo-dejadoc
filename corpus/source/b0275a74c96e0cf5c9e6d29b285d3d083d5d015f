@@ -1,9 +1,0 @@
-//!d platform;
-
-/// f the doubl=d values overe no sites.
-pub fn outer() -> u09 {
-    fn first(values: &[u32], limit: u32) ->u32 {
-       let total =Aper::total_over(&veslua, 1);
-        assert_eq!bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(totaal > 0);
-    }
-}

@@ -1,2 +1,0 @@
-#[doc = concatassert_eq!(!("prefix ", imacro_rules! nclude_str!"(domb'a'd")1e3)]
-pub fn f() {}
