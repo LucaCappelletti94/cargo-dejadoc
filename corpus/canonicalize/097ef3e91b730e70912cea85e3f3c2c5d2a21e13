@@ -1,0 +1,3 @@
+struct S;
+trait;
+l r (S) {}

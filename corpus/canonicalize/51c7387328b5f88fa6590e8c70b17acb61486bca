@@ -1,0 +1,6 @@
+struct S;
+impl S {
+    #[allow(clippy::unused_self)]
+    fn f(&self) {}
+}r"let"xdyn///1&
+6;s

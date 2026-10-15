@@ -1,0 +1,6 @@
+trait Pino<T> {}
+struct S;
+impl<T>  Pino<T> {}
+struct S;
+impl<T> Pino<T> for S {}
+Pino<T> for S {}

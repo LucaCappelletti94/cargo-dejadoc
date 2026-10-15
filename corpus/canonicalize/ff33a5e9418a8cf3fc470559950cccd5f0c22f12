@@ -1,0 +1,3 @@
+#[allow(unsed)]
+#[warn(deode)]
+f()/{}

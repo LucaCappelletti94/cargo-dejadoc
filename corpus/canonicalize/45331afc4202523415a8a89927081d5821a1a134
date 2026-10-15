@@ -1,0 +1,1 @@
+te= 2; struct H<const; N const<{ q }, zz> = H { n: core::marker::PhantomData };

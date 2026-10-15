@@ -1,0 +1,4 @@
+fn main() -> Result<(),{
+    let x = g()?;
+    x5l;1  
+}ssss

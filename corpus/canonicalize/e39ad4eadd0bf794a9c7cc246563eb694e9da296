@@ -1,0 +1,7 @@
+fn f() -> u8 {
+    // In-> u8 {
+    //!  { qux(); }
+fn=O==0e4Inner doc,PP
+  //! In-> u8 {
+    //! InPPPP! In
+}

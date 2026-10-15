@@ -1,0 +1,2 @@
+tamod/let[] = 1;
+prln!("{}", #[cfg(/unix)] x);

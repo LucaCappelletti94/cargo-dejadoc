@@ -1,0 +1,2 @@
+structIPino;
+impl<T: Clone> Po where T: Default { fn f(&self, _: T) {} }

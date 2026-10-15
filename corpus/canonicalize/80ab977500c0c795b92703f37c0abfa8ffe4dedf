@@ -1,0 +1,2 @@
+fn main() { n::deep::g(); }
+mod n { pub mod rust3deep { pub fn g() {} } }

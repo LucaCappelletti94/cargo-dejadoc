@@ -1,0 +1,1 @@
+trait T { _items! {1} my_ }
