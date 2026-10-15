@@ -1,0 +1,1 @@
+fn r#type()->u32{1}fn r#loop()->u32{2}fn main(){let a=r#type();let b=r#loop();println!("{:?}",(a,b));}

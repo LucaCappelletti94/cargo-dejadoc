@@ -489,8 +489,8 @@ fn peel_paren(expr: &syn::Expr) -> &syn::Expr {
     expr
 }
 
-/// Whether `op` is a compound assignment the labels group under one tag.
-fn is_assign_op(op: &syn::BinOp) -> bool {
+/// Whether `op` is a compound assignment.
+pub(crate) fn is_assign_op(op: syn::BinOp) -> bool {
     matches!(
         op,
         syn::BinOp::AddAssign(_)
@@ -507,7 +507,7 @@ fn is_assign_op(op: &syn::BinOp) -> bool {
 }
 
 /// The kind tag of a binary operator the labels keep distinct.
-fn op_text(op: &syn::BinOp) -> String {
+fn op_text(op: syn::BinOp) -> String {
     match op {
         syn::BinOp::Add(_) => "+".into(),
         syn::BinOp::Sub(_) => "-".into(),
@@ -540,7 +540,7 @@ pub(crate) enum BitwiseOp {
 }
 
 impl BitwiseOp {
-    pub(crate) fn from_bin_op(op: &syn::BinOp) -> Option<Self> {
+    pub(crate) fn from_bin_op(op: syn::BinOp) -> Option<Self> {
         match op {
             syn::BinOp::BitAnd(_) => Some(Self::And),
             syn::BinOp::BitOr(_) => Some(Self::Or),
@@ -594,7 +594,7 @@ pub(crate) enum TotalBinary {
     Flat(BitwiseOp, PrimTy),
 }
 
-pub(crate) fn total_binary(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+pub(crate) fn total_binary(bin_op: syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
     if let Some(op) = BitwiseOp::from_bin_op(bin_op) {
         return Some(TotalBinary::Flat(op, scalar_prim(left, right)?));
     }
@@ -637,7 +637,7 @@ fn scalar_prim(left: &Lbl, right: &Lbl) -> Option<PrimTy> {
 
 /// A comparison or a logical operation over proven scalars, oriented by
 /// kind, a bool result.
-fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+fn comparison(bin_op: syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
     let prim = scalar_prim(left, right)?;
     let (tag, reverse) = match bin_op {
         syn::BinOp::Eq(_) => ('=', None),
@@ -677,7 +677,7 @@ pub(crate) fn not_label(operand: Lbl) -> Lbl {
 }
 
 /// The total boolean operand compared with literal `true`.
-pub(crate) fn true_comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<Lbl> {
+pub(crate) fn true_comparison(bin_op: syn::BinOp, left: &Lbl, right: &Lbl) -> Option<Lbl> {
     if !matches!(bin_op, syn::BinOp::Eq(_)) {
         return None;
     }
@@ -874,7 +874,7 @@ pub(crate) fn assign_target(stmt: &syn::Stmt) -> Option<String> {
     };
     let assign: &syn::Expr = match peel_paren(expr) {
         syn::Expr::Assign(assign) => &assign.left,
-        syn::Expr::Binary(binary) if is_assign_op(&binary.op) => &binary.left,
+        syn::Expr::Binary(binary) if is_assign_op(binary.op) => &binary.left,
         _ => return None,
     };
     match assign {
@@ -1106,14 +1106,14 @@ fn label_binary(
     let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals, orders);
     sites.extend(r_sites);
     let label = if bin.attrs.is_empty()
-        && let Some(reduced) = true_comparison(&bin.op, &left, &right)
+        && let Some(reduced) = true_comparison(bin.op, &left, &right)
     {
         reduced
     } else {
-        match total_binary(&bin.op, &left, &right) {
+        match total_binary(bin.op, &left, &right) {
             Some(TotalBinary::Ordered {
                 tag: '∧' | '∨', ..
-            }) if !bin.attrs.is_empty() => Lbl::Other(op_text(&bin.op), vec![left, right]),
+            }) if !bin.attrs.is_empty() => Lbl::Other(op_text(bin.op), vec![left, right]),
             Some(TotalBinary::Ordered { tag, reverse, prim }) => {
                 let (lo, hi) = if reverse.is_some() {
                     (right, left)
@@ -1129,10 +1129,10 @@ fn label_binary(
                 flat_label(op, prim, leaves)
             }
             None => {
-                let tag = if is_assign_op(&bin.op) {
+                let tag = if is_assign_op(bin.op) {
                     "ao".into()
                 } else {
-                    op_text(&bin.op)
+                    op_text(bin.op)
                 };
                 Lbl::Other(tag, vec![left, right])
             }
@@ -2656,6 +2656,57 @@ fn future_search(
     Some(Lbl::Graph(Box::new(root), definitions))
 }
 
+pub(crate) fn item_order(definitions: &[Lbl], root: &Lbl) -> Option<Vec<usize>> {
+    fn search(
+        definitions: &[Lbl],
+        root: &Lbl,
+        seed: &[usize],
+        marks: &mut [usize],
+        states: &mut usize,
+        depth: usize,
+    ) -> Option<(Lbl, Vec<usize>)> {
+        spend_state(states)?;
+        let colors = refine_future(definitions, root, seed, marks);
+        if let Some(members) = find_future_tie(&colors) {
+            let mut best: Option<(Lbl, Vec<usize>)> = None;
+            for member in members {
+                marks[member] = depth + 1;
+                let candidate = search(definitions, root, seed, marks, states, depth + 1);
+                marks[member] = 0;
+                let candidate = candidate?;
+                if best.as_ref().is_none_or(|winner| candidate.0 < winner.0) {
+                    best = Some(candidate);
+                }
+            }
+            return best;
+        }
+        let mut order: Vec<_> = (0..definitions.len()).collect();
+        order.sort_unstable_by_key(|&index| colors[index]);
+        let mut ranks = vec![0; definitions.len()];
+        for (position, &index) in order.iter().enumerate() {
+            ranks[index] = position;
+        }
+        let candidate = Lbl::Graph(
+            Box::new(future_rank_substitute(root, &ranks)),
+            order
+                .iter()
+                .map(|&index| future_rank_substitute(&definitions[index], &ranks))
+                .collect(),
+        );
+        Some((candidate, order))
+    }
+    let seed = vec![0; definitions.len()];
+    search(
+        definitions,
+        root,
+        &seed,
+        &mut vec![0; definitions.len()],
+        &mut 0,
+        0,
+    )
+    .map(|(_, order)| order)
+}
+
 /// Share the region budget across complete future projections.
 fn future_normalize(lbl: &Lbl, states: &mut usize) -> Option<Lbl> {
     match lbl {
@@ -3338,9 +3389,6 @@ impl BlockScan {
                         node: *id,
                         consumer,
                     });
-                }
-                if site.ctx == Ctx::Storage {
-                    self.regions[producer_region].dead = true;
                 }
             }
         }

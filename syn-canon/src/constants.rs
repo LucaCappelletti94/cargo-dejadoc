@@ -187,7 +187,7 @@ enum BinaryOp {
     Shr,
 }
 
-fn arithmetic(op: &syn::BinOp) -> Option<BinaryOp> {
+fn arithmetic(op: syn::BinOp) -> Option<BinaryOp> {
     Some(match op {
         syn::BinOp::Add(_) => BinaryOp::Math(MathOp::Add),
         syn::BinOp::Sub(_) => BinaryOp::Math(MathOp::Sub),
@@ -242,7 +242,7 @@ fn closed(expr: &syn::Expr, depth: usize) -> bool {
         Some(Node::Unary(unary)) if matches!(unary.op, syn::UnOp::Neg(_) | syn::UnOp::Not(_)) => {
             closed(&unary.expr, depth + 1)
         }
-        Some(Node::Binary(binary)) if arithmetic(&binary.op).is_some() => {
+        Some(Node::Binary(binary)) if arithmetic(binary.op).is_some() => {
             closed(&binary.left, depth + 1) && closed(&binary.right, depth + 1)
         }
         _ => false,
@@ -392,7 +392,7 @@ fn evaluate(expr: &syn::Expr, ty: FixedInt, depth: usize) -> Option<Integer> {
             };
             left.binary(
                 evaluate(&binary.right, right_ty, depth + 1)?,
-                arithmetic(&binary.op)?,
+                arithmetic(binary.op)?,
             )
         }
     }

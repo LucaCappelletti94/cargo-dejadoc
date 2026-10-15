@@ -13,6 +13,7 @@ fuzz_target!(|data: &[u8]| {
         dejadoc_fuzz::check_value_schedules(&data);
         dejadoc_fuzz::check_helper_schedules(&data);
         dejadoc_fuzz::check_structure_schedules(&data);
+        dejadoc_fuzz::check_item_schedules(&data);
         let Ok(code) = std::str::from_utf8(&data) else {
             return;
         };

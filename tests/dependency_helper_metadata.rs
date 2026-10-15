@@ -227,7 +227,14 @@ fn clone_retention_keeps_distinct_callee_origins() {
             "fn low(x:u32)->u32{{x&15u32}}fn high(x:u32)->u32{{x&15u32}}fn f(x:u32)->(u32,u32){{let mask=3u32;(mask,{call})}}"
         )
     };
-    ordered(&source("low(x)"), &source("high(x)"));
+    let left = source("low(x)");
+    let right = source("high(x)");
+    assert_eq!(form(&left), form(&right));
+    assert_ne!(view(&left), view(&right));
+    assert_ne!(
+        syn_canon::canonicalize_failing(syn::parse_str(&left).unwrap()),
+        syn_canon::canonicalize_failing(syn::parse_str(&right).unwrap()),
+    );
 }
 
 #[test]

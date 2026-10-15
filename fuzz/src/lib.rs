@@ -724,7 +724,7 @@ pub fn check_helper_schedules(data: &[u8]) {
         groups,
         [
             vec!["c::a_original", "c::a_renamed", "c::a_scheduled"],
-            vec!["c::b_original", "c::b_scheduled"],
+            vec!["c::b_original", "c::b_scheduled", "c::n_origin_b"],
             vec!["c::n_origin", "c::n_port"],
         ]
     );
@@ -937,4 +937,225 @@ pub fn check_structure_schedules(data: &[u8]) {
     ];
     expected.sort_unstable();
     assert_eq!(groups, expected);
+}
+
+/// Closed item graphs and compatible inherent partitions preserve ordered observation edges.
+pub fn check_item_schedules(data: &[u8]) {
+    let byte = |index| u32::from(data.get(index).copied().unwrap_or(0));
+    let (n1, n2) = if byte(0) & 1 == 0 {
+        ("first", "second")
+    } else {
+        ("r#type", "r#loop")
+    };
+    let (m1, m2) = if byte(1) & 1 == 0 {
+        ("one", "two")
+    } else {
+        ("r#type", "r#loop")
+    };
+    let v1 = 1 + byte(2) % 255;
+    let v2 = 2 + byte(3) % 255;
+    let v1_plus = v1 + 1;
+    let print_pair = |x: &str, y: &str| format!("println!(\"{{:?}}\",({x},{y}));");
+    let p_ab = print_pair("a", "b");
+    let p_ba = print_pair("b", "a");
+    let a_main = format!("fn main(){{let a={n1}();let b={n2}();{p_ab}}}");
+    let a_main_scheduled = format!("fn main(){{let b={n2}();let a={n1}();{p_ab}}}");
+    let a_main_port = format!("fn main(){{let b={n2}();let a={n1}();{p_ba}}}");
+    let a_one = format!("fn {n1}()->u32{{{v1}u32}}");
+    let a_two = format!("fn {n2}()->u32{{{v2}u32}}");
+    let a_one_alpha = format!("fn alpha()->u32{{{v1}u32}}");
+    let a_two_beta = format!("fn beta()->u32{{{v2}u32}}");
+    let a_main_renamed = format!("fn main(){{let a=alpha();let b=beta();{p_ab}}}");
+    let a_one_value = format!("fn {n1}()->u32{{{v1_plus}u32}}");
+    let a_one_folded = format!("fn {n1}()->u32{{{v1}+0u32}}");
+    let a_one_pub = format!("pub fn {n1}()->u32{{{v1}u32}}");
+    let a_one_cfg = format!("#[cfg(all())] fn {n1}()->u32{{{v1}u32}}");
+    let a_one_observer = format!("#[track_caller] fn {n1}()->u32{{{v1}u32}}");
+    let a_one_macro = format!("fn {n1}()->u32{{lit!()}}");
+    let a_macro = format!("macro_rules! lit{{()=>{{{v1}u32}}}}");
+    let p_s = print_pair(&format!("S::{m1}()"), &format!("S::{m2}()"));
+    let p_s_port = print_pair(&format!("S::{m2}()"), &format!("S::{m1}()"));
+    let p_s_trait = format!("S::m();{p_s}");
+    let p_t = print_pair(&format!("T::{m1}()"), &format!("T::{m2}()"));
+    let p_o = print_pair(&format!("S::{m1}()"), &format!("T::{m2}()"));
+    let p_g = print_pair(&format!("G::<u32>::{m1}()"), &format!("G::<u32>::{m2}()"));
+    let mem1 = format!("fn {m1}()->u32{{{v1}u32}}");
+    let mem2 = format!("fn {m2}()->u32{{{v2}u32}}");
+    let mem1_value = format!("fn {m1}()->u32{{{v1_plus}u32}}");
+    let mem1_folded = format!("fn {m1}()->u32{{{v1}+0u32}}");
+    let mem1_cfg = format!("#[cfg(all())] fn {m1}()->u32{{{v1}u32}}");
+    let mem1_observer = format!("#[track_caller] fn {m1}()->u32{{{v1}u32}}");
+    let mem1_other = format!("fn {m1}()->u32{{{v2}u32}}");
+    let extra = "fn extra()->u32{3}";
+    let i1 = format!("impl S{{{mem1}}}");
+    let i2 = format!("impl S{{{mem2}}}");
+    let i_both = format!("impl S{{{mem1}{mem2}}}");
+    let i_two_one = format!("impl S{{{mem2}{mem1}}}");
+    let i1_folded = format!("impl S{{{mem1_folded}}}");
+    let i1_value = format!("impl S{{{mem1_value}}}");
+    let i2_extra = format!("impl S{{{mem2}{extra}}}");
+    let i1_cfg = format!("impl S{{{mem1_cfg}}}");
+    let i_both_cfg = format!("impl S{{{mem1_cfg}{mem2}}}");
+    let i1_observer = format!("impl S{{{mem1_observer}}}");
+    let i_both_observer = format!("impl S{{{mem1_observer}{mem2}}}");
+    let i1_dup = format!("impl S{{{mem1_other}}}");
+    let i_both_dup = format!("impl S{{{mem1}{mem1_other}}}");
+    let i1_t = format!("impl T{{{mem1}}}");
+    let i2_t = format!("impl T{{{mem2}}}");
+    let i1_g = format!("impl<T> G<T>{{{mem1}}}");
+    let i2_g = format!("impl G<u32>{{{mem2}}}");
+    let p_main = format!("fn main(){{{p_s}}}");
+    let p_main_port = format!("fn main(){{{p_s_port}}}");
+    let p_main_trait = format!("fn main(){{{p_s_trait}}}");
+    let p_main_renamed = format!("fn main(){{{p_t}}}");
+    let p_main_owner = format!("fn main(){{{p_o}}}");
+    let p_main_generic = format!("fn main(){{{p_g}}}");
+    let trait_m = "trait M{fn m();}";
+    let impl_m = "impl M for S{fn m(){}}";
+    let site = |item: &str, code: String| DocTest {
+        file: format!("src/{item}.rs"),
+        line: 1,
+        end: None,
+        item: format!("c::{item}"),
+        info: Vec::new(),
+        code,
+        allow: false,
+        self_type: None,
+        public: false,
+    };
+    let sites: Vec<DocTest> = vec![
+        site("a_original", format!("{a_one}{a_two}{a_main}")),
+        site("a_order", format!("{a_two}{a_one}{a_main}")),
+        site(
+            "a_renamed",
+            format!("{a_one_alpha}{a_two_beta}{a_main_renamed}"),
+        ),
+        site("a_scheduled", format!("{a_one}{a_two}{a_main_scheduled}")),
+        site("a_composed", format!("{a_two}{a_one_folded}{a_main}")),
+        site("an_value", format!("{a_one_value}{a_two}{a_main}")),
+        site("an_port", format!("{a_one}{a_two}{a_main_port}")),
+        site(
+            "an_macro_a",
+            format!("{a_macro}{a_one_macro}{a_two}{a_main}"),
+        ),
+        site(
+            "an_macro_b",
+            format!("{a_one_macro}{a_two}{a_macro}{a_main}"),
+        ),
+        site("an_pub_a", format!("{a_one_pub}{a_two}{a_main}")),
+        site("an_pub_b", format!("{a_two}{a_one_pub}{a_main}")),
+        site("an_cfg_a", format!("{a_one_cfg}{a_two}{a_main}")),
+        site("an_cfg_b", format!("{a_two}{a_one_cfg}{a_main}")),
+        site("an_observer_a", format!("{a_one_observer}{a_two}{a_main}")),
+        site("an_observer_b", format!("{a_two}{a_one_observer}{a_main}")),
+        site("i_original", format!("struct S;{i1}{i2}{p_main}")),
+        site("i_combined", format!("struct S;{i_both}{p_main}")),
+        site("i_block_order", format!("struct S;{i2}{i1}{p_main}")),
+        site("i_member_order", format!("struct S;{i_two_one}{p_main}")),
+        site(
+            "i_renamed",
+            format!("struct T;{i1_t}{i2_t}{p_main_renamed}"),
+        ),
+        site("i_composed", format!("struct S;{i2}{i1_folded}{p_main}")),
+        site("pn_value", format!("struct S;{i1_value}{i2}{p_main}")),
+        site("pn_port", format!("struct S;{i1}{i2}{p_main_port}")),
+        site("pn_member", format!("struct S;{i1}{i2_extra}{p_main}")),
+        site(
+            "pn_owner",
+            format!("struct S;struct T;{i1}{i2_t}{p_main_owner}"),
+        ),
+        site(
+            "pn_generic",
+            format!("struct G<T>(T);{i1_g}{i2_g}{p_main_generic}"),
+        ),
+        site(
+            "pn_trait_a",
+            format!("{trait_m}struct S;{impl_m}{i1}{i2}{p_main_trait}"),
+        ),
+        site(
+            "pn_trait_b",
+            format!("{trait_m}struct S;{i1}{i2}{impl_m}{p_main_trait}"),
+        ),
+        site("pn_cfg_a", format!("struct S;{i1_cfg}{i2}{p_main}")),
+        site("pn_cfg_b", format!("struct S;{i_both_cfg}{p_main}")),
+        site(
+            "pn_observer_a",
+            format!("struct S;{i1_observer}{i2}{p_main}"),
+        ),
+        site(
+            "pn_observer_b",
+            format!("struct S;{i_both_observer}{p_main}"),
+        ),
+        site("pn_dup_a", format!("struct S;{i1}{i1_dup}{p_main}")),
+        site("pn_dup_b", format!("struct S;{i_both_dup}{p_main}")),
+    ];
+    let report = dejadoc::group(&sites, 2, 0);
+    let mut groups: Vec<Vec<&str>> = report
+        .groups
+        .iter()
+        .map(|group| {
+            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
+            members.sort_unstable();
+            members
+        })
+        .collect();
+    groups.sort_unstable();
+    let a_group: Vec<&str> = if v1 == v2 {
+        vec![
+            "c::a_composed",
+            "c::a_order",
+            "c::a_original",
+            "c::a_renamed",
+            "c::a_scheduled",
+            "c::an_port",
+        ]
+    } else {
+        vec![
+            "c::a_composed",
+            "c::a_order",
+            "c::a_original",
+            "c::a_renamed",
+            "c::a_scheduled",
+        ]
+    };
+    let mut expected: Vec<Vec<&str>> = vec![
+        a_group,
+        vec![
+            "c::i_block_order",
+            "c::i_combined",
+            "c::i_composed",
+            "c::i_member_order",
+            "c::i_original",
+            "c::i_renamed",
+        ],
+    ];
+    expected.sort_unstable();
+    assert_eq!(groups, expected);
+    // Coincident helper bodies are isomorphic, so the A13 slot orientation absorbs the swapped port.
+    let an_port_folded = groups
+        .iter()
+        .any(|group| group.contains(&"c::an_port") && group.contains(&"c::a_original"));
+    assert_eq!(an_port_folded, v1 == v2, "{groups:?}");
+    let failing_site = |item: &str, code: String| DocTest {
+        file: format!("src/{item}.rs"),
+        line: 1,
+        end: None,
+        item: format!("c::{item}"),
+        info: vec!["compile_fail".to_string()],
+        code,
+        allow: false,
+        self_type: None,
+        public: false,
+    };
+    let failing = dejadoc::group(
+        &[
+            failing_site("f_a_original", format!("{a_one}{a_two}{a_main}")),
+            failing_site("f_a_order", format!("{a_two}{a_one}{a_main}")),
+            failing_site("f_i_original", format!("struct S;{i1}{i2}{p_main}")),
+            failing_site("f_i_combined", format!("struct S;{i_both}{p_main}")),
+        ],
+        2,
+        0,
+    );
+    assert!(failing.groups.is_empty(), "{failing:?}");
 }

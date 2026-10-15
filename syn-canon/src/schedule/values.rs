@@ -85,7 +85,7 @@ pub(super) fn within_bounds(block: &syn::Block, outer: usize) -> bool {
     bounds(block, outer).valid
 }
 
-fn scalar_shape(expr: &syn::Expr) -> bool {
+fn scalar_shape(expr: &syn::Expr, calls: bool) -> bool {
     match expr {
         syn::Expr::Lit(_) => true,
         syn::Expr::Path(path) => {
@@ -94,17 +94,18 @@ fn scalar_shape(expr: &syn::Expr) -> bool {
                 && path.path.segments.len() == 1
                 && matches!(path.path.segments[0].arguments, syn::PathArguments::None)
         }
-        syn::Expr::Unary(unary) => scalar_shape(&unary.expr),
-        syn::Expr::Binary(binary) => scalar_shape(&binary.left) && scalar_shape(&binary.right),
-        syn::Expr::Group(group) => scalar_shape(&group.expr),
+        syn::Expr::Unary(unary) => scalar_shape(&unary.expr, calls),
+        syn::Expr::Binary(binary) => scalar_shape(&binary.left, calls) && scalar_shape(&binary.right, calls),
+        syn::Expr::Group(group) => scalar_shape(&group.expr, calls),
+        syn::Expr::Call(call) => calls && call.args.iter().all(|arg| scalar_shape(arg, calls)),
         syn::Expr::If(branch) => {
-            scalar_shape(&branch.cond)
-                && super::scalar_tail(&branch.then_branch).is_some_and(scalar_shape)
+            scalar_shape(&branch.cond, calls)
+                && super::scalar_tail(&branch.then_branch).is_some_and(|expr| scalar_shape(expr, calls))
                 && branch.else_branch.as_ref().is_some_and(|(_, otherwise)| {
                     matches!(&**otherwise, syn::Expr::Block(block)
                         if block.attrs.is_empty()
                             && block.label.is_none()
-                            && super::scalar_tail(&block.block).is_some_and(scalar_shape))
+                            && super::scalar_tail(&block.block).is_some_and(|expr| scalar_shape(expr, calls)))
                 })
         }
         _ => false,
@@ -114,7 +115,7 @@ fn scalar_shape(expr: &syn::Expr) -> bool {
 fn value_shape(expr: &syn::Expr) -> bool {
     match expr {
         syn::Expr::Tuple(tuple) => tuple.elems.iter().all(value_shape),
-        _ => scalar_shape(expr),
+        _ => scalar_shape(expr, true),
     }
 }
 
@@ -168,7 +169,7 @@ fn definitions<'ast>(
     };
     let mut result = Vec::with_capacity(pairs.len());
     for (name, expr) in pairs {
-        if !scalar_shape(expr) {
+        if !scalar_shape(expr, false) {
             return Vec::new();
         }
         let mut locals = 0;
@@ -247,6 +248,10 @@ fn expand(
                 } else {
                     self.valid = self.retained.get(unraw(&name)) == Some(value);
                 }
+            } else if let syn::Expr::Call(call) = expr {
+                for argument in &mut call.args {
+                    syn::visit_mut::VisitMut::visit_expr_mut(self, argument);
+                }
             } else {
                 syn::visit_mut::visit_expr_mut(self, expr);
             }
@@ -323,13 +328,16 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
     let mut defs = Vec::new();
     let mut changes = Vec::with_capacity(block.stmts.len());
     let mut approved = Vec::with_capacity(block.stmts.len());
+    let mut erase = Vec::with_capacity(block.stmts.len());
     for (index, stmt) in block.stmts.iter().enumerate() {
+        let mut erasable = false;
         let mut admitted = false;
         if !scan.unreachable
             && let syn::Stmt::Local(local) = stmt
         {
             let candidates = definitions(renamer, &scan.env, local);
             admitted = !candidates.is_empty();
+            erasable = admitted;
             if admitted {
                 for (name, expr, label, sites) in candidates {
                     scan.budget(&label);
@@ -343,7 +351,29 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
                     });
                 }
             } else {
-                scan.other(renamer, index, stmt);
+                if local.attrs.is_empty()
+                    && plain_binding(&local.pat).is_some()
+                    && let Some(init) = &local.init
+                    && init.diverge.is_none()
+                    && scalar_shape(&init.expr, true)
+                {
+                    let (label, sites) = super::label_expr(
+                        renamer,
+                        &scan.env,
+                        &init.expr,
+                        index,
+                        &mut scan.locals,
+                        None,
+                    );
+                    admitted = label.prim().is_some();
+                    if admitted {
+                        scan.budget(&label);
+                        scan.note(&sites, super::USE_DOWN, index, label);
+                    }
+                }
+                if !admitted {
+                    scan.other(renamer, index, stmt);
+                }
                 for name in super::pat_names(&local.pat) {
                     scan.invalidate(name);
                 }
@@ -369,6 +399,7 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
                 .collect::<Vec<_>>(),
         );
         approved.push(admitted);
+        erase.push(erasable);
     }
     if scan.over_budget {
         return Outcome::Exhausted;
@@ -380,12 +411,6 @@ pub(super) fn normalize(renamer: &mut Renamer, block: &mut syn::Block) -> Outcom
             .filter(|port| !matches!(port, Port::Node(_)))
             .cloned(),
     );
-    let mut erase: Vec<_> = block
-        .stmts
-        .iter()
-        .enumerate()
-        .map(|(index, stmt)| approved[index] && matches!(stmt, syn::Stmt::Local(_)))
-        .collect();
     for def in &defs {
         let id = def.node;
         let allowed = !scan.regions[scan.producers[id].region].dead

@@ -200,13 +200,35 @@ pub(crate) struct HelperSyntax {
     scopes: BTreeMap<*const syn::Stmt, ScopeId>,
     calls: BTreeMap<*const syn::PathSegment, ScopeId>,
     modules: BTreeMap<*const syn::Item, ModuleRoute>,
+    proof_idents: BTreeMap<*const proc_macro2::Ident, (HelperId, ScopeId)>,
+    call_proofs: BTreeMap<*const syn::PathSegment, (HelperId, ScopeId)>,
+    marker_paths: BTreeMap<*const syn::PathSegment, (crate::scope::Ns, usize)>,
+    marker_macros: BTreeMap<*const syn::PathSegment, Vec<Option<(crate::scope::Ns, usize)>>>,
+    proof_canons: BTreeMap<HelperId, String>,
 }
+
+/// The per-path carried handles keyed by the path's final segment.
+type PathTransport = (
+    Option<ScopeId>,
+    Option<(HelperId, ScopeId)>,
+    Option<(crate::scope::Ns, usize)>,
+);
+
+/// The per-macro carried occurrence records keyed by the first segment.
+type MacroTransport = Option<Vec<Option<(crate::scope::Ns, usize)>>>;
+
+pub(crate) type PathProof = (
+    Option<(HelperId, ScopeId)>,
+    Option<(crate::scope::Ns, usize)>,
+);
 
 #[derive(Default)]
 struct SyntaxHandles {
     blocks: Vec<(Option<HelperId>, Option<ScopeId>)>,
-    paths: Vec<Option<ScopeId>>,
+    paths: Vec<PathTransport>,
+    macros: Vec<MacroTransport>,
     modules: Vec<Option<ModuleRoute>>,
+    proof_canons: BTreeMap<HelperId, String>,
 }
 
 #[derive(Clone, Copy)]
@@ -233,11 +255,44 @@ impl<'ast> Visit<'ast> for CollectSyntax<'_> {
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        self.handles.paths.push(match self.source {
-            SyntaxSource::Original(table) => table.calls.get(&core::ptr::from_ref(path)).copied(),
-            SyntaxSource::Owned(syntax) => syntax.call_scope(path),
-        });
+        let record = match self.source {
+            SyntaxSource::Original(table) => {
+                let scope = table.calls.get(&core::ptr::from_ref(path)).copied();
+                (scope, None, None)
+            }
+            SyntaxSource::Owned(syntax) => match path_key(path) {
+                Some(key) => (
+                    syntax.calls.get(&key).copied(),
+                    syntax.call_proofs.get(&key).copied(),
+                    syntax.marker_paths.get(&key).copied(),
+                ),
+                None => (None, None, None),
+            },
+        };
+        if let SyntaxSource::Owned(syntax) = self.source
+            && let Some((helper, _)) = record.1
+            && let Some(canon) = syntax.proof_canons.get(&helper)
+        {
+            self.handles
+                .proof_canons
+                .entry(helper)
+                .or_insert_with(|| canon.clone());
+        }
+        self.handles.paths.push(record);
         visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        self.handles.macros.push(match self.source {
+            SyntaxSource::Original(_) => None,
+            SyntaxSource::Owned(syntax) => mac.path.segments.first().and_then(|first| {
+                syntax
+                    .marker_macros
+                    .get(&core::ptr::from_ref(first))
+                    .cloned()
+            }),
+        });
+        visit::visit_macro(self, mac);
     }
 
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
@@ -255,7 +310,8 @@ impl<'ast> Visit<'ast> for CollectSyntax<'_> {
 struct AttachSyntax<'a> {
     syntax: &'a mut HelperSyntax,
     blocks: alloc::vec::IntoIter<(Option<HelperId>, Option<ScopeId>)>,
-    paths: alloc::vec::IntoIter<Option<ScopeId>>,
+    paths: alloc::vec::IntoIter<PathTransport>,
+    macros: alloc::vec::IntoIter<MacroTransport>,
     modules: alloc::vec::IntoIter<Option<ModuleRoute>>,
 }
 
@@ -281,14 +337,34 @@ impl VisitMut for AttachSyntax<'_> {
     }
 
     fn visit_path_mut(&mut self, path: &mut syn::Path) {
-        let scope = self.paths.next().expect("matching path clone");
+        let (scope, proof, edge) = self.paths.next().expect("matching path clone");
         if let Some(key) = path_key(path) {
             self.syntax.calls.remove(&key);
-            if let Some(id) = scope {
-                self.syntax.calls.insert(key, id);
+            self.syntax.call_proofs.remove(&key);
+            self.syntax.marker_paths.remove(&key);
+            if let Some(scope) = scope {
+                self.syntax.calls.insert(key, scope);
+            }
+            if let Some(proof) = proof {
+                self.syntax.call_proofs.insert(key, proof);
+            }
+            if let Some(edge) = edge {
+                self.syntax.marker_paths.insert(key, edge);
             }
         }
         visit_mut::visit_path_mut(self, path);
+    }
+
+    fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {
+        let record = self.macros.next().expect("matching macro clone");
+        if let Some(first) = mac.path.segments.first() {
+            let key = core::ptr::from_ref(first);
+            self.syntax.marker_macros.remove(&key);
+            if let Some(record) = record {
+                self.syntax.marker_macros.insert(key, record);
+            }
+        }
+        visit_mut::visit_macro_mut(self, mac);
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
@@ -331,6 +407,11 @@ impl HelperSyntax {
             && self.scopes.is_empty()
             && self.calls.is_empty()
             && self.modules.is_empty()
+            && self.proof_idents.is_empty()
+            && self.call_proofs.is_empty()
+            && self.marker_paths.is_empty()
+            && self.marker_macros.is_empty()
+            && self.proof_canons.is_empty()
     }
 
     pub(crate) fn from_file(table: &HelperTable, file: &mut syn::File) -> Self {
@@ -370,10 +451,12 @@ impl HelperSyntax {
     }
 
     fn attach(&mut self, handles: SyntaxHandles) -> AttachSyntax<'_> {
+        self.proof_canons.extend(handles.proof_canons);
         AttachSyntax {
             syntax: self,
             blocks: handles.blocks.into_iter(),
             paths: handles.paths.into_iter(),
+            macros: handles.macros.into_iter(),
             modules: handles.modules.into_iter(),
         }
     }
@@ -430,6 +513,105 @@ impl HelperSyntax {
 
     pub(crate) fn call_scope(&self, path: &syn::Path) -> Option<ScopeId> {
         self.calls.get(&path_key(path)?).copied()
+    }
+
+    pub(crate) fn call_proof(&self, path: &syn::Path) -> Option<(HelperId, ScopeId)> {
+        self.call_proofs.get(&path_key(path)?).copied()
+    }
+
+    pub(crate) fn put_call_proof(
+        &mut self,
+        ident: &proc_macro2::Ident,
+        helper: HelperId,
+        scope: ScopeId,
+    ) {
+        self.proof_idents
+            .insert(core::ptr::from_ref(ident), (helper, scope));
+    }
+
+    pub(crate) fn proof_canon(&self, helper: HelperId) -> Option<&str> {
+        self.proof_canons.get(&helper).map(String::as_str)
+    }
+
+    pub(crate) fn put_proof_canon(&mut self, helper: HelperId, name: &str) {
+        self.proof_canons.insert(helper, name.to_string());
+    }
+
+    pub(crate) fn take_path_transport(&mut self, path: &syn::Path) -> PathProof {
+        let Some(key) = path_key(path) else {
+            return (None, None);
+        };
+        (
+            self.call_proofs.remove(&key),
+            self.marker_paths.remove(&key),
+        )
+    }
+
+    pub(crate) fn put_path_transport(&mut self, path: &syn::Path, handles: PathProof) {
+        let key = path_key(path).expect("the caller pops the path to one unpunctuated segment");
+        let (proof, edge) = handles;
+        self.call_proofs.remove(&key);
+        if let Some(proof) = proof {
+            self.call_proofs.insert(key, proof);
+        }
+        self.marker_paths.remove(&key);
+        if let Some(edge) = edge {
+            self.marker_paths.insert(key, edge);
+        }
+    }
+
+    /// Rekey the pre-pass marker staging onto the marker file's path storage.
+    pub(crate) fn ingest_marker_edges(
+        &mut self,
+        file: &syn::File,
+        idents: BTreeMap<*const proc_macro2::Ident, (crate::scope::Ns, usize)>,
+        macros: BTreeMap<*const syn::PathSegment, Vec<Option<(crate::scope::Ns, usize)>>>,
+    ) {
+        struct Ingest<'a> {
+            syntax: &'a mut HelperSyntax,
+            idents: BTreeMap<*const proc_macro2::Ident, (crate::scope::Ns, usize)>,
+        }
+
+        impl<'ast> Visit<'ast> for Ingest<'_> {
+            fn visit_path(&mut self, path: &'ast syn::Path) {
+                let Some(first) = path.segments.first() else {
+                    visit::visit_path(self, path);
+                    return;
+                };
+                let Some(key) = path_key(path) else {
+                    visit::visit_path(self, path);
+                    return;
+                };
+                let head = core::ptr::from_ref(&first.ident);
+                if let Some(edge) = self.idents.remove(&head) {
+                    self.syntax.marker_paths.insert(key, edge);
+                }
+                if let Some(proof) = self.syntax.proof_idents.remove(&head) {
+                    self.syntax.call_proofs.insert(key, proof);
+                }
+                visit::visit_path(self, path);
+            }
+        }
+
+        let mut ingest = Ingest {
+            syntax: self,
+            idents,
+        };
+        ingest.visit_file(file);
+        self.marker_macros.extend(macros);
+    }
+
+    /// The transported marker edges, keyed by the final path storage.
+    pub(crate) fn take_marker_transport(
+        &mut self,
+    ) -> (
+        crate::reference::MarkerOrigins<syn::PathSegment>,
+        crate::reference::MarkerMacroOrigins,
+    ) {
+        (
+            core::mem::take(&mut self.marker_paths),
+            core::mem::take(&mut self.marker_macros),
+        )
     }
 
     pub(crate) fn module(&self, item: &syn::ItemMod) -> Option<ModuleRoute> {
@@ -509,6 +691,15 @@ impl HelperSyntax {
         for key in syntax.modules.into_keys() {
             self.modules.remove(&key);
         }
+        for key in syntax.call_proofs.into_keys() {
+            self.call_proofs.remove(&key);
+        }
+        for key in syntax.marker_paths.into_keys() {
+            self.marker_paths.remove(&key);
+        }
+        for key in syntax.marker_macros.into_keys() {
+            self.marker_macros.remove(&key);
+        }
     }
 
     pub(crate) fn extend(&mut self, syntax: Self) {
@@ -516,6 +707,11 @@ impl HelperSyntax {
         self.scopes.extend(syntax.scopes);
         self.calls.extend(syntax.calls);
         self.modules.extend(syntax.modules);
+        self.proof_idents.extend(syntax.proof_idents);
+        self.call_proofs.extend(syntax.call_proofs);
+        self.marker_paths.extend(syntax.marker_paths);
+        self.marker_macros.extend(syntax.marker_macros);
+        self.proof_canons.extend(syntax.proof_canons);
     }
 
     pub(crate) fn refresh_block(&mut self, before: Self, block: &syn::Block) {
@@ -524,16 +720,33 @@ impl HelperSyntax {
         self.extend(retained);
     }
 
-    pub(crate) fn take_path(&mut self, path: &syn::Path) -> Option<ScopeId> {
-        self.calls.remove(&path_key(path)?)
+    pub(crate) fn take_path(&mut self, path: &syn::Path) -> PathTransport {
+        let Some(key) = path_key(path) else {
+            return (None, None, None);
+        };
+        (
+            self.calls.remove(&key),
+            self.call_proofs.remove(&key),
+            self.marker_paths.remove(&key),
+        )
     }
 
-    pub(crate) fn put_path(&mut self, path: &syn::Path, scope: Option<ScopeId>) {
-        if let Some(key) = path_key(path) {
-            self.calls.remove(&key);
-            if let Some(scope) = scope {
-                self.calls.insert(key, scope);
-            }
+    pub(crate) fn put_path(&mut self, path: &syn::Path, handles: PathTransport) {
+        let Some(key) = path_key(path) else {
+            return;
+        };
+        let (scope, proof, edge) = handles;
+        self.calls.remove(&key);
+        if let Some(scope) = scope {
+            self.calls.insert(key, scope);
+        }
+        self.call_proofs.remove(&key);
+        if let Some(proof) = proof {
+            self.call_proofs.insert(key, proof);
+        }
+        self.marker_paths.remove(&key);
+        if let Some(edge) = edge {
+            self.marker_paths.insert(key, edge);
         }
     }
 
@@ -569,12 +782,40 @@ impl<'ast> Visit<'ast> for SnapshotSyntax<'_> {
     }
 
     fn visit_path(&mut self, path: &'ast syn::Path) {
-        if let Some(scope) = self.source.call_scope(path)
-            && let Some(key) = path_key(path)
-        {
-            self.syntax.calls.insert(key, scope);
+        let Some(key) = path_key(path) else {
+            visit::visit_path(self, path);
+            return;
+        };
+        if let Some(scope) = self.source.calls.get(&key) {
+            self.syntax.calls.insert(key, *scope);
+        }
+        if let Some(proof) = self.source.call_proofs.get(&key) {
+            self.syntax.call_proofs.insert(key, *proof);
+            let canon = self
+                .source
+                .proof_canons
+                .get(&proof.0)
+                .expect("every call_proofs entry has a paired proof_canons entry");
+            self.syntax
+                .proof_canons
+                .entry(proof.0)
+                .or_insert_with(|| canon.clone());
+        }
+        if let Some(edge) = self.source.marker_paths.get(&key) {
+            self.syntax.marker_paths.insert(key, *edge);
         }
         visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if let Some(first) = mac.path.segments.first()
+            && let Some(record) = self.source.marker_macros.get(&core::ptr::from_ref(first))
+        {
+            self.syntax
+                .marker_macros
+                .insert(core::ptr::from_ref(first), record.clone());
+        }
+        visit::visit_macro(self, mac);
     }
 
     fn visit_item_mod(&mut self, item: &'ast syn::ItemMod) {
@@ -1510,7 +1751,7 @@ impl Proof<'_, '_> {
                 ) {
                     return folded(&self.renamers[environment], expr, expected);
                 }
-                let bitwise = crate::schedule::BitwiseOp::from_bin_op(&binary.op).is_some();
+                let bitwise = crate::schedule::BitwiseOp::from_bin_op(binary.op).is_some();
                 let logical = matches!(binary.op, syn::BinOp::And(_) | syn::BinOp::Or(_));
                 let shift = matches!(binary.op, syn::BinOp::Shl(_) | syn::BinOp::Shr(_));
                 let left_expected = if logical {
@@ -1527,7 +1768,7 @@ impl Proof<'_, '_> {
                     left.prim.or(left_expected)
                 };
                 let right = self.expr(&binary.right, environment, right_expected, false)?;
-                let prim = match total_binary(&binary.op, &left.label(), &right.label())? {
+                let prim = match total_binary(binary.op, &left.label(), &right.label())? {
                     TotalBinary::Flat(_, prim) | TotalBinary::Ordered { prim, .. } => prim,
                 };
                 if left.bits.is_some()

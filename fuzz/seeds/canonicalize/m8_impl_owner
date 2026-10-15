@@ -1,0 +1,1 @@
+struct S;struct T;impl S{fn one()->u32{1}}impl T{fn two()->u32{2}}fn main(){println!("{:?}",(S::one(),T::two()));}

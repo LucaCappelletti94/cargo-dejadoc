@@ -1,6 +1,7 @@
 //! Framed token identity and size metrics.
 
 use alloc::string::String;
+use alloc::vec::Vec;
 use core::fmt::Write;
 use proc_macro2::{Spacing, TokenStream, TokenTree};
 use quote::ToTokens;
@@ -100,18 +101,147 @@ impl CanonicalNode for syn::Arm {
 }
 
 pub(crate) fn canonical_file_with_options(
-    mut file: syn::File,
+    file: syn::File,
     compiles: bool,
     options: crate::alpha::Options<'_>,
 ) -> CanonicalForm {
-    let helpers = (compiles && options.helper_table.is_none())
+    canonical_file(file, compiles, options, true).0
+}
+
+/// The original proof backing of one item's comparison projection.
+pub(crate) struct PayloadProof<'a> {
+    pub(crate) table: Option<&'a crate::helpers::HelperTable>,
+    pub(crate) frame: &'a crate::scope::Frame,
+    pub(crate) syntax: crate::helpers::HelperSyntax,
+    pub(crate) edges: MarkerEdges,
+}
+
+/// The per-occurrence group references of one item's marker file, each
+/// substitution keeping the origin it replaced.
+pub(crate) struct MarkerEdges {
+    idents: crate::reference::MarkerOrigins<proc_macro2::Ident>,
+    macros: crate::reference::MarkerMacroOrigins,
+}
+
+impl MarkerEdges {
+    pub(crate) fn new() -> Self {
+        Self {
+            idents: alloc::collections::BTreeMap::new(),
+            macros: alloc::collections::BTreeMap::new(),
+        }
+    }
+
+    pub(crate) fn record_ident(
+        &mut self,
+        ident: &proc_macro2::Ident,
+        ns: crate::scope::Ns,
+        slot: usize,
+    ) {
+        self.idents.insert(core::ptr::from_ref(ident), (ns, slot));
+    }
+
+    pub(crate) fn record_macro(
+        &mut self,
+        mac: &syn::Macro,
+        occurrences: Vec<Option<(crate::scope::Ns, usize)>>,
+    ) {
+        let Some(first) = mac.path.segments.first() else {
+            return;
+        };
+        self.macros.insert(core::ptr::from_ref(first), occurrences);
+    }
+
+    pub(crate) fn into_parts(
+        self,
+    ) -> (
+        crate::reference::MarkerOrigins<proc_macro2::Ident>,
+        crate::reference::MarkerMacroOrigins,
+    ) {
+        (self.idents, self.macros)
+    }
+}
+
+struct Walker<'a> {
+    facts: &'a ReferenceFacts,
+    out: &'a mut Vec<(crate::scope::Ns, usize)>,
+}
+
+impl<'ast> Visit<'ast> for Walker<'_> {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        if let Some(last) = path.segments.last()
+            && let Some((ns, slot)) = self.facts.marker_paths.get(&core::ptr::from_ref(last))
+        {
+            self.out.push((*ns, *slot));
+        }
+        visit::visit_path(self, path);
+    }
+
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        if let Some(first) = mac.path.segments.first()
+            && let Some(records) = self.facts.marker_macros.get(&core::ptr::from_ref(first))
+        {
+            for record in records.iter().flatten() {
+                self.out.push(*record);
+            }
+        }
+        visit::visit_macro(self, mac);
+    }
+}
+
+pub(crate) fn item_payload(
+    file: syn::File,
+    proof: PayloadProof<'_>,
+) -> (CanonicalForm, Vec<(crate::scope::Ns, usize)>) {
+    let mut syntax = proof.syntax;
+    let (idents, macros) = proof.edges.into_parts();
+    syntax.ingest_marker_edges(&file, idents, macros);
+    let (form, normalized, facts) = canonical_file(
+        file,
+        true,
+        crate::alpha::Options {
+            seed: Some(proof.frame),
+            generics: None,
+            self_canon: None,
+            prim_fallback: true,
+            observed: false,
+            helper_table: proof.table,
+            helper_module: &[],
+            helper_blocked: false,
+            helper_syntax: Some(syntax),
+        },
+        false,
+    );
+    let mut edges = Vec::new();
+    let mut walker = Walker {
+        facts: &facts,
+        out: &mut edges,
+    };
+    visit::visit_file(&mut walker, &normalized);
+    (form, edges)
+}
+
+fn canonical_file(
+    mut file: syn::File,
+    compiles: bool,
+    mut options: crate::alpha::Options<'_>,
+    items: bool,
+) -> (CanonicalForm, syn::File, ReferenceFacts) {
+    let helpers = (compiles && items && options.helper_table.is_none())
         .then(|| crate::helpers::module_table(&crate::helpers::Scopes::from_file(&file)));
     let helper_table = options.helper_table.or(helpers.as_ref());
-    let mut helper_syntax = options.helper_syntax.unwrap_or_else(|| {
+    let mut helper_syntax = options.helper_syntax.take().unwrap_or_else(|| {
         helper_table.map_or_else(crate::helpers::HelperSyntax::default, |table| {
             crate::helpers::HelperSyntax::from_file(table, &mut file)
         })
     });
+    if compiles && items {
+        crate::items::normalize(
+            &mut file,
+            &options,
+            &mut helper_syntax,
+            helper_table.expect("items normalization has a helper table"),
+        );
+    }
     crate::drift::normalize_file(&mut file, compiles, &mut helper_syntax);
     let options = crate::alpha::Options {
         helper_table,
@@ -119,7 +249,7 @@ pub(crate) fn canonical_file_with_options(
         ..options
     };
     let facts = crate::alpha::normalize_file(&mut file, compiles, options);
-    from_node(&file, &facts)
+    (from_node(&file, &facts), file, facts)
 }
 
 pub(crate) fn from_node(node: &impl CanonicalNode, facts: &ReferenceFacts) -> CanonicalForm {

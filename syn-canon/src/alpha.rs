@@ -17,11 +17,11 @@ use syn::parse::discouraged::Speculative as _;
 use syn::visit::Visit;
 use syn::visit_mut::VisitMut;
 
-use crate::reference::{ReferenceFacts, ReferenceKind, Resolution};
+use crate::reference::{OwnerRoute, ReferenceFacts, ReferenceKind, Resolution, ResolvedOrigin};
 use crate::schedule;
 use crate::scope::{
     Binding, BindingId, Domain, FirstSeg, Frame, FreeKey, Inherited, Ns, Origin, PrimTy, Target,
-    TargetSeg,
+    TargetSeg, unraw,
 };
 
 /// The normalization options of a file pass.
@@ -53,6 +53,8 @@ struct Resolved {
     id: BindingId,
     origin: Origin,
     prim: Option<PrimTy>,
+    /// The declared position of a function parameter, zero otherwise.
+    port: usize,
     target: Option<usize>,
     helper: Option<crate::scope::HelperId>,
 }
@@ -210,12 +212,15 @@ pub(crate) struct Renamer<'env> {
     self_ty: Option<syn::Type>,
     /// The resolutions of the impl self type, restored onto its clones.
     self_ty_resolutions: Vec<TypeResolution>,
+    /// The terminal owner the enclosing impl's `Self` names, analysis only.
+    self_owner: Option<ResolvedOrigin>,
     /// A type position, where a path reads the type namespace only.
     in_type: bool,
     /// A bare `<T>` was just visited, so the next path names associated items of `T`.
     after_bare_qself: bool,
     /// Raw-involved identifiers in macro input keep their token spelling.
     opaque_tokens: bool,
+    macro_supported: bool,
     /// A passing doctest: the scheduling analysis runs on its function blocks.
     compiles: bool,
     /// Unresolved type names may still spell a primitive, when no glob
@@ -241,6 +246,9 @@ pub(crate) struct Renamer<'env> {
     helper_canons: BTreeMap<crate::scope::HelperId, FreeKey>,
     pub(crate) helper_syntax: crate::helpers::HelperSyntax,
     pub(crate) helper_blocked: bool,
+    /// Original-syntax resolution without rewriting.
+    analysis: bool,
+    receiver: bool,
 }
 
 impl<'env> Renamer<'env> {
@@ -260,9 +268,11 @@ impl<'env> Renamer<'env> {
             local_canons: BTreeMap::new(),
             self_ty: None,
             self_ty_resolutions: Vec::new(),
+            self_owner: None,
             in_type: false,
             after_bare_qself: false,
             opaque_tokens: false,
+            macro_supported: true,
             compiles: false,
             prim_fallback: false,
             observed: false,
@@ -279,6 +289,8 @@ impl<'env> Renamer<'env> {
             helper_canons: BTreeMap::new(),
             helper_syntax: crate::helpers::HelperSyntax::default(),
             helper_blocked: false,
+            analysis: false,
+            receiver: false,
         }
     }
 
@@ -398,6 +410,11 @@ impl<'env> Renamer<'env> {
         {
             return None;
         }
+        if let Some((helper, scope)) = self.helper_syntax.call_proof(path)
+            && self.helper_table.scope_known(scope)
+        {
+            return Some(helper);
+        }
         let scope = self.helper_path_scope(path)?;
         if !self.helper_table.scope_known(scope) {
             return None;
@@ -424,7 +441,10 @@ impl<'env> Renamer<'env> {
     fn helper_canon(&self, helper: crate::scope::HelperId) -> Option<&str> {
         match self.helper_canons.get(&helper) {
             Some(FreeKey::Resolved(canon)) => Some(canon),
-            _ => self.helper_table.inherited_canon(helper),
+            _ => self
+                .helper_syntax
+                .proof_canon(helper)
+                .or_else(|| self.helper_table.inherited_canon(helper)),
         }
     }
 
@@ -621,7 +641,11 @@ impl<'env> Renamer<'env> {
     fn bind_ident(&mut self, ns: Ns, origin: Origin, ident: &mut Ident) {
         let name = ident.to_string();
         let binding = self.bind(ns, &name, origin);
-        rename(ident, &binding.canon);
+        if self.analysis {
+            self.record_ident(ident, ns, binding.id, true);
+        } else {
+            rename(ident, &binding.canon);
+        }
     }
 
     /// Rename a prebound item declaration.
@@ -632,8 +656,13 @@ impl<'env> Renamer<'env> {
             .last()
             .and_then(|frame| frame.lookup(ns, &name))
             .expect("prebound item binder");
-        rename(ident, &binding.canon);
-        binding.id
+        let id = binding.id;
+        if self.analysis {
+            self.record_ident(ident, ns, id, true);
+        } else {
+            rename(ident, &binding.canon);
+        }
+        id
     }
 
     /// The canonical name a resolved reference renders.
@@ -688,13 +717,15 @@ impl<'env> Renamer<'env> {
             id: binding.id,
             origin: binding.origin,
             prim: binding.prim,
+            port: binding.port,
             target: binding.target,
             helper: binding.helper,
         }
     }
 
     /// Nearest-binding lookup across the local and inherited frames,
-    /// namespace priority first.
+    /// namespace priority first. A raw name that resolves keeps its
+    /// binding, an unresolved raw token stays opaque by default.
     fn lookup(&self, ns: &[Ns], name: &str) -> Option<Resolved> {
         for ns in ns {
             for frame in self.frames.iter().rev() {
@@ -726,43 +757,65 @@ impl<'env> Renamer<'env> {
     /// The provenance and proven scalar type of a retained reference.
     fn resolution(&self, ns: &[Ns], name: &str) -> Resolution {
         let Some(resolved) = self.lookup(ns, name) else {
-            return Resolution::default();
+            return Resolution {
+                prim: (self.analysis && ns == [Ns::Type])
+                    .then(|| self.name_prim(name))
+                    .flatten(),
+                ..Resolution::default()
+            };
         };
-        let domain = if let Some(index) = resolved.target {
+        let origin = if let Some(index) = resolved.target {
             let target = self.target_of(resolved.domain, index);
             if target.rooted {
                 return Resolution::default();
             }
-            let Some((domain, _, _)) = target.segments.first().and_then(|segment| segment.origin)
+            let Some((domain, id, ns)) = target.segments.first().and_then(|segment| segment.origin)
             else {
                 return Resolution::default();
             };
             if domain == Domain::Inherited {
                 return Resolution::default();
             }
-            domain
+            ResolvedOrigin { domain, ns, id }
         } else {
-            resolved.domain
+            ResolvedOrigin {
+                domain: resolved.domain,
+                ns: resolved.ns,
+                id: resolved.id,
+            }
         };
-        match domain {
-            Domain::Local => Resolution {
-                kind: ReferenceKind::Owned,
-                prim: resolved.prim,
+        Resolution {
+            kind: match origin.domain {
+                Domain::Local => ReferenceKind::Owned,
+                Domain::Inherited => ReferenceKind::Inherited,
             },
-            Domain::Inherited => Resolution {
-                kind: ReferenceKind::Inherited,
-                prim: resolved.prim,
+            prim: resolved.prim,
+            origin: Some(origin),
+        }
+    }
+
+    fn record_ident(&mut self, ident: &Ident, ns: Ns, id: BindingId, declaration: bool) {
+        let key = core::ptr::from_ref(ident);
+        self.facts.idents.insert(
+            key,
+            ResolvedOrigin {
+                domain: Domain::Local,
+                ns,
+                id,
             },
+        );
+        if declaration {
+            self.facts.declarations.insert(key);
         }
     }
 
     /// Record one path's resolution, into the macro collector when nested.
-    fn record_path(&mut self, path: &syn::Path, ns: &[Ns]) {
+    fn record_path(&mut self, path: &syn::Path, ns: &[Ns], root_ns: &[Ns]) {
         let resolution = path
             .segments
             .first()
             .filter(|_| path.leading_colon.is_none())
-            .map(|head| self.resolution(ns, &head.ident.to_string()))
+            .map(|head| self.head_resolution(ns, root_ns, path, head))
             .unwrap_or_default();
         if let Some(origins) = &mut self.macro_origins {
             origins.push(resolution);
@@ -770,7 +823,57 @@ impl<'env> Renamer<'env> {
             self.facts
                 .paths
                 .insert(core::ptr::from_ref(path), resolution);
+            if self.analysis {
+                if let Some(first) = path.segments.first() {
+                    let key = core::ptr::from_ref(first);
+                    self.facts.original_paths.insert(key, resolution);
+                    if resolution.origin.is_none()
+                        && self.prim_fallback
+                        && (resolution.prim.is_some()
+                            || self.portable_first(root_ns, first)
+                            || (first.ident == "self" && self.receiver)
+                            || self.in_type)
+                    {
+                        self.facts.portable_paths.insert(key);
+                    }
+                }
+                self.record_path_origins(ns, root_ns, path);
+            }
         }
+    }
+
+    /// The path's head resolution: the enclosing impl's proven `Self`
+    /// owner, a `self::` prefix reading its tail name in the current
+    /// module, or the head name in the root namespace.
+    fn head_resolution(
+        &self,
+        ns: &[Ns],
+        root_ns: &[Ns],
+        path: &syn::Path,
+        head: &syn::PathSegment,
+    ) -> Resolution {
+        if head.ident == "Self"
+            && let Some(owner) = self.self_owner
+        {
+            return Resolution {
+                kind: match owner.domain {
+                    Domain::Local => ReferenceKind::Owned,
+                    Domain::Inherited => ReferenceKind::Inherited,
+                },
+                prim: None,
+                origin: Some(owner),
+            };
+        }
+        if head.ident == "self" && path.segments.len() > 1 {
+            let tail = &path.segments[1];
+            let head_ns = if path.segments.len() == 2 {
+                ns
+            } else {
+                root_ns
+            };
+            return self.resolution(head_ns, &tail.ident.to_string());
+        }
+        self.resolution(root_ns, &head.ident.to_string())
     }
 
     /// Record one token's resolution, into the macro collector only.
@@ -782,8 +885,27 @@ impl<'env> Renamer<'env> {
             .push(resolution);
     }
 
+    /// Record the original ordered port of a parameter binding.
+    fn record_parameter(&mut self, domain: Domain, id: BindingId, port: usize) {
+        self.facts
+            .original_parameters
+            .insert((domain == Domain::Inherited, id), port);
+    }
+
     /// Rename a bare reference through its nearest binder, if any.
     fn resolve(&mut self, ns: &[Ns], ident: &mut Ident) {
+        if self.analysis {
+            let name = ident.to_string();
+            if let Some(resolved) = self.lookup(ns, &name)
+                && resolved.origin == Origin::Parameter
+            {
+                self.record_parameter(resolved.domain, resolved.id, resolved.port);
+            }
+            if let Some(origin) = self.resolution(ns, &name).origin {
+                self.facts.idents.insert(core::ptr::from_ref(ident), origin);
+            }
+            return;
+        }
         if let Some(resolved) = self.lookup(ns, &ident.to_string())
             && resolved.target.is_none()
         {
@@ -792,7 +914,7 @@ impl<'env> Renamer<'env> {
     }
 
     fn resolve_opaque(&mut self, ident: &mut Ident) -> bool {
-        if !self.opaque_tokens || self.seed.is_none() {
+        if self.analysis || !self.opaque_tokens || self.seed.is_none() {
             return false;
         }
         let name = ident.to_string();
@@ -869,6 +991,7 @@ impl<'env> Renamer<'env> {
             .push(Resolution {
                 kind: ReferenceKind::Inherited,
                 prim: None,
+                origin: None,
             });
         true
     }
@@ -891,6 +1014,7 @@ impl<'env> Renamer<'env> {
 
     fn constants_allowed(&self) -> bool {
         self.compiles
+            && !self.analysis
             && !self.observed
             && !self.constants_observed
             && self.macro_origins.is_none()
@@ -1099,7 +1223,7 @@ impl<'env> Renamer<'env> {
     /// Drop a leading `::` when no frame in the type namespace names the
     /// path's first segment, `::std` and `std` then naming the same crate.
     fn unroot(&self, leading_colon: &mut Option<syn::Token![::]>, first: Option<&Ident>) {
-        if !leading_colon.is_some() {
+        if self.analysis || leading_colon.is_none() {
             return;
         }
         let Some(first) = first else {
@@ -1168,8 +1292,8 @@ impl<'env> Renamer<'env> {
         } else {
             ns
         };
-        self.record_path(path, root_ns);
-        if path.leading_colon.is_some() {
+        self.record_path(path, ns, root_ns);
+        if self.analysis || path.leading_colon.is_some() {
             return;
         }
         let Some(resolved) = path
@@ -1285,6 +1409,306 @@ impl<'env> Renamer<'env> {
         }
     }
 
+    /// Attach the original binding each path segment names to that
+    /// segment's identifier, the syntax untouched.
+    fn record_path_origins(&mut self, ns: &[Ns], root_ns: &[Ns], path: &syn::Path) {
+        for (position, origin) in self.path_segment_origins(ns, root_ns, path) {
+            self.record_origin(&path.segments[position], origin);
+        }
+    }
+
+    /// The original binding each path segment names, in segment order,
+    /// through the module frames and the import target of the first
+    /// name, the syntax untouched.
+    fn path_segment_origins(
+        &self,
+        ns: &[Ns],
+        root_ns: &[Ns],
+        path: &syn::Path,
+    ) -> Vec<(usize, ResolvedOrigin)> {
+        if path.leading_colon.is_some() || path.segments.is_empty() {
+            return Vec::new();
+        }
+        if path.segments.len() > 1 && path.segments[0].ident == "self" {
+            // `self` names the current module; its tail reads as a bare
+            // path in that module.
+            let head_ns = if path.segments.len() == 2 {
+                ns
+            } else {
+                root_ns
+            };
+            return self
+                .path_segment_walk(ns, head_ns, &path.segments[1], path.segments.iter().skip(2))
+                .into_iter()
+                .map(|(position, origin)| (position + 1, origin))
+                .collect();
+        }
+        self.path_segment_walk(ns, root_ns, &path.segments[0], path.segments.iter().skip(1))
+    }
+
+    /// The segment walk of `path_segment_origins` over a bare path.
+    fn path_segment_walk<'a>(
+        &self,
+        ns: &[Ns],
+        root_ns: &[Ns],
+        first: &'a syn::PathSegment,
+        rest: impl ExactSizeIterator<Item = &'a syn::PathSegment>,
+    ) -> Vec<(usize, ResolvedOrigin)> {
+        let mut origins: Vec<(usize, ResolvedOrigin)> = Vec::new();
+        let rest_count = rest.len();
+        let name = first.ident.to_string();
+        let Some(resolved) = self.lookup(root_ns, &name) else {
+            return origins;
+        };
+        let mut current: Option<(Domain, BindingId)> = None;
+        let mut stepped = false;
+        if let Some(index) = resolved.target {
+            let target = self.target_of(resolved.domain, index);
+            if !target.rooted {
+                for (position, segment) in target.segments.iter().enumerate() {
+                    let last = position + 1 == target.segments.len() && rest_count == 0;
+                    match current {
+                        None => {
+                            let Some((domain, id, _)) = segment.origin else {
+                                return origins;
+                            };
+                            if self.module_frame(domain, id).is_none() {
+                                return origins;
+                            }
+                            current = Some((domain, id));
+                        }
+                        Some((domain, id)) => {
+                            let frame = self
+                                .module_frame(domain, id)
+                                .expect("a stepped module frame persists through the walk");
+                            let Some((member, member_ns)) = module_member(
+                                frame,
+                                if last { ns } else { &[Ns::Type] },
+                                &segment.name,
+                                self.opaque_tokens,
+                            ) else {
+                                return origins;
+                            };
+                            origins.push((
+                                0,
+                                ResolvedOrigin {
+                                    domain,
+                                    ns: member_ns,
+                                    id: member,
+                                },
+                            ));
+                            stepped = true;
+                            if last {
+                                return origins;
+                            }
+                            if self.module_frame(domain, member).is_none() {
+                                return origins;
+                            }
+                            current = Some((domain, member));
+                        }
+                    }
+                }
+                if !stepped && let Some((domain, id)) = current {
+                    origins.push((
+                        0,
+                        ResolvedOrigin {
+                            domain,
+                            ns: Ns::Type,
+                            id,
+                        },
+                    ));
+                }
+            }
+        } else {
+            origins.push((
+                0,
+                ResolvedOrigin {
+                    domain: resolved.domain,
+                    ns: resolved.ns,
+                    id: resolved.id,
+                },
+            ));
+        }
+        if rest_count == 0 {
+            return origins;
+        }
+        let (domain, id) = if let Some(step) = current {
+            step
+        } else {
+            if self.module_frame(resolved.domain, resolved.id).is_none() {
+                return origins;
+            }
+            (resolved.domain, resolved.id)
+        };
+        self.path_tail_origins(ns, domain, id, rest, &mut origins);
+        origins
+    }
+
+    fn path_tail_origins<'a>(
+        &self,
+        ns: &[Ns],
+        domain: Domain,
+        mut id: BindingId,
+        rest: impl ExactSizeIterator<Item = &'a syn::PathSegment>,
+        origins: &mut Vec<(usize, ResolvedOrigin)>,
+    ) {
+        let rest_count = rest.len();
+        for (position, segment) in rest.enumerate() {
+            let frame = self
+                .module_frame(domain, id)
+                .expect("a stepped tail module frame persists through the walk");
+            let Some((member, member_ns)) = module_member(
+                frame,
+                if position + 1 == rest_count {
+                    ns
+                } else {
+                    &[Ns::Type]
+                },
+                &segment.ident.to_string(),
+                self.opaque_tokens,
+            ) else {
+                break;
+            };
+            origins.push((
+                position + 1,
+                ResolvedOrigin {
+                    domain,
+                    ns: member_ns,
+                    id: member,
+                },
+            ));
+            if self.module_frame(domain, member).is_none() {
+                break;
+            }
+            id = member;
+        }
+    }
+
+    /// Record one segment's original binding at its identifier.
+    fn record_origin(&mut self, segment: &syn::PathSegment, origin: ResolvedOrigin) {
+        self.facts
+            .idents
+            .insert(core::ptr::from_ref(&segment.ident), origin);
+    }
+
+    /// The one proof-backed original route of the self type's terminal
+    /// owner, through the original module frames. The terminal is a type
+    /// rather than a module, every prefix segment is a proven module step,
+    /// and the first segment's alias, when one, expands to its target. An
+    /// in-unit `crate` prefix is dropped for a whole-file pass.
+    fn owner_route(&self, path: &syn::Path) -> Option<(ResolvedOrigin, OwnerRoute)> {
+        if path.leading_colon.is_some() || path.segments.is_empty() {
+            return None;
+        }
+        let root_ns: &[Ns] = &[Ns::Type];
+        let mut rest = path.segments.iter();
+        let first = rest.next()?;
+        let head_name = first.ident.to_string();
+        // An in-unit `crate` prefix reaches the original root, provable only
+        // for a whole-file pass; `self` and `super` need the original module
+        // path, which the pass does not track.
+        let (first, rest) = if head_name == "crate" {
+            if self.context || self.seed.is_some() {
+                return None;
+            }
+            (rest.next()?, rest)
+        } else if head_name == "self" || head_name == "super" {
+            return None;
+        } else {
+            (first, rest)
+        };
+        let first_name = first.ident.to_string();
+        let resolved = if head_name == "crate" {
+            let binding = self.frames.first()?.lookup(Ns::Type, &first_name)?;
+            Self::resolved(Domain::Local, Ns::Type, binding)
+        } else {
+            self.lookup(root_ns, &first_name)?
+        };
+        let mut segments: Vec<String> = Vec::new();
+        let root;
+        if let Some(index) = resolved.target {
+            let target = self.target_of(resolved.domain, index);
+            if target.rooted || target.segments.is_empty() {
+                return None;
+            }
+            let (domain, id, _) = target.segments.first()?.origin?;
+            root = (domain, id);
+            segments.extend(target.segments.iter().map(|seg| seg.name.clone()));
+        } else {
+            root = (resolved.domain, resolved.id);
+            segments.push(first_name);
+        }
+        segments.extend(rest.map(|segment| segment.ident.to_string()));
+        let (domain, mut id) = root;
+        let mut origins = vec![ResolvedOrigin {
+            domain,
+            ns: Ns::Type,
+            id,
+        }];
+        for (position, name) in segments.iter().enumerate().skip(1) {
+            let frame = self.module_frame(domain, id)?;
+            let (member, member_ns) = module_member(frame, &[Ns::Type], name, false)?;
+            let terminal = position + 1 == segments.len();
+            let is_module = self.module_frame(domain, member).is_some();
+            if terminal == is_module {
+                return None;
+            }
+            origins.push(ResolvedOrigin {
+                domain,
+                ns: member_ns,
+                id: member,
+            });
+            id = member;
+        }
+        let terminal = *origins.last()?;
+        if self.module_frame(terminal.domain, terminal.id).is_some() {
+            return None;
+        }
+        let first = Resolution {
+            kind: if domain == Domain::Inherited {
+                ReferenceKind::Inherited
+            } else {
+                ReferenceKind::Owned
+            },
+            prim: None,
+            origin: origins.first().copied(),
+        };
+        Some((
+            terminal,
+            OwnerRoute {
+                segments,
+                origins,
+                first,
+            },
+        ))
+    }
+
+    /// Whether the path's first name, an import target's first name
+    /// through an alias, or its rooted spelling names a crate root the
+    /// original frames do not shadow.
+    fn portable_first(&self, ns: &[Ns], first: &syn::PathSegment) -> bool {
+        let name = first.ident.to_string();
+        match self.lookup(ns, &name) {
+            None => self.crate_root(&name),
+            Some(resolved) => match resolved.target {
+                Some(index) => {
+                    let target = self.target_of(resolved.domain, index);
+                    target.rooted
+                        || target.segments.first().is_some_and(|segment| {
+                            segment.origin.is_none() && self.crate_root(&segment.name)
+                        })
+                }
+                None => false,
+            },
+        }
+    }
+
+    /// The crate roots the portable proof admits, raw or plain, while
+    /// no original type-namespace name shadows them.
+    fn crate_root(&self, name: &str) -> bool {
+        matches!(unraw(name), "core" | "alloc" | "std") && self.lookup(&[Ns::Type], name).is_none()
+    }
+
     /// Rewrite macro tokens the parser cannot read, an identifier before
     /// `!` resolving through the macro namespace too.
     fn rename_tokens(&mut self, tokens: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
@@ -1323,6 +1747,7 @@ impl<'env> Renamer<'env> {
         format_at: Option<usize>,
     ) -> proc_macro2::TokenStream {
         let Ok(mut args) = syn::parse2::<MacroArgs>(tokens.clone()) else {
+            self.macro_supported = false;
             return self.rename_tokens(tokens);
         };
         for (index, expr) in args.iter_mut().enumerate() {
@@ -1431,7 +1856,7 @@ impl<'env> Renamer<'env> {
             .segments
             .push(syn::PathSegment::from(ident.clone()));
         let helper = self.helper_table.resolve(&self.helper_module, &helper_path);
-        let target = self.context.then(|| {
+        let target = (self.context || self.analysis).then(|| {
             let mut path = prefix.to_vec();
             path.push(ident.to_string());
             let (rooted, segments) =
@@ -1485,6 +1910,12 @@ impl<'env> Renamer<'env> {
         sig: &mut syn::Signature,
         mut body: Option<&mut syn::Block>,
     ) {
+        let receiver = core::mem::replace(
+            &mut self.receiver,
+            sig.inputs
+                .iter()
+                .any(|input| matches!(input, syn::FnArg::Receiver(_))),
+        );
         let observed = self.observed;
         self.observed |= crate::context::live_attr(attrs);
         let scoped = if self.compiles
@@ -1515,7 +1946,11 @@ impl<'env> Renamer<'env> {
                 let mut names = Vec::new();
                 pattern_names(&mut pat_type.pat, &mut names);
                 for name in &names {
-                    self.bind_full(Ns::Value, name, Origin::Parameter, prim, port, None);
+                    let binding =
+                        self.bind_full(Ns::Value, name, Origin::Parameter, prim, port, None);
+                    if self.analysis {
+                        self.record_parameter(Domain::Local, binding.id, port);
+                    }
                 }
             }
         }
@@ -1530,6 +1965,7 @@ impl<'env> Renamer<'env> {
             self.scopes.pop().expect("a fn scope");
         }
         self.observed = observed;
+        self.receiver = receiver;
     }
 
     /// Rename a type item, then open its generics frame and visit its
@@ -1575,9 +2011,13 @@ impl<'env> Renamer<'env> {
         }
     }
 
-    /// The reference provenance the pass recorded, consumed after the visit.
-    pub(crate) fn into_reference_facts(self) -> ReferenceFacts {
-        self.facts
+    /// The reference provenance and transported marker edges, consumed after the visit.
+    pub(crate) fn into_reference_facts(mut self) -> ReferenceFacts {
+        let mut facts = self.facts;
+        let (paths, macros) = self.helper_syntax.take_marker_transport();
+        facts.marker_paths.extend(paths);
+        facts.marker_macros.extend(macros);
+        facts
     }
 }
 
@@ -1712,6 +2152,13 @@ pub(crate) fn normalize_file(
     renamer.into_reference_facts()
 }
 
+pub(crate) fn analyze_file(file: &mut syn::File, options: Options<'_>) -> ReferenceFacts {
+    let mut renamer = Renamer::seeded(options, false);
+    renamer.analysis = true;
+    renamer.visit_file_mut(file);
+    renamer.into_reference_facts()
+}
+
 /// True for an ident pattern that names a unit struct, variant, or
 /// const rather than a binding, by the uppercase naming convention.
 pub(crate) fn is_unit_path(id: &syn::PatIdent) -> bool {
@@ -1722,9 +2169,7 @@ pub(crate) fn is_unit_path(id: &syn::PatIdent) -> bool {
         && Ns::Value.key(&name).starts_with(|c: char| c.is_uppercase())
 }
 
-/// Call `f` on every identifier pattern of `pat`, in traversal order. A
-/// shorthand `S { x }` binds the member name and drops the member when
-/// rendered, so its field takes the explicit `x: x` form on the way.
+/// Call `f` on every identifier pattern of `pat`, in traversal order.
 fn walk_pat_idents(pat: &mut syn::Pat, f: &mut impl FnMut(&mut syn::PatIdent)) {
     match pat {
         syn::Pat::Ident(id) => {
@@ -1742,7 +2187,6 @@ fn walk_pat_idents(pat: &mut syn::Pat, f: &mut impl FnMut(&mut syn::PatIdent)) {
         }
         syn::Pat::Struct(r#struct) => {
             for field in &mut r#struct.fields {
-                field.colon_token.get_or_insert_with(Default::default);
                 walk_pat_idents(&mut field.pat, f);
             }
         }
@@ -1760,13 +2204,33 @@ fn walk_pat_idents(pat: &mut syn::Pat, f: &mut impl FnMut(&mut syn::PatIdent)) {
 
 /// Rewrite the binder identifiers of `pat` to their canonical names.
 fn rewrite_pat_bindings(renamer: &mut Renamer<'_>, pat: &mut syn::Pat) {
+    if !renamer.analysis {
+        struct Explicit;
+        impl VisitMut for Explicit {
+            fn visit_field_pat_mut(&mut self, field: &mut syn::FieldPat) {
+                field.colon_token.get_or_insert_with(Default::default);
+                syn::visit_mut::visit_field_pat_mut(self, field);
+            }
+        }
+        Explicit.visit_pat_mut(pat);
+    }
     walk_pat_idents(pat, &mut |id| {
         let ns: &[Ns] = if is_unit_path(id) {
             &[Ns::Value, Ns::Type]
         } else {
             &[Ns::Value]
         };
-        renamer.resolve(ns, &mut id.ident);
+        if renamer.analysis {
+            if let Some(origin) = renamer.resolution(ns, &id.ident.to_string()).origin {
+                let key = core::ptr::from_ref(&id.ident);
+                renamer.facts.idents.insert(key, origin);
+                if !is_unit_path(id) {
+                    renamer.facts.declarations.insert(key);
+                }
+            }
+        } else {
+            renamer.resolve(ns, &mut id.ident);
+        }
     });
 }
 
@@ -1963,16 +2427,13 @@ fn prebind(renamer: &mut Renamer<'_>, items: &[&syn::Item]) {
 
 /// The member of a module frame that `name` names, in namespace priority
 /// order.
-fn module_member(
-    frame: &Frame,
-    ns: &[Ns],
-    name: &str,
-    opaque_tokens: bool,
-) -> Option<(BindingId, Ns)> {
+fn module_member(frame: &Frame, ns: &[Ns], name: &str, opaque: bool) -> Option<(BindingId, Ns)> {
     for ns in ns {
         if let Some(bind) = frame.lookup(*ns, name) {
-            return (!opaque_tokens || (!bind.raw && !name.starts_with("r#")))
-                .then_some((bind.id, *ns));
+            if opaque && (bind.raw || name.starts_with("r#")) {
+                return None;
+            }
+            return Some((bind.id, *ns));
         }
     }
     None
@@ -2027,7 +2488,11 @@ fn begin_generics(renamer: &mut Renamer<'_>, generics: &mut syn::Generics) {
                 // A bare reference in `Foo<N>` reads as a type argument.
                 let binding =
                     renamer.bind_value_and_type(&r#const.ident.to_string(), None, Origin::Generic);
-                rename(&mut r#const.ident, &binding.canon);
+                if renamer.analysis {
+                    renamer.record_ident(&r#const.ident, Ns::Type, binding.id, true);
+                } else {
+                    rename(&mut r#const.ident, &binding.canon);
+                }
             }
         }
     }
@@ -2218,6 +2683,7 @@ impl VisitMut for Renamer<'_> {
         let mut original_syntax = Some(self.helper_syntax.snapshot_block(block));
         let prepared = core::mem::replace(&mut self.constants_prepared, true);
         let analyzed = self.compiles
+            && !self.analysis
             && self.regions_active
             && !self.scopes.is_empty()
             && self.macro_origins.is_none();
@@ -2369,7 +2835,21 @@ impl VisitMut for Renamer<'_> {
 
     fn visit_item_impl_mut(&mut self, item: &mut syn::ItemImpl) {
         self.push();
-        if let Some(name) = single_segment_type_name(&item.self_ty)
+        let outer_owner = self.self_owner.take();
+        if self.analysis {
+            // Prove the terminal owner through the original module frames,
+            // so that `Self` keeps the owner's original identity and every
+            // spelling shares one proof-backed route.
+            if let syn::Type::Path(ty) = item.self_ty.as_ref()
+                && ty.qself.is_none()
+                && let Some((terminal, route)) = self.owner_route(&ty.path)
+            {
+                self.self_owner = Some(terminal);
+                self.facts
+                    .owner_routes
+                    .insert((terminal.domain == Domain::Inherited, terminal.id), route);
+            }
+        } else if let Some(name) = single_segment_type_name(&item.self_ty)
             && let Some(resolved) = self.lookup(&[Ns::Type], &name)
         {
             let id = self.alloc_id();
@@ -2403,6 +2883,30 @@ impl VisitMut for Renamer<'_> {
             self.in_type = outer;
         }
         syn::visit_mut::visit_type_mut(self, &mut item.self_ty);
+        if self.analysis
+            && let Some(origin) = self.self_owner
+            && let syn::Type::Path(ty) = item.self_ty.as_ref()
+            && let (Some(first), Some(last)) = (ty.path.segments.first(), ty.path.segments.last())
+        {
+            let resolution = Resolution {
+                kind: if origin.domain == Domain::Inherited {
+                    ReferenceKind::Inherited
+                } else {
+                    ReferenceKind::Owned
+                },
+                prim: None,
+                origin: Some(origin),
+            };
+            self.facts
+                .idents
+                .insert(core::ptr::from_ref(&last.ident), origin);
+            self.facts
+                .paths
+                .insert(core::ptr::from_ref(&ty.path), resolution);
+            self.facts
+                .original_paths
+                .insert(core::ptr::from_ref(first), resolution);
+        }
         let resolutions = type_resolutions(&self.facts, &item.self_ty);
         let outer_resolutions = core::mem::replace(&mut self.self_ty_resolutions, resolutions);
         let outer = self.self_ty.take();
@@ -2414,6 +2918,7 @@ impl VisitMut for Renamer<'_> {
         }
         self.self_ty = outer;
         self.self_ty_resolutions = outer_resolutions;
+        self.self_owner = outer_owner;
         if has_generics {
             self.pop();
         }
@@ -2502,7 +3007,11 @@ impl VisitMut for Renamer<'_> {
         let glob = syn::UseTree::Glob(syn::UseGlob {
             star_token: <syn::Token![*]>::default(),
         });
-        item.tree = self.bind_use_tree(rooted, &[], core::mem::replace(&mut item.tree, glob));
+        if self.analysis {
+            let _ = self.bind_use_tree(rooted, &[], item.tree.clone());
+        } else {
+            item.tree = self.bind_use_tree(rooted, &[], core::mem::replace(&mut item.tree, glob));
+        }
     }
 
     fn visit_item_mod_mut(&mut self, item: &mut syn::ItemMod) {
@@ -2627,7 +3136,8 @@ impl VisitMut for Renamer<'_> {
         // A shorthand `S { x }` prints only the member, so a bound `x`
         // takes the explicit form before the rewrite.
         for field in &mut expr.fields {
-            if field.colon_token.is_none()
+            if !self.analysis
+                && field.colon_token.is_none()
                 && let syn::Member::Named(ident) = &field.member
                 && self.lookup(&[Ns::Value], &ident.to_string()).is_some()
             {
@@ -2672,6 +3182,7 @@ impl VisitMut for Renamer<'_> {
         if let Some(helper) = helper
             && let syn::Expr::Path(path) = call.func.as_mut()
         {
+            let transport = self.helper_syntax.take_path_transport(&path.path);
             while path.path.segments.len() > 1 {
                 path.path.segments.pop();
             }
@@ -2682,6 +3193,7 @@ impl VisitMut for Renamer<'_> {
                 self.helper_canon(helper)
                     .expect("an admitted helper identity"),
             );
+            self.helper_syntax.put_path_transport(&path.path, transport);
             self.facts.paths.insert(
                 core::ptr::from_ref(&path.path),
                 Resolution {
@@ -2691,6 +3203,7 @@ impl VisitMut for Renamer<'_> {
                         ReferenceKind::Inherited
                     },
                     prim: None,
+                    origin: None,
                 },
             );
         }
@@ -2721,14 +3234,14 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_path_mut(&mut self, path: &mut syn::Path) {
-        let helper_scope = self.helper_syntax.take_path(path);
+        let handles = self.helper_syntax.take_path(path);
         // Only the first segment names a local binder, and a leading
         // colon always names an extern crate.
         if !core::mem::take(&mut self.after_bare_qself) {
             self.resolve_path(path);
         }
         self.visit_path_arguments(path);
-        self.helper_syntax.put_path(path, helper_scope);
+        self.helper_syntax.put_path(path, handles);
     }
 
     fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {
@@ -2741,20 +3254,61 @@ impl VisitMut for Renamer<'_> {
         } else {
             &[Ns::Macro]
         };
-        self.record_path(&mac.path, ns);
+        self.record_path(&mac.path, ns, ns);
+        let known = mac.path.segments.first().is_some_and(|first| {
+            let head = crate::scope::ident_name(&first.ident);
+            if crate::drift::format_operand(&mac.path).is_none() || self.macro_shadowed(&head) {
+                return false;
+            }
+            if mac.path.segments.len() == 1 {
+                return true;
+            }
+            let leaf =
+                crate::scope::ident_name(&mac.path.segments.last().expect("a macro path").ident);
+            mac.path.segments.len() == 2
+                && self.portable_first(&[Ns::Type], first)
+                && (head == "std"
+                    || (head == "alloc" && leaf == "format")
+                    || (head == "core" && leaf == "format_args"))
+        });
         let parent = self.macro_origins.replace(Vec::new());
+        let parent_supported = core::mem::replace(&mut self.macro_supported, true);
         if let Some(first) = mac.path.segments.first_mut() {
             self.resolve(ns, &mut first.ident);
         }
         let format_at = crate::drift::format_operand(&mac.path).map(|(at, _)| at);
-        let outer = core::mem::replace(&mut self.opaque_tokens, true);
-        mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
+        let outer = core::mem::replace(&mut self.opaque_tokens, !known);
+        if self.analysis {
+            let _ = self.rewrite_macro_tokens(mac.tokens.clone(), format_at);
+        } else {
+            mac.tokens = self.rewrite_macro_tokens(core::mem::take(&mut mac.tokens), format_at);
+        }
         self.opaque_tokens = outer;
         let origins = self.macro_origins.take().expect("a macro origin collector");
+        let supported = known && self.macro_supported;
+        self.macro_supported = if parent.is_some() {
+            parent_supported && supported
+        } else {
+            parent_supported
+        };
+        if self.analysis
+            && supported
+            && parent.is_none()
+            && let Some(first) = mac.path.segments.first()
+        {
+            self.facts.known_macros.insert(core::ptr::from_ref(first));
+        }
         if let Some(mut parent) = parent {
             parent.extend(origins);
             self.macro_origins = Some(parent);
         } else {
+            if self.analysis
+                && let Some(first) = mac.path.segments.first()
+            {
+                self.facts
+                    .original_macros
+                    .insert(core::ptr::from_ref(first), origins.clone());
+            }
             self.facts.macros.insert(core::ptr::from_ref(mac), origins);
         }
     }
@@ -2767,7 +3321,8 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {
-        if let Some(self_ty) = &self.self_ty
+        if !self.analysis
+            && let Some(self_ty) = &self.self_ty
             && let syn::Type::Path(path) = &*ty
             && path.qself.is_none()
             && path.path.is_ident("Self")

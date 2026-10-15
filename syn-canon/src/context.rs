@@ -448,6 +448,25 @@ struct ImportedName {
     unknown: UnknownImport,
 }
 
+struct ImportPath<'a> {
+    module: &'a [String],
+    name: &'a str,
+    parent: Option<&'a Self>,
+}
+
+impl ImportPath<'_> {
+    fn contains(&self, module: &[String], name: &str) -> bool {
+        let mut active = Some(self);
+        while let Some(query) = active {
+            if query.module == module && query.name == name {
+                return true;
+            }
+            active = query.parent;
+        }
+        false
+    }
+}
+
 struct UseBinder<'a> {
     scopes: &'a BTreeMap<Vec<String>, ModuleScope<'a>>,
     from: &'a [String],
@@ -455,6 +474,7 @@ struct UseBinder<'a> {
     imports: &'a mut BTreeMap<String, ImportedName>,
     only_name: Option<&'a str>,
     depth: usize,
+    active: Option<&'a ImportPath<'a>>,
 }
 
 fn import_slots(
@@ -574,6 +594,7 @@ fn bind_use_name(binder: &mut UseBinder<'_>, path: &[String], alias: &str) {
         path,
         binder.leading_colon,
         binder.depth,
+        binder.active,
     );
     let imported = if let Some(imported) = binder.imports.get_mut(alias) {
         imported
@@ -617,7 +638,7 @@ pub(crate) fn resolve_use(
     path: &[String],
     leading_colon: bool,
 ) -> UseTarget {
-    resolve_use_at(scopes, from, path, leading_colon, 0)
+    resolve_use_at(scopes, from, path, leading_colon, 0, None)
 }
 
 fn resolve_use_at(
@@ -626,6 +647,7 @@ fn resolve_use_at(
     path: &[String],
     leading_colon: bool,
     depth: usize,
+    active: Option<&ImportPath<'_>>,
 ) -> UseTarget {
     if depth >= 64 || path.len() > 64 {
         return UseTarget::Unresolved;
@@ -670,13 +692,13 @@ fn resolve_use_at(
     for (index, name) in rest.iter().enumerate() {
         let name = unraw(name);
         if index + 1 == rest.len() {
-            return resolve_item(scopes, scope.items(), &base, name, depth + 1);
+            return resolve_item(scopes, scope.items(), &base, name, depth + 1, active);
         }
         let mut next_path = base.clone();
         next_path.push(name.to_string());
         if !scopes.contains_key(&next_path) {
             let UseTarget::Item(target, namespaces) =
-                resolve_item(scopes, scope.items(), &base, name, depth + 1)
+                resolve_item(scopes, scope.items(), &base, name, depth + 1, active)
             else {
                 return UseTarget::Unresolved;
             };
@@ -704,6 +726,7 @@ fn resolve_item(
     module: &[String],
     name: &str,
     depth: usize,
+    active: Option<&ImportPath<'_>>,
 ) -> UseTarget {
     if depth >= 64 {
         return UseTarget::Unresolved;
@@ -740,7 +763,7 @@ fn resolve_item(
         let prim = items.iter().find_map(|item| match item {
             syn::Item::Type(alias) if ident_name(&alias.ident) == name => {
                 alias_chain_prim(alias, &items.iter(), scope_primitives_known(items), 0)
-                    .or_else(|| resolved_alias_prim(scopes, module, alias, depth + 1))
+                    .or_else(|| resolved_alias_prim(scopes, module, alias, depth + 1, active))
             }
             _ => None,
         });
@@ -763,7 +786,7 @@ fn resolve_item(
             namespaces,
         )
     } else {
-        resolve_imported_item(scopes, items, module, name, depth)
+        resolve_imported_item(scopes, items, module, name, depth, active)
     }
 }
 
@@ -773,7 +796,16 @@ fn resolve_imported_item(
     module: &[String],
     name: &str,
     depth: usize,
+    active: Option<&ImportPath<'_>>,
 ) -> UseTarget {
+    if active.is_some_and(|query| query.contains(module, name)) {
+        return UseTarget::Unresolved;
+    }
+    let query = ImportPath {
+        module,
+        name,
+        parent: active,
+    };
     let mut namespaces = [false; 5];
     let mut imports = BTreeMap::new();
     for item in items {
@@ -786,6 +818,7 @@ fn resolve_imported_item(
                     imports: &mut imports,
                     only_name: Some(name),
                     depth: depth + 1,
+                    active: Some(&query),
                 },
                 &[],
                 &import.tree,
@@ -897,6 +930,7 @@ fn resolved_alias_prim(
     module: &[String],
     alias: &syn::ItemType,
     depth: usize,
+    active: Option<&ImportPath<'_>>,
 ) -> Option<PrimTy> {
     if depth >= 64 || !alias.generics.params.is_empty() || blocking_attr(&alias.attrs) {
         return None;
@@ -917,6 +951,7 @@ fn resolved_alias_prim(
         &names,
         path.leading_colon.is_some(),
         depth + 1,
+        active,
     ) {
         UseTarget::Item(target, namespaces) if namespaces[1] => target.prim,
         UseTarget::External => external_prim(&names),
@@ -946,7 +981,7 @@ fn seed_alias_prim(
             None => None,
         };
     }
-    resolved_alias_prim(scopes, module, alias, 0)
+    resolved_alias_prim(scopes, module, alias, 0, None)
 }
 
 fn bind_item_ident(
@@ -1068,6 +1103,7 @@ fn seed_scope<'a>(
                         imports: &mut imports,
                         only_name: None,
                         depth: 0,
+                        active: None,
                     },
                     &[],
                     &use_item.tree,

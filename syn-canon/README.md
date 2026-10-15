@@ -24,7 +24,7 @@ println!("{forms:?}");
 
 `SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves namespace-specific inherited references, opaque macro scope identities and owner generics while alpha-renaming its declarations. Literal payload bytes remain part of the owner identity.
 
-Indexed imports bind only their declared namespaces. Ambiguous unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
+Indexed imports bind only their declared namespaces. Ambiguous or cyclic unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
 
 Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit integer types through resolved type aliases. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
 
@@ -135,11 +135,30 @@ let arms = |alternatives: &str| form(&format!(
 assert_eq!(arms("1|2"), arms("2|1"));
 ```
 
+Passing-mode comparison orders closed item groups and combines inherent `impl` blocks with the same original owner, ordered generic environment and conflict-free members. Borrowed function and method views normalize local groups while keeping inherited origins fixed. Unknown macros, observers, unresolved namespaces, conditional members, exhausted bounds and failing-mode inputs retain complete groups and partitions.
+
+`crate::` owner paths use the original whole-file root. Borrowed views retain unproved root spellings.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+let first = "fn one()->u32{1}fn two()->u32{2}fn main(){println!(\"{:?}\",(one(),two()));}";
+let reordered = "fn two()->u32{2}fn one()->u32{1}fn main(){println!(\"{:?}\",(one(),two()));}";
+assert_eq!(form(first), form(reordered));
+assert_ne!(
+    syn_canon::canonicalize_failing(syn::parse_str(first).unwrap()),
+    syn_canon::canonicalize_failing(syn::parse_str(reordered).unwrap()),
+);
+assert_eq!(
+    form("struct S;impl S{fn one()->u32{1}}impl S{fn two()->u32{2}}"),
+    form("struct S;impl S{fn two()->u32{2}fn one()->u32{1}}"),
+);
+```
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.
 
-Value, type and macro bindings treat `r#name` and `name` as the same identifier, including shadowing and module members. Lifetimes and labels retain their spelling. Macro references involving a raw binding or reference retain their spelling because macros can inspect tokens.
+Value, type and macro bindings treat `r#name` and `name` as the same identifier, including shadowing and module members. Lifetimes and labels retain their spelling. Opaque macro references involving a raw binding or reference retain their spelling.
 
 Style folds, each applied only where it keeps the meaning:
 

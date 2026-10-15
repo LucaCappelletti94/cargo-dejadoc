@@ -38,6 +38,8 @@ Passing comparisons normalize proven primitive bitwise algebra, comparison orien
 
 Passing comparisons order named-field initializers with total primitive proofs and unguarded literal-only pattern alternatives, preserving field labels, update bases, literal suffixes and alternative multiplicity.
 
+Passing comparisons order proven closed item groups and combine compatible inherent `impl` blocks using original binding and owner identities. Imports and trait implementations retain their boundaries, and unknown macros, observers, conditional members and exhausted proofs preserve complete groups and partitions.
+
 ### Contexts
 
 Whole function bodies, explicit blocks, complete match arms and closures are normalized independently using [`syn-canon`](https://docs.rs/syn-canon). Arm patterns and guards and closure inputs contribute to the canonical size.

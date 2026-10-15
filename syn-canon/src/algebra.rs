@@ -159,7 +159,7 @@ impl Walker {
                     return (syn::Expr::Binary(binary), None);
                 };
                 if self.dedup
-                    && let Some(label) = schedule::true_comparison(&binary.op, &left, &right)
+                    && let Some(label) = schedule::true_comparison(binary.op, &left, &right)
                 {
                     let expr = if left == Lbl::Bool(true) {
                         *binary.right
@@ -168,7 +168,7 @@ impl Walker {
                     };
                     return (expr, Some(label));
                 }
-                match schedule::total_binary(&binary.op, &left, &right) {
+                match schedule::total_binary(binary.op, &left, &right) {
                     Some(TotalBinary::Flat(op, prim)) if !algebra => {
                         let mut leaves = Vec::new();
                         schedule::collect_leaves(op, prim, left, &mut leaves);
@@ -444,7 +444,7 @@ fn extend(
 
 fn decompose(op: BitwiseOp, expr: syn::Expr, out: &mut Vec<syn::Expr>) {
     match expr {
-        syn::Expr::Binary(binary) if BitwiseOp::from_bin_op(&binary.op) == Some(op) => {
+        syn::Expr::Binary(binary) if BitwiseOp::from_bin_op(binary.op) == Some(op) => {
             decompose(op, *binary.left, out);
             decompose(op, *binary.right, out);
         }

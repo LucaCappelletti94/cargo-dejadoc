@@ -1,0 +1,1 @@
+macro_rules! lit{()=>{1u32}}fn one()->u32{lit!()}fn two()->u32{2}fn main(){let a=one();let b=two();println!("{:?}",(a,b));}

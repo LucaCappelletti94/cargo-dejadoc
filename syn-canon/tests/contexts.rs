@@ -1500,3 +1500,45 @@ fn crate_imports_preserve_qualified_type_identity() {
     assert_eq!(view_of(&first, "first"), view_of(&renamed, "renamed"));
     assert_ne!(view_of(&first, "first"), view_of(&different, "different"));
 }
+
+#[test]
+fn cyclic_imports_preserve_unresolved_target_identity() {
+    for imports in [
+        "use missing; use missing;",
+        "use second as missing; use missing as second; use second as missing;",
+        "mod inner { pub use super::missing; } use inner::missing; use inner::missing;",
+    ] {
+        let file: syn::File = syn::parse_str(&format!(
+            "{imports} fn first() {{ missing() }} fn same() {{ missing() }} fn different() {{ other() }}"
+        ))
+        .unwrap();
+        assert_eq!(view_of(&file, "first"), view_of(&file, "same"));
+        assert_ne!(view_of(&file, "first"), view_of(&file, "different"));
+    }
+}
+
+#[test]
+fn converging_import_routes_preserve_sibling_module_origins() {
+    let file: syn::File = syn::parse_str(
+        "mod definitions {
+            pub fn first() -> u32 { 1u32 }
+            pub fn second() -> u32 { 2u32 }
+        }
+        mod left {
+            pub use super::definitions::first as original;
+            pub use original as next;
+            pub use next as final_name;
+        }
+        mod right {
+            pub use super::definitions::second as original;
+            pub use original as next;
+            pub use next as final_name;
+        }
+        fn first() -> u32 { left::original() }
+        fn same() -> u32 { left::final_name() }
+        fn different() -> u32 { right::final_name() }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&file, "first"), view_of(&file, "same"));
+    assert_ne!(view_of(&file, "first"), view_of(&file, "different"));
+}

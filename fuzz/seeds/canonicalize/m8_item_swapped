@@ -1,0 +1,1 @@
+fn two()->u32{2}fn one()->u32{1}fn main(){let a=one();let b=two();println!("{:?}",(a,b));}
