@@ -312,6 +312,9 @@ pub struct SourceFile {
     pub path: String,
     /// Module-path segments from the target root, empty for the root file.
     pub segments: Vec<String>,
+    /// The printed `cfg` attributes of the `mod` declarations and enclosing inline modules
+    /// from the target root to this file, outermost first, empty for the root file.
+    pub cfg: Vec<String>,
     /// The parsed file.
     pub parsed: syn::File,
     /// The file's source text.
@@ -984,6 +987,7 @@ mod tests {
             files: vec![SourceFile {
                 path: path.to_string(),
                 segments: segments.iter().map(ToString::to_string).collect(),
+                cfg: Vec::new(),
                 parsed: match syn::parse_str(src) {
                     Ok(parsed) => parsed,
                     Err(err) => panic!("parse fixture: {err}"),

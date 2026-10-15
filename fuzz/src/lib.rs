@@ -69,6 +69,7 @@ pub fn functions(source: &str) -> Option<dejadoc::Report> {
     let file = |segment: &str| dejadoc::SourceFile {
         path: format!("/r/src/{segment}.rs"),
         segments: vec![segment.to_string()],
+        cfg: Vec::new(),
         parsed: parsed.clone(),
         text: source.to_string(),
         rustdoc: false,

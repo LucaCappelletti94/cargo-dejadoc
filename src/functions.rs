@@ -6,6 +6,7 @@ use alloc::vec::Vec;
 
 use syn::spanned::Spanned;
 
+use crate::cfg::cfgs;
 use crate::{DocTest, Remedy, SourceFile};
 
 /// One function as found in a source file.
@@ -87,7 +88,7 @@ pub(crate) fn functions(
         crate_root,
         library,
         lines: &lines,
-        cfg: Vec::new(),
+        cfg: file.cfg.clone(),
         context,
         out: Vec::new(),
     };
@@ -102,7 +103,8 @@ struct Walk<'a> {
     /// Whether the file belongs to a library, whose `pub` functions are public API.
     library: bool,
     lines: &'a [&'a str],
-    /// The `cfg` attributes of the inline modules, impls and traits the walk is inside.
+    /// The `cfg` attributes of the module declarations, inline modules, impls and traits the
+    /// walk is inside.
     cfg: Vec<String>,
     context: &'a syn_canon::SourceContext<'a>,
     out: Vec<FnSite>,
@@ -263,14 +265,6 @@ struct Parts<'a> {
     vis: &'a syn::Visibility,
     sig: &'a syn::Signature,
     block: &'a syn::Block,
-}
-
-/// The printed `cfg` attributes among `attrs`.
-fn cfgs(attrs: &[syn::Attribute]) -> impl Iterator<Item = String> + '_ {
-    attrs
-        .iter()
-        .filter(|a| a.path().is_ident("cfg"))
-        .map(|a| quote::ToTokens::to_token_stream(a).to_string())
 }
 
 /// Whether `meta` exports a symbol, which the symbol's users then need.
