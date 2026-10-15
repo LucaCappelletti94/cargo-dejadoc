@@ -5,13 +5,15 @@ use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec;
 use alloc::vec::Vec;
+use core::cell::Cell;
 use syn::visit::{self, Visit};
 use syn::visit_mut::{self, VisitMut};
 
 use crate::alpha::Renamer;
 use crate::context::{
-    ModuleScope, UseTarget, blocked_modules, blocking_attr, blocking_meta, qualified_name,
-    register_inline, resolve_use, scope_primitives_known, seed_frame, seed_items,
+    ModuleMap, ModuleScope, UseTarget, blocked_modules, blocking_attr, blocking_meta,
+    declare_module, qualified_name, register_inline, resolve_use, scope_primitives_known,
+    seed_frame, seed_items,
 };
 use crate::schedule::{
     Lbl, MAX_BLOCK_DEPTH, MAX_REGION_NODES, Port, TotalBinary, Value, total_binary,
@@ -829,17 +831,14 @@ impl<'ast> Visit<'ast> for SnapshotSyntax<'_> {
 }
 
 pub(crate) struct Scopes<'a> {
-    modules: BTreeMap<Vec<String>, ModuleScope<'a>>,
+    modules: ModuleMap<'a>,
     blocked: BTreeSet<Vec<String>>,
     local_routes: BTreeMap<*const syn::ItemMod, Vec<String>>,
     local_paths: BTreeSet<Vec<String>>,
 }
 
 impl<'a> Scopes<'a> {
-    pub(crate) fn new(
-        mut modules: BTreeMap<Vec<String>, ModuleScope<'a>>,
-        mut blocked: BTreeSet<Vec<String>>,
-    ) -> Self {
+    pub(crate) fn new(mut modules: ModuleMap<'a>, mut blocked: BTreeSet<Vec<String>>) -> Self {
         let mut index = LocalModuleIndex {
             base: &modules,
             modules: BTreeMap::new(),
@@ -852,12 +851,14 @@ impl<'a> Scopes<'a> {
             expression_depth: 0,
             next: 0,
         };
-        for (path, scope) in &modules {
+        for (path, declarations) in &modules {
             index.module.clone_from(path);
             index.observed = blocked.contains(path);
-            for item in scope.items() {
-                if !matches!(item, syn::Item::Mod(_)) {
-                    index.visit_item(item);
+            for scope in declarations.iter() {
+                for item in scope.items() {
+                    if !matches!(item, syn::Item::Mod(_)) {
+                        index.visit_item(item);
+                    }
                 }
             }
         }
@@ -865,6 +866,7 @@ impl<'a> Scopes<'a> {
         let local_routes = index.routes;
         let added = index.modules;
         let observed = index.blocked;
+        blocked.extend(blocked_modules(&added));
         modules.extend(added);
         blocked.extend(observed);
         Self {
@@ -877,7 +879,7 @@ impl<'a> Scopes<'a> {
 
     pub(crate) fn from_file(file: &'a syn::File) -> Self {
         let mut modules = BTreeMap::new();
-        modules.insert(Vec::new(), ModuleScope::File(file));
+        declare_module(&mut modules, Vec::new(), ModuleScope::File(file));
         register_inline(&mut modules, &[], &file.items);
         let blocked = blocked_modules(&modules);
         Self::new(modules, blocked)
@@ -885,8 +887,8 @@ impl<'a> Scopes<'a> {
 }
 
 struct LocalModuleIndex<'a, 's> {
-    base: &'s BTreeMap<Vec<String>, ModuleScope<'a>>,
-    modules: BTreeMap<Vec<String>, ModuleScope<'a>>,
+    base: &'s ModuleMap<'a>,
+    modules: ModuleMap<'a>,
     routes: BTreeMap<*const syn::ItemMod, Vec<String>>,
     blocked: BTreeSet<Vec<String>>,
     module: Vec<String>,
@@ -932,8 +934,11 @@ impl<'a> Visit<'a> for LocalModuleIndex<'a, '_> {
         if parent {
             self.routes
                 .insert(core::ptr::from_ref(item), self.module.clone());
-            self.modules
-                .insert(self.module.clone(), ModuleScope::Inline(items));
+            declare_module(
+                &mut self.modules,
+                self.module.clone(),
+                ModuleScope::Inline(item),
+            );
             register_inline(&mut self.modules, &self.module, items);
         }
         if self.observed {
@@ -1351,12 +1356,13 @@ pub(crate) fn walk_imports(
 }
 
 fn lexical_use(
-    scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
+    scopes: &ModuleMap<'_>,
     module: &[String],
     frame: &Frame,
     module_canons: &BTreeMap<String, Vec<String>>,
     path: &[String],
     rooted: bool,
+    steps: &Cell<usize>,
 ) -> UseTarget {
     if !rooted
         && let Some(first) = path.first()
@@ -1367,18 +1373,19 @@ fn lexical_use(
         let Some(route) = module_canons.get(&binding.canon) else {
             return UseTarget::Unresolved;
         };
-        return resolve_use(scopes, route, &path[1..], false);
+        return resolve_use(scopes, route, &path[1..], false, steps);
     }
-    resolve_use(scopes, module, path, rooted)
+    resolve_use(scopes, module, path, rooted, steps)
 }
 
 fn sanitize_imports(
-    scopes: &BTreeMap<Vec<String>, ModuleScope<'_>>,
+    scopes: &ModuleMap<'_>,
     module: &[String],
     items: &[&syn::Item],
     frame: &mut Frame,
     module_canons: &BTreeMap<String, Vec<String>>,
 ) {
+    let steps = Cell::new(0);
     for item in items {
         let syn::Item::Use(item) = item else { continue };
         walk_imports(&item.tree, &mut Vec::new(), 0, &mut |path, alias| {
@@ -1389,6 +1396,7 @@ fn sanitize_imports(
                 module_canons,
                 path,
                 item.leading_colon.is_some(),
+                &steps,
             );
             for ns in [Ns::Value, Ns::Type] {
                 let Some(binding) = frame.bindings_mut(ns).get_mut(ns.key(alias)) else {
@@ -1495,6 +1503,7 @@ fn source_primitive(
                     module_canons,
                     &names,
                     path.path.leading_colon.is_some(),
+                    &Cell::new(0),
                 ) else {
                     return None;
                 };
@@ -1922,42 +1931,44 @@ fn source_collector<'a, 's>(scopes: &'s Scopes<'a>) -> Collector<'a, 's> {
         next_scope: 0,
         owner: None,
     };
-    let mut module_environments = BTreeMap::new();
-    for (path, scope) in &scopes.modules {
-        let known = scope_primitives_known(scope.items())
-            && scope.items().iter().all(
-                |item| !matches!(item, syn::Item::Use(item) if !use_tree_known(&item.tree, 0)),
-            );
-        let frame = seed_frame(&scopes.modules, path, scope, known);
-        let environment = collector.environments.len();
-        collector.environments.push(Environment {
-            frame,
-            module: path.clone(),
-            prim_fallback: known,
-        });
-        module_environments.insert(path.clone(), environment);
+    let mut module_environments = Vec::new();
+    for (path, declarations) in &scopes.modules {
         if let Some((name, parent)) = path.split_last() {
             collector
                 .module_canons
                 .insert(qualified_name(parent, name), path.clone());
         }
         collector.module.clone_from(path);
-        collector.environment = environment;
         collector.blocked = scopes.blocked.contains(path);
-        for item in scope.items() {
-            if let syn::Item::Fn(function) = item {
-                collector.declare(
-                    function,
-                    qualified_name(path, &ident_name(&function.sig.ident)),
-                    environment,
-                    !scopes.local_paths.contains(path),
+        for scope in declarations.iter() {
+            let known = scope_primitives_known(scope.items())
+                && scope.items().iter().all(
+                    |item| !matches!(item, syn::Item::Use(item) if !use_tree_known(&item.tree, 0)),
                 );
+            let frame = seed_frame(&scopes.modules, path, &scope, known);
+            let environment = collector.environments.len();
+            collector.environments.push(Environment {
+                frame,
+                module: path.clone(),
+                prim_fallback: known,
+            });
+            module_environments.push((path, declarations.repeated(), scope, environment));
+            collector.environment = environment;
+            for item in scope.items() {
+                if let syn::Item::Fn(function) = item {
+                    collector.declare(
+                        function,
+                        qualified_name(path, &ident_name(&function.sig.ident)),
+                        environment,
+                        !scopes.local_paths.contains(path),
+                    );
+                }
             }
         }
     }
-    for (path, &environment) in &module_environments {
+    for &(path, repeated, scope, environment) in &module_environments {
         let frame = &mut collector.environments[environment].frame;
-        let items: Vec<&syn::Item> = scopes.modules[path].items().iter().collect();
+        let items: Vec<&syn::Item> = scope.items().iter().collect();
         sanitize_imports(
             &scopes.modules,
             path,
@@ -1969,19 +1980,23 @@ fn source_collector<'a, 's>(scopes: &'s Scopes<'a>) -> Collector<'a, 's> {
         for (name, binding) in frame.bindings_mut(Ns::Value) {
             if let Some(id) = collector.table.by_canon(&binding.canon) {
                 binding.helper = Some(id);
-                names.values.insert(name.clone(), id);
+                if !repeated {
+                    names.values.insert(name.clone(), id);
+                }
             }
         }
-        for (name, binding) in frame.bindings(Ns::Type) {
-            if let Some(target) = collector.module_canons.get(&binding.canon) {
-                names.modules.insert(name.clone(), target.clone());
+        if !repeated {
+            for (name, binding) in frame.bindings(Ns::Type) {
+                if let Some(target) = collector.module_canons.get(&binding.canon) {
+                    names.modules.insert(name.clone(), target.clone());
+                }
             }
         }
         collector.table.modules.insert(path.clone(), names);
     }
-    for (path, scope) in &scopes.modules {
+    for &(path, _, scope, environment) in &module_environments {
         collector.module.clone_from(path);
-        collector.environment = module_environments[path];
+        collector.environment = environment;
         collector.blocked = scopes.blocked.contains(path);
         for item in scope.items() {
             collector.visit_item(item);
