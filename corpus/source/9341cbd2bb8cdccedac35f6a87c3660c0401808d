@@ -1,0 +1,6 @@
+extern "C" {
+    /// ```
+  type T: i16;
+    /// type T: i32;// f``/&&n( /// ```
+    usetype T;
+}

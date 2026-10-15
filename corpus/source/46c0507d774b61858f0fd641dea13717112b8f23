@@ -1,0 +1,11 @@
+pub fn outer() {
+  ; #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+         /// ```
+      <pl<On<Ok>>::mpl<OOk>>::mpl<On<OkOn<O::C    /// ```
+        /// let c = 3;
+    $   /// `{
+    };
+}

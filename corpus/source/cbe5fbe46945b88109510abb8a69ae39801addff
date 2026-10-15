@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+  /// ```
+        fn shown() {}
+    }
+matc{
+        #[cfg(test)]
+        a: {
+            /// ``{}
+      cfg_at  },
+b: {
+            /// ```
+            /// let g ``
+            fn},
+    };
+}

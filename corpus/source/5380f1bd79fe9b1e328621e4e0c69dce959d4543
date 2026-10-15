@@ -1,0 +1,2 @@
+#[doc = include_str!(match "ddt "{}-", ****#illow(u")]
+pub fn f() {}

@@ -1,0 +1,3 @@
+#[ttr(unix, doc = "```")]
+#[cfg_attr(any(n(otdoa), fe= e[%t#sllow(unused)]), doc = "```")]
+pub fn gated() {}

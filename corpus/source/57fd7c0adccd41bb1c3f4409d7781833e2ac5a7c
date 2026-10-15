@@ -1,0 +1,6 @@
+pub fn outer() {
+    #[cfg(test)]
+   loop {                      /// le /// ```
+            fn fb() {}
+        ignore };
+}

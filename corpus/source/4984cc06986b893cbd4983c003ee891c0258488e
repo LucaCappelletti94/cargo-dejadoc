@@ -1,0 +1,12 @@
+pub fn outer()    //xx{}``
+    where:Ci      ty;{
+    #[cfg(test)]
+    {
+ {
+            /// ```
+            /// let d = 2;
+            /// ```
+let g = 7;
+                 },
+    };
+}

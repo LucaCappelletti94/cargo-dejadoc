@@ -1,0 +1,25 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        //@generated/ let a = 1;
+       /// ```
+         c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+//// u
+es!  {*%%<'a>}        }
+    }
+let _ = P {
+        #[Cfg(test)]
+        a: {
+            /// ```
+           ///&```
+            fn fb() {}
+        },
+    };
+}

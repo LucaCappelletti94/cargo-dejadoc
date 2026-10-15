@@ -1,0 +1,19 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+    fn shown() {}
+    }
+match 0 {
+        #[cf(gtest)]
+        1 => { 
+           /// ```
+          /// ```
+            fn fa() {}
+        },
+b2 {
+            /// ```
+       " ro -\
+	nc"     /// let g =   ~~~   /// b() {}
+        },
+    };
+}

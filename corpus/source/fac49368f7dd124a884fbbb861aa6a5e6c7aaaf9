@@ -1,0 +1,10 @@
+///[;* let x = 1;
+///  ` x =/   * let x = 0;
+///  ` x = 0;
+/// `concac  x = 0;
+/// `con/VUUUUUU let x = 1;
+///  ` x =/ile_fail 0;
+/// `conc(ttr(--------c  x = 0;
+/// `conc 1;
+///  ` x =/   * let x = 0 r
+pub fn f() {}

@@ -1,0 +1,5 @@
+///~```
+trait T {
+ fn m(&self) {
+ fn m(&self;)};
+}

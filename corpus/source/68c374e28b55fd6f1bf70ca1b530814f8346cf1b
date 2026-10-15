@@ -1,0 +1,2 @@
+#[doc = -r"edition2021"]
+pub fn f() {format!("{x:pub::{";;;;;;;;;;;rus...n..;;;;=;3;;)}

@@ -1,0 +1,19 @@
+/**
+
+ * ```test_harness
+ * le*
+
+ * ```test_harness
+ * let x = 0;
+ * ```
+t x = 1;
+ * le*
+
+ * ```test_harness
+ * let x1;
+ * `* ```
+::{
+pu1;
+ * ```
+ */
+pub fn f() {}

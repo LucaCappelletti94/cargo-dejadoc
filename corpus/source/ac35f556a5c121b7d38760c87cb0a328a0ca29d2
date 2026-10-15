@@ -1,0 +1,6 @@
+#[doc = r"```
+le 
+ /x/t = z0;
+```
+"]
+pub fn f() {format!("{#[%a#[dc=)#_]:	)> /#[dc=)# ))'/eed)](!f, /!$[ =>he_]:	)> /#[dc=)# )) ))'/eed)](!f, /!$[ =>he_]:	)> /#[dc=)# ))u+ed)(!f, /$$[nu+ed)](!f, /!$[ =>he_]:	)> /#[dc=!$[ =>he_]:	)> /#[dc=)# ))'/!$[ =/)>!	)>!$#[dc=)# , /$$should_panic:	)> /#[dc=)# ))'/eed)](!f, /!$[ =>he_]:	)> /#[dc=)# ))u+ed)(!f, /$$[nu+ed)](!f,)> /#[dc=)# ))'/eed)](!f, /!$[ =>he_]:	)> /#[dc=)# ))u+ed)(!f, /$$[nu+ed)](!f, /!$[u+ed)(!f, /$$[nu+ed)](!f, /!$[ =>he_]:	)> /#[dc=!$[ =>he_]:	)> /#[dc=)# ))'/!$[ =/)>!	)>!$#[dc=)# , /$$should_panic:	)> /#[dc=)# ))'/eed)](!f, /!$[ =>he_]:	)> /#[dc=)# ))u+ed)(!f, /$$[nu+ed)](!f,)> /#[dc=)# ))'/eed)](!f, /!$[ =>he_]:	)> /#[dc=)# ))u+ed)(!f, /$$[nu+ed)](!f, /!$[ =>he$[ =>he_]],,,!)			Ok::kkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk1bkkklow(unused)]x:>?}r+"compile_fail)}

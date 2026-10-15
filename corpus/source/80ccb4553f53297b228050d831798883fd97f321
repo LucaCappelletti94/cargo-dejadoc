@@ -1,0 +1,10 @@
+pub fn outer() {fn inner() {}
+ 
+    let _ = || {
+        /// ```
+        /// lif let 2;
+ // lif let 2;
+     format!("{x:?}");
+       $/// `fn dflt() {}
+    }
+}

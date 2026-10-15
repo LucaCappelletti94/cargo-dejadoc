@@ -1,0 +1,5 @@
+struct S;
+impl S {
+   /// ```
+    const C: i3= 1;
+t 222222222}

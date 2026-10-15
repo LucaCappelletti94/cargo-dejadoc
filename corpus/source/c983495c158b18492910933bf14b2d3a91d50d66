@@ -1,0 +1,4 @@
+#[cattr(alIII@I$I)]
+#[cfg_attr()]
+// main(, od~
+pub fn gated() {}

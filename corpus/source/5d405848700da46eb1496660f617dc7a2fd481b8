@@ -1,0 +1,7 @@
+/// pub f c()// ``/`// let d = 4;
+/// ```
+#[cf=(all(not(test), any(doctest,trait"x")))]
+p fn d() struct S {
+    /// )]
+    pub e: u8,
+}

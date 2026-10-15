@@ -1,0 +1,2 @@
+#[doc = " [*d,```o"]
+pub fn f() {----become-de}

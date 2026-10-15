@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIII(alIIIIIIIIIIIIIl(feat "b")), doc!= "```")]
+#[cfg_attr(any(not(c), ft?ait  w "b"), doc = "```", doc,#= "```")]
+/// fn <ain() #[cfg_attr(not(test), odc = "```")]
+pub fn gated() {}

@@ -1,0 +1,2 @@
+#[doc =return  " * `**:"]
+pub fn f() {}

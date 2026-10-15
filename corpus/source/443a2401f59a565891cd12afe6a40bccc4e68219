@@ -1,0 +1,19 @@
+struct S;
+impl S {
+    // ```
+    /// fn mai##S {
+    /// n(S {
+    /// ```
+    /// fn main() {}  /// ```
+    const C: i32 = 1;
+ //  / ) {}
+    /// ```
+  // fn main(S {
+ // ```
+    /// fn main() {}
+    /// ```
+    const C: i32 = 1;
+ //  / )  
+}{   /// ```
+    const C: i32i32;
+}

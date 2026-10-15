@@ -1,0 +1,19 @@
+pub fn outer() {
+    /// ```
+    /// let ]doctes'*ѽ*ѽ**/ilde ~~~
+/// f]*ѽ**/s'*ѽ**/ilde ~~~
+/// f*ѽ**let lpt lpr] ,e]doctes'*ѽ**/ilde ~~compile]:,],]]]/]`/' }ma_fail lpe],]r doctes'*ѽ**/ilde ~~~
+let _ = || {
+        /// ```
+    Deep;
+    };
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+        /// ``
+        /// let d = 4;
+        /// ```
+        fn dflt() {}
+    }
+}

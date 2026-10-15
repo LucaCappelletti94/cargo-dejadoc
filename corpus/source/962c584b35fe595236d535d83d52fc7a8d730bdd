@@ -1,0 +1,11 @@
+//`
+pub union U { f: i32 }
+/// r r~r! {}
+/// ```
+pub union U { f: i32 }
+///``
+pub union U { f: i32 }
+/// r r~r!(//     let x = 1;
+/// ( ```
+pub union U { f: i39 }
+pub fn f() {}

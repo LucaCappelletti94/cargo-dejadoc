@@ -1,0 +1,7 @@
+///$ ```se / fn f() {}
+/// ```
+pub type Ty = i32;
+/// ```/ //
+fn g() {}
+/// ```
+pub trait Tr = i16;

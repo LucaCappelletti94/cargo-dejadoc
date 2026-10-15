@@ -1,0 +1,19 @@
+//// i// ```
+/// ```
+pub static S: i32 = 1;
+/// d``
+///ntro`// i/for / ```
+/// ```
+pub static S: i32 = 1;
+/// d``
+///ntro```doC
+/// = f ``
+pub static S: i32 = 1;
+/// d``
+///ntro`// i/for / ````
+/// ```
+pub static S: i32 = 1;
+/// d````
+pub static S: i32 = 1;
+//o`// i/fo``` ```
+/// ```

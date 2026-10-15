@@ -1,0 +1,2 @@
+#[df = inclu_str!("drd?")]
+pub fn f() {}

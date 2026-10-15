@@ -1,0 +1,10 @@
+extern "C" {
+  // `
+    /// `d`
+    type T;
+
+    ///formdoc( ```
+    type T;
+
+    /0//pe T;
+}X

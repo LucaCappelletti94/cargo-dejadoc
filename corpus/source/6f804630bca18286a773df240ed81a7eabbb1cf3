@@ -1,0 +1,33 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+      /// let a =e```
+        /// let c = 2;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+               /// ```
+        /// let a = 1;
+       #[cfg(test)]
+               /// ```
+        /// let a = 1;
+        /// ```
+      /// let b = 2;
+m;
+        /// ```
+   () {}
+    }
+match 0 {
+        #[cfg(test)]
+        = => {
+            /// ```
+   t d = 4;
+                 /// ```
+            /// let f = 6;
+     // ```
+            fn fb()compile_fail {}
+        },
+    };
+}

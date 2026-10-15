@@ -1,0 +1,6 @@
+///  =eis//     let x =&1;
+/// "{}**b", et doc"{}", 
+///     let x =&1;
+/// "{}",  lep x =&1;
+///     ?et {/ outro
+pub fn f() {}

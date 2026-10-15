@@ -1,0 +1,1 @@
+#[doc = concat!('atr!("docmd"))] fn f() {}
