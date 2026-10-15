@@ -101,7 +101,7 @@ fn imported_helpers_retain_their_qualified_definition_identity() {
 }
 
 #[test]
-fn inherited_generic_dispatch_retains_its_enclosing_definition() {
+fn owner_generic_dispatch_matches_across_owner_bounds() {
     let source: syn::File = syn::parse_str(
         "
         trait LeftFactory { fn value() -> u32; }
@@ -138,7 +138,7 @@ fn inherited_generic_dispatch_retains_its_enclosing_definition() {
         })
         .collect();
     assert_eq!(forms[0], forms[1]);
-    assert_ne!(forms[0], forms[2]);
+    assert_eq!(forms[0], forms[2]);
 }
 
 #[test]
@@ -687,10 +687,12 @@ fn generic_type_ids_keep_the_parameters_distinct() {
         impl_method(&context, &source, "left"),
         impl_method(&context, &source, "same")
     );
-    assert_ne!(
+    let (left, right) = (
         impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        impl_method(&context, &source, "right"),
     );
+    assert_eq!(left, right);
+    assert_ne!(left.owner_role_key(), right.owner_role_key());
 }
 
 #[test]
@@ -711,10 +713,12 @@ fn generic_const_ids_keep_the_parameters_distinct() {
         impl_method(&context, &source, "left"),
         impl_method(&context, &source, "same")
     );
-    assert_ne!(
+    let (left, right) = (
         impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        impl_method(&context, &source, "right"),
     );
+    assert_eq!(left, right);
+    assert_ne!(left.owner_role_key(), right.owner_role_key());
 }
 
 #[test]
@@ -1360,8 +1364,8 @@ fn owner_literal_payloads_keep_distinct_owners_distinct() {
     let source: syn::File = syn::parse_str(
         "
         struct Owner<const S: &'static str>;
-        impl Owner<\" x\"> { fn f() -> Self { Self } }
-        impl Owner<\"x\"> { fn f() -> Self { Self } }
+        impl Owner<\" x\"> { const K: u32 = 1; fn f() -> u32 { Self::K } }
+        impl Owner<\"x\"> { const K: u32 = 1; fn f() -> u32 { Self::K } }
     ",
     )
     .unwrap();
@@ -1373,46 +1377,52 @@ fn owner_literal_payloads_keep_distinct_owners_distinct() {
 #[test]
 fn self_type_views_retain_their_original_owner_binding() {
     let local: syn::File =
-        syn::parse_str("struct S { v: u32 } impl S { fn f(s: Self) -> Self { s } }").unwrap();
+        syn::parse_str("struct S; impl S { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }")
+            .unwrap();
     let imported: syn::File = syn::parse_str(
-        "mod m { pub struct S { v: u32 } } use m::S; impl S { fn f(s: Self) -> Self { s } }",
+        "mod m { pub struct S; } use m::S; impl S { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
     )
     .unwrap();
     let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
     let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
     assert_ne!(
-        impl_forms(&local_context, &local)[0],
-        impl_forms(&imported_context, &imported)[0],
+        impl_method(&local_context, &local, "f"),
+        impl_method(&imported_context, &imported, "f"),
     );
 }
 
 #[test]
 fn underscored_self_types_keep_their_seed_binding() {
     let local: syn::File =
-        syn::parse_str("struct a_b { v: u32 } impl a_b { fn f(s: Self) -> Self { s } }").unwrap();
+        syn::parse_str("struct a_b; impl a_b { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }")
+            .unwrap();
     let imported: syn::File = syn::parse_str(
-        "mod m { pub struct a_b { v: u32 } } use m::a_b; impl a_b { fn f(s: Self) -> Self { s } }",
+        "mod m { pub struct a_b; } use m::a_b; impl a_b { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
     )
     .unwrap();
     let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
     let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
     assert_ne!(
-        impl_forms(&local_context, &local)[0],
-        impl_forms(&imported_context, &imported)[0],
+        impl_method(&local_context, &local, "f"),
+        impl_method(&imported_context, &imported, "f"),
     );
 }
 
 #[test]
 fn unresolved_self_types_keep_their_injective_owner_text() {
-    let left: syn::File =
-        syn::parse_str("struct W<T>(T); impl<T> W<T> { fn f(s: Self) -> Self { s } }").unwrap();
-    let right: syn::File =
-        syn::parse_str("struct X<T>(T); impl<T> X<T> { fn f(s: Self) -> Self { s } }").unwrap();
+    let left: syn::File = syn::parse_str(
+        "struct W<T>(T); impl<T> W<T> { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
+    )
+    .unwrap();
+    let right: syn::File = syn::parse_str(
+        "struct X<T>(T); impl<T> X<T> { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
+    )
+    .unwrap();
     let left_context = SourceContext::new(core::iter::once((&[][..], &left)));
     let right_context = SourceContext::new(core::iter::once((&[][..], &right)));
     assert_ne!(
-        impl_forms(&left_context, &left)[0],
-        impl_forms(&right_context, &right)[0],
+        impl_method(&left_context, &left, "f"),
+        impl_method(&right_context, &right, "f"),
     );
 }
 
@@ -1422,8 +1432,8 @@ fn dyn_trait_owners_keep_their_boundary_from_nominal_types() {
         "
         trait _Trait {}
         struct dyn_Trait;
-        impl dyn _Trait { fn f(&self) -> *const Self { self } }
-        impl dyn_Trait { fn f(&self) -> *const Self { self } }
+        impl dyn _Trait { const K: u32 = 1; fn f() -> u32 { Self::K } }
+        impl dyn_Trait { const K: u32 = 1; fn f() -> u32 { Self::K } }
     ",
     )
     .unwrap();
@@ -1827,7 +1837,8 @@ fn const_generic_ids_keep_their_successor_identity() {
     let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
     let original_fn = &impl_forms(&original_context, &original)[0];
     let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
-    assert_ne!(original_fn, renamed_fn,);
+    assert_eq!(original_fn, renamed_fn);
+    assert_ne!(original_fn.owner_role_key(), renamed_fn.owner_role_key());
 }
 
 #[test]
@@ -2488,4 +2499,40 @@ fn unmodeled_macro_calls_keep_owner_bodies_opaque() {
         form("", "print!(\"\"); value", "", "value"),
         form("", "print!(\"\"); value", "#[observer::inspect]", "value")
     );
+}
+
+/// A file with two `cfg`-exclusive `imp` modules, inside `speculate` or at file level, each
+/// calling its own nested item.
+fn cfg_exclusive_modules(nested: bool, first: &str, first_call: &str, second: &str) -> syn::File {
+    let modules = format!(
+        "#[cfg(unix)] mod imp {{ pub fn {first}() -> bool {{ true }} pub fn run() -> bool {{ {first_call}() }} }}
+         #[cfg(not(unix))] mod imp {{ pub fn {second}() -> bool {{ false }} pub fn run() -> bool {{ {second}() }} }}"
+    );
+    let source = if nested {
+        format!("fn speculate() -> bool {{ {modules} imp::run() }}")
+    } else {
+        format!("{modules} fn speculate() -> bool {{ imp::run() }}")
+    };
+    syn::parse_str(&source).unwrap()
+}
+
+#[test]
+fn cfg_exclusive_modules_resolve_their_own_items() {
+    for nested in [true, false] {
+        let original = cfg_exclusive_modules(nested, "on", "on", "off");
+        let renamed = cfg_exclusive_modules(nested, "yes", "yes", "no");
+        let unresolved = cfg_exclusive_modules(nested, "on", "missing", "off");
+        let file = |source: &syn::File| syn_canon::canonicalize(source.clone());
+        assert_eq!(file(&original), file(&renamed), "nested {nested}");
+        assert_ne!(file(&original), file(&unresolved), "nested {nested}");
+        // The view of `speculate` contains the modules only when they are nested in its body.
+        if nested {
+            let view = |source: &syn::File| {
+                let context = SourceContext::new(core::iter::once((&[][..], source)));
+                function_form(&context, function(source, "speculate"))
+            };
+            assert_eq!(view(&original), view(&renamed));
+            assert_ne!(view(&original), view(&unresolved));
+        }
+    }
 }

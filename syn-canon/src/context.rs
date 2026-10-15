@@ -11,7 +11,7 @@ use quote::ToTokens;
 use syn::visit::Visit;
 
 use crate::alpha;
-use crate::form;
+use crate::form::{self, OWNER_PARAMETER};
 use crate::scope::{Binding, BindingId, Frame, Ns, Origin, PrimTy, ident_name, unraw};
 
 /// The original owner of a function.
@@ -102,7 +102,7 @@ impl FunctionView<'_> {
     pub fn canonicalize(&self) -> crate::CanonicalForm {
         let seed = self.ctx.seed(self.entry.module);
         let generics = self.entry.generics.map(|key| self.ctx.gen_frame(key));
-        let self_canon = self.entry.owner.self_name(seed);
+        let self_owner = self.entry.owner.self_name(seed);
         let mut sig = self.sig.clone();
         if !matches!(self.entry.owner, Owner::Free) {
             sig.ident = syn::Ident::new("__dejadoc_method", sig.ident.span());
@@ -135,7 +135,7 @@ impl FunctionView<'_> {
                 generics,
                 prim_fallback: self.entry.prim_fallback,
                 observed: self.entry.observed,
-                self_canon,
+                self_owner,
                 helper_table: Some(&self.ctx.helpers),
                 helper_module: &self.entry.helper_module,
                 helper_blocked: self.entry.helper_blocked,
@@ -1170,22 +1170,19 @@ fn seed_scope<'a>(
     frame
 }
 
-/// Bind one generic parameter in its namespaces, one id shared by every
-/// namespace the parameter occupies.
+/// Bind one generic parameter in `namespaces` under one id and its owner role `label`.
 fn bind_generic_param(
     frame: &mut Frame,
     next_id: &mut usize,
-    ns: Ns,
+    namespaces: &[Ns],
     ident: &syn::Ident,
     origin: Origin,
-    owner: &str,
+    label: String,
 ) {
     let name = ident.to_string();
-    let mut canon = String::from(owner);
-    qualified_part(&mut canon, unraw(&name));
     let binding = Binding {
         id: BindingId(*next_id),
-        canon,
+        canon: label,
         origin,
         target: None,
         raw: false,
@@ -1194,63 +1191,233 @@ fn bind_generic_param(
         value_port: None,
         helper: None,
     };
-    frame.bind(ns, &name, binding);
+    for ns in namespaces {
+        frame.bind(*ns, &name, binding.clone());
+    }
     *next_id += 1;
 }
 
-/// Shared namespace origins qualified by the enclosing generic definition.
+/// The owner's generic parameters, each bound under its role label, `labels` in parameter order.
 fn generics_frame(
     module: ModuleId,
     modules: &[Module],
     generics: &syn::Generics,
-    owner: &str,
+    labels: Vec<String>,
 ) -> Frame {
     let mut frame = Frame::default();
     let mut next_id = modules[module.0].seed.next_id();
-    for param in &generics.params {
-        match param {
-            syn::GenericParam::Type(ty_param) => {
-                bind_generic_param(
-                    &mut frame,
-                    &mut next_id,
-                    Ns::Type,
-                    &ty_param.ident,
-                    Origin::Generic,
-                    owner,
-                );
-            }
+    for (param, label) in generics.params.iter().zip(labels) {
+        let (namespaces, ident, origin): (&[Ns], _, _) = match param {
+            syn::GenericParam::Type(ty_param) => (&[Ns::Type], &ty_param.ident, Origin::Generic),
             syn::GenericParam::Lifetime(lifetime) => {
-                bind_generic_param(
-                    &mut frame,
-                    &mut next_id,
-                    Ns::Lifetime,
-                    &lifetime.lifetime.ident,
-                    Origin::Lifetime,
-                    owner,
-                );
+                (&[Ns::Lifetime], &lifetime.lifetime.ident, Origin::Lifetime)
             }
             syn::GenericParam::Const(r#const) => {
-                let name = r#const.ident.to_string();
-                let mut canon = String::from(owner);
-                qualified_part(&mut canon, unraw(&name));
-                let binding = Binding {
-                    id: BindingId(next_id),
-                    canon,
-                    origin: Origin::Generic,
-                    target: None,
-                    raw: false,
-                    prim: None,
-                    port: 0,
-                    value_port: None,
-                    helper: None,
-                };
-                frame.bind(Ns::Value, &name, binding.clone());
-                frame.bind(Ns::Type, &name, binding);
-                next_id += 1;
+                (&[Ns::Value, Ns::Type], &r#const.ident, Origin::Generic)
+            }
+        };
+        bind_generic_param(&mut frame, &mut next_id, namespaces, ident, origin, label);
+    }
+    frame
+}
+
+/// The role labels of a trait's own parameters, their argument positions.
+fn trait_roles(generics: &syn::Generics) -> Vec<String> {
+    (0..generics.params.len())
+        .map(|position| alloc::format!("{OWNER_PARAMETER}t_{position}"))
+        .collect()
+}
+
+/// The role labels of an impl's parameters, in parameter order. A role is the path of argument
+/// positions to the first appearance in the self type, then in the trait arguments. Parameters
+/// appearing in neither take their declaration order among those parameters.
+fn impl_roles(item: &syn::ItemImpl) -> Vec<String> {
+    let mut roles = OwnerRoles {
+        params: &item.generics,
+        labels: BTreeMap::new(),
+    };
+    let mut path = String::from("s");
+    roles.ty(&item.self_ty, &mut path);
+    if let Some((trait_path, _)) = &item.trait_ {
+        let mut path = String::from("t");
+        roles.path_args(trait_path, &mut path, &mut 0);
+    }
+    let mut unplaced = 0;
+    item.generics
+        .params
+        .iter()
+        .map(|param| {
+            let role = roles
+                .labels
+                .get(&param_key(param))
+                .cloned()
+                .unwrap_or_else(|| {
+                    unplaced += 1;
+                    alloc::format!("b_{}", unplaced - 1)
+                });
+            alloc::format!("{OWNER_PARAMETER}{role}")
+        })
+        .collect()
+}
+
+/// A parameter's lookup key, lifetimes apart from type and const names.
+fn param_key(param: &syn::GenericParam) -> (bool, String) {
+    match param {
+        syn::GenericParam::Lifetime(lifetime) => (true, lifetime.lifetime.ident.to_string()),
+        syn::GenericParam::Type(ty_param) => (false, ty_param.ident.to_string()),
+        syn::GenericParam::Const(r#const) => (false, r#const.ident.to_string()),
+    }
+}
+
+/// The first appearance of each owner parameter in its owner type, as a path of positions.
+struct OwnerRoles<'a> {
+    params: &'a syn::Generics,
+    labels: BTreeMap<(bool, String), String>,
+}
+
+impl OwnerRoles<'_> {
+    /// Record `ident` at `path` when it names a parameter not yet placed.
+    fn place(&mut self, lifetime: bool, ident: &syn::Ident, path: &str) {
+        let key = (lifetime, ident.to_string());
+        if !self.labels.contains_key(&key)
+            && self
+                .params
+                .params
+                .iter()
+                .any(|param| param_key(param) == key)
+        {
+            self.labels.insert(key, path.to_string());
+        }
+    }
+
+    /// Place the parameters of `ty`, numbering its direct children by syntactic position.
+    fn ty(&mut self, ty: &syn::Type, path: &mut String) {
+        match ty {
+            syn::Type::Path(type_path) if type_path.qself.is_none() => {
+                if let Some(ident) = type_path.path.get_ident() {
+                    self.place(false, ident, path);
+                } else {
+                    self.path_args(&type_path.path, path, &mut 0);
+                }
+            }
+            syn::Type::Reference(reference) => {
+                if let Some(lifetime) = &reference.lifetime {
+                    let len = enter(path, &mut 0);
+                    self.place(true, &lifetime.ident, path);
+                    path.truncate(len);
+                }
+                let len = enter(path, &mut 1);
+                self.ty(&reference.elem, path);
+                path.truncate(len);
+            }
+            syn::Type::Array(array) => {
+                let len = enter(path, &mut 0);
+                self.ty(&array.elem, path);
+                path.truncate(len);
+                let len = enter(path, &mut 1);
+                self.expr(&array.len, path);
+                path.truncate(len);
+            }
+            syn::Type::Tuple(tuple) => {
+                let mut index = 0;
+                for elem in &tuple.elems {
+                    let len = enter(path, &mut index);
+                    self.ty(elem, path);
+                    path.truncate(len);
+                }
+            }
+            syn::Type::Slice(syn::TypeSlice { elem, .. })
+            | syn::Type::Ptr(syn::TypePtr { elem, .. })
+            | syn::Type::Paren(syn::TypeParen { elem, .. })
+            | syn::Type::Group(syn::TypeGroup { elem, .. }) => {
+                let len = enter(path, &mut 0);
+                self.ty(elem, path);
+                path.truncate(len);
+            }
+            other => self.occurrences(|visitor| visitor.visit_type(other), path),
+        }
+    }
+
+    /// Place the parameters of a path's angle-bracketed arguments, numbered across all segments.
+    /// Other parameters stay unplaced and take their declaration order among the unplaced.
+    fn path_args(&mut self, path_syntax: &syn::Path, path: &mut String, index: &mut usize) {
+        for segment in &path_syntax.segments {
+            if let syn::PathArguments::AngleBracketed(arguments) = &segment.arguments {
+                for argument in &arguments.args {
+                    let len = enter(path, index);
+                    self.argument(argument, path);
+                    path.truncate(len);
+                }
             }
         }
     }
-    frame
+
+    fn argument(&mut self, argument: &syn::GenericArgument, path: &mut String) {
+        match argument {
+            syn::GenericArgument::Type(ty) => self.ty(ty, path),
+            syn::GenericArgument::Lifetime(lifetime) => self.place(true, &lifetime.ident, path),
+            syn::GenericArgument::Const(expr) => self.expr(expr, path),
+            other => self.occurrences(|visitor| visitor.visit_generic_argument(other), path),
+        }
+    }
+
+    fn expr(&mut self, expr: &syn::Expr, path: &str) {
+        if let syn::Expr::Path(expr_path) = expr
+            && expr_path.qself.is_none()
+            && let Some(ident) = expr_path.path.get_ident()
+        {
+            self.place(false, ident, path);
+        } else {
+            self.occurrences(|visitor| visitor.visit_expr(expr), path);
+        }
+    }
+
+    /// Place the parameters a syntax node `visit` reaches, each occurrence numbered in order.
+    fn occurrences(&mut self, visit: impl FnOnce(&mut Occurrences<'_, '_>), path: &str) {
+        let mut visitor = Occurrences {
+            roles: self,
+            path,
+            count: 0,
+        };
+        visit(&mut visitor);
+    }
+}
+
+/// Append child `index` to `path`, advancing it, and return the length to truncate back to.
+fn enter(path: &mut String, index: &mut usize) -> usize {
+    let len = path.len();
+    path.push('_');
+    path.push_str(&index.to_string());
+    *index += 1;
+    len
+}
+
+/// Parameter occurrences inside syntax with no positional structure, numbered in visit order.
+struct Occurrences<'r, 'g> {
+    roles: &'r mut OwnerRoles<'g>,
+    path: &'r str,
+    count: usize,
+}
+
+impl Occurrences<'_, '_> {
+    fn place(&mut self, lifetime: bool, ident: &syn::Ident) {
+        let label = alloc::format!("{}_v{}", self.path, self.count);
+        self.count += 1;
+        self.roles.place(lifetime, ident, &label);
+    }
+}
+
+impl<'ast> Visit<'ast> for Occurrences<'_, '_> {
+    fn visit_path(&mut self, path: &'ast syn::Path) {
+        if let Some(ident) = path.get_ident() {
+            self.place(false, ident);
+        }
+        syn::visit::visit_path(self, path);
+    }
+
+    fn visit_lifetime(&mut self, lifetime: &'ast syn::Lifetime) {
+        self.place(true, &lifetime.ident);
+    }
 }
 
 /// Index every function `items` declares, nested modules included.
@@ -1322,7 +1489,7 @@ fn index_scope<'a>(
                 let key = &raw const i.generics;
                 gen_frames
                     .entry(key)
-                    .or_insert_with(|| impl_generics_frame(module, modules, path, i));
+                    .or_insert_with(|| generics_frame(module, modules, &i.generics, impl_roles(i)));
                 for member in &i.items {
                     if let syn::ImplItem::Fn(f) = member {
                         index_fn(
@@ -1348,13 +1515,7 @@ fn index_scope<'a>(
                 let observed = observed || live_attr(&t.attrs);
                 let key = &raw const t.generics;
                 gen_frames.entry(key).or_insert_with(|| {
-                    let ident = &t.ident;
-                    let generics = &t.generics;
-                    let supertraits = &t.supertraits;
-                    let predicates = &t.generics.where_clause;
-                    let header = quote::quote!(trait #ident #generics : #supertraits #predicates);
-                    let name = qualified_name(path, &header.to_string());
-                    generics_frame(module, modules, &t.generics, &name)
+                    generics_frame(module, modules, &t.generics, trait_roles(&t.generics))
                 });
                 for member in &t.items {
                     if let syn::TraitItem::Fn(f) = member
@@ -1381,21 +1542,6 @@ fn index_scope<'a>(
             _ => {}
         }
     }
-}
-
-fn impl_generics_frame(
-    module: ModuleId,
-    modules: &[Module],
-    path: &[String],
-    item: &syn::ItemImpl,
-) -> Frame {
-    let generics = &item.generics;
-    let self_ty = &item.self_ty;
-    let trait_path = item.trait_.as_ref().map(|(path, _)| path);
-    let predicates = &item.generics.where_clause;
-    let header = quote::quote!(impl #generics #trait_path for #self_ty #predicates);
-    let name = qualified_name(path, &header.to_string());
-    generics_frame(module, modules, &item.generics, &name)
 }
 
 /// The module facts one indexed function is recorded with.

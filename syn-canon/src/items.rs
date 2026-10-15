@@ -2220,7 +2220,7 @@ pub(crate) fn normalize(
         crate::alpha::Options {
             seed: options.seed,
             generics: options.generics,
-            self_canon: options.self_canon.clone(),
+            self_owner: options.self_owner.clone(),
             prim_fallback: options.prim_fallback,
             observed: options.observed,
             helper_table: Some(table),

@@ -31,8 +31,8 @@ pub(crate) struct Options<'a> {
     /// The frame of the enclosing impl or trait's generics, above the seed
     /// and below the function's own binders.
     pub(crate) generics: Option<&'a Frame>,
-    /// The canon the view's `Self` names, for a method or trait view.
-    pub(crate) self_canon: Option<String>,
+    /// The qualified owner of a method or trait view, which value-position `Self::` members name.
+    pub(crate) self_owner: Option<String>,
     /// Unresolved type names may still spell a primitive, when no glob
     /// import can shadow them.
     pub(crate) prim_fallback: bool,
@@ -44,6 +44,9 @@ pub(crate) struct Options<'a> {
     pub(crate) helper_blocked: bool,
     pub(crate) helper_syntax: Option<crate::helpers::HelperSyntax>,
 }
+
+/// The label every method or trait view prints for its own `Self`.
+const OWNER_SELF: &str = "__dejadoc_owner_self";
 
 /// A resolved name reference, its identity only, the canon resolves on render.
 #[derive(Clone, Copy)]
@@ -188,6 +191,9 @@ pub(crate) struct Renamer<'env> {
     frames: Vec<Frame>,
     /// The item frames of local modules, keyed by the module's binding id.
     mod_frames: BTreeMap<BindingId, Frame>,
+    /// The binding id of each inline module declaration by address, apart for `cfg`-exclusive
+    /// declarations sharing one name.
+    mod_bindings: BTreeMap<*const syn::ItemMod, BindingId>,
     /// The written targets of the pass's own `use` aliases.
     targets: Vec<Target>,
     /// The next binding id to hand out, above any inherited id.
@@ -204,6 +210,9 @@ pub(crate) struct Renamer<'env> {
     generics: Option<&'env Frame>,
     /// The `Self` frame of a seeded method or trait view.
     self_frame: Option<Frame>,
+    /// The qualified owner of a seeded view. Value-position member paths print it, and other
+    /// references resolving to it print the owner label like `Self`.
+    self_member_owner: Option<String>,
     /// First-reference numbers of inherited binding ids.
     inherited_numbers: BTreeMap<BindingId, usize>,
     /// The local canon of every local binding id.
@@ -256,6 +265,7 @@ impl<'env> Renamer<'env> {
         Self {
             frames: vec![Frame::default()],
             mod_frames: BTreeMap::new(),
+            mod_bindings: BTreeMap::new(),
             targets: Vec::new(),
             next_id: 0,
             counter: 0,
@@ -264,6 +274,7 @@ impl<'env> Renamer<'env> {
             seed: None,
             generics: None,
             self_frame: None,
+            self_member_owner: None,
             inherited_numbers: BTreeMap::new(),
             local_canons: BTreeMap::new(),
             self_ty: None,
@@ -325,7 +336,7 @@ impl<'env> Renamer<'env> {
         renamer.helper_module = options.helper_module.to_vec();
         renamer.helper_blocked = options.helper_blocked;
         renamer.helper_syntax = options.helper_syntax.unwrap_or_default();
-        if let Some(canon) = options.self_canon {
+        if let Some(owner) = options.self_owner {
             let id = BindingId(
                 renamer
                     .seed
@@ -341,7 +352,7 @@ impl<'env> Renamer<'env> {
                 "Self",
                 Binding {
                     id,
-                    canon,
+                    canon: String::from(OWNER_SELF),
                     origin: Origin::SelfTy,
                     prim: None,
                     port: 0,
@@ -352,6 +363,7 @@ impl<'env> Renamer<'env> {
                 },
             );
             renamer.self_frame = Some(frame);
+            renamer.self_member_owner = Some(owner);
         }
         renamer
     }
@@ -677,10 +689,24 @@ impl<'env> Renamer<'env> {
                 if self.context {
                     inherited_name(resolved.ns, self.inherited_number(resolved.id))
                 } else {
-                    self.inherited_binding(resolved.id).canon.clone()
+                    self.inherited_canon(self.inherited_binding(resolved.id))
                 }
             }
         }
+    }
+
+    /// The printed name of an inherited binding, the owner label for the view's own owner.
+    fn inherited_canon(&self, binding: &Binding) -> String {
+        if self.names_owner(binding) {
+            String::from(OWNER_SELF)
+        } else {
+            binding.canon.clone()
+        }
+    }
+
+    /// Whether an inherited binding is the view's own owner, in any namespace it occupies.
+    fn names_owner(&self, binding: &Binding) -> bool {
+        self.self_member_owner.as_deref() == Some(binding.canon.as_str())
     }
 
     /// The inherited binding selected by its identity.
@@ -964,7 +990,17 @@ impl<'env> Renamer<'env> {
                     && candidate.binding.canon == first.binding.canon
             })
         {
-            rename(ident, &first.binding.canon);
+            // A macro token's position is unknown, so `Self` keeps the qualified owner.
+            let canon = match &self.self_member_owner {
+                Some(owner)
+                    if first.domain == Domain::Inherited
+                        && first.binding.origin == Origin::SelfTy =>
+                {
+                    owner
+                }
+                _ => &first.binding.canon,
+            };
+            rename(ident, canon);
         } else {
             let mut canon = String::from("__dejadoc_macro_namespaces");
             if raw {
@@ -1118,25 +1154,38 @@ impl<'env> Renamer<'env> {
                 .get(&resolved.id)
                 .expect("a local binding")
                 .clone(),
-            Domain::Inherited => self.inherited_binding(resolved.id).canon.clone(),
+            Domain::Inherited => self.inherited_canon(self.inherited_binding(resolved.id)),
         }
     }
 
     /// Pass every visible value binding into the scheduler's value
     /// environment, a nearer name masking a farther one.
     pub(crate) fn frame_env(&self, env: &mut BTreeMap<String, schedule::Value>) {
-        let frames = self
+        let inherited = self
             .self_frame
             .iter()
             .chain(self.generics)
             .chain(self.seed)
             .chain(self.inherited.frames.iter());
-        for frame in self.frames.iter().rev().chain(frames) {
+        let frames = self
+            .frames
+            .iter()
+            .rev()
+            .map(|frame| (frame, false))
+            .chain(inherited.map(|frame| (frame, true)));
+        for (frame, is_inherited) in frames {
             for (name, binding) in frame.bindings(Ns::Value) {
                 let port = match binding.origin {
                     Origin::Parameter => schedule::Port::Param(binding.port),
                     _ => binding.value_port.as_ref().map_or_else(
-                        || schedule::Port::Free(FreeKey::Resolved(binding.canon.clone())),
+                        || {
+                            let canon = if is_inherited {
+                                self.inherited_canon(binding)
+                            } else {
+                                binding.canon.clone()
+                            };
+                            schedule::Port::Free(FreeKey::Resolved(canon))
+                        },
                         Clone::clone,
                     ),
                 };
@@ -1328,7 +1377,15 @@ impl<'env> Renamer<'env> {
             path.segments = rendered;
             path.leading_colon = rooted.then(Default::default);
         } else {
-            let name = self.render(&resolved);
+            let member = !self.in_type
+                && path.segments.len() > 1
+                && resolved.domain == Domain::Inherited
+                && (resolved.origin == Origin::SelfTy
+                    || self.names_owner(self.inherited_binding(resolved.id)));
+            let name = match &self.self_member_owner {
+                Some(owner) if member => owner.clone(),
+                _ => self.render(&resolved),
+            };
             rename(
                 &mut path.segments.first_mut().expect("a first segment").ident,
                 &name,
@@ -2408,11 +2465,16 @@ fn prebind(renamer: &mut Renamer<'_>, items: &[&syn::Item]) {
                 .helper_canons
                 .insert(helper, FreeKey::Resolved(binding.canon.clone()));
         }
-        if let syn::Item::Mod(syn::ItemMod {
-            content: Some((_, module_items)),
-            ..
-        }) = item
+        if let syn::Item::Mod(
+            module @ syn::ItemMod {
+                content: Some((_, module_items)),
+                ..
+            },
+        ) = item
         {
+            renamer
+                .mod_bindings
+                .insert(core::ptr::from_ref(module), binding.id);
             renamer.push();
             let previous = renamer.prim_fallback;
             renamer.prim_fallback = crate::context::scope_primitives_known(module_items);
@@ -3027,7 +3089,9 @@ impl VisitMut for Renamer<'_> {
                 .push(crate::scope::ident_name(&item.ident));
             None
         };
+        let declared = self.mod_bindings.get(&core::ptr::from_ref(&*item)).copied();
         let id = self.rename_binder(Ns::Type, &mut item.ident);
+        let id = declared.unwrap_or(id);
         self.visit_attrs(&mut item.attrs);
         if let Some((_, items)) = &mut item.content {
             let frame = self.mod_frames.remove(&id).unwrap_or_default();

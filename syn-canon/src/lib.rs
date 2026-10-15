@@ -46,7 +46,7 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
         alpha::Options {
             seed: None,
             generics: None,
-            self_canon: None,
+            self_owner: None,
             prim_fallback: true,
             observed: false,
             helper_table: None,

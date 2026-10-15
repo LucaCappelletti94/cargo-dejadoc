@@ -22,7 +22,7 @@ println!("{forms:?}");
 
 `canonicalize` and `canonicalize_failing` return `CanonicalForm`. Its key is opaque and cannot be parsed as Rust, with `Eq`, `Hash` and `Display` sharing that key. `leaf_tokens()` counts canonical leaves, while `body_units()` counts body paths, lifetimes and operators as one and excludes commas and delimiters.
 
-`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves namespace-specific inherited references, opaque macro scope identities and owner generics while alpha-renaming its declarations. Literal payload bytes remain part of the owner identity.
+`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves namespace-specific inherited references and opaque macro scope identities while alpha-renaming its declarations. Its key prints the method's own owner and owner parameters as owner-local labels, numbering the parameters by first use, and `owner_role_key()` labels them by their role in the owner type instead. Value-position `Self::` members keep the qualified owner, whose literal payload bytes remain part of its identity.
 
 Indexed imports bind only their declared namespaces. Ambiguous or cyclic unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
 
