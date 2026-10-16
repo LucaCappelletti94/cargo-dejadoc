@@ -958,9 +958,11 @@ impl<'env> Renamer<'env> {
         } else {
             &[Ns::Macro]
         };
-        if let Some(first) = path.segments.first_mut() {
-            self.resolve(ns, &mut first.ident);
-        }
+        let first = path
+            .segments
+            .first_mut()
+            .expect("a parsed path has a segment");
+        self.resolve(ns, &mut first.ident);
     }
 
     fn resolve_opaque(&mut self, ident: &mut Ident) -> bool {

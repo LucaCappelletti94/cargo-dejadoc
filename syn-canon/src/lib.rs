@@ -1566,8 +1566,8 @@ mod tests {
                 "#[derive(Clone, Debug)]\nstruct P;",
             ),
             (
-                "#[derive(Debug)]\nstruct P {\n    /// Help.\n    x: u8,\n}",
-                "#[derive(Debug)]\nstruct P {\n    x: u8,\n}",
+                "#[repr(C)]\n#[derive(Debug)]\nstruct P {\n    /// Help.\n    x: u8,\n}",
+                "#[repr(C)]\n#[derive(Debug)]\nstruct P {\n    x: u8,\n}",
             ),
         ];
         for import in [
@@ -1679,6 +1679,10 @@ mod tests {
             (
                 "use count::A as dbg;\n#[dbg]\nfn g() {}",
                 "use count::A as foo;\n#[foo]\nfn g() {}",
+            ),
+            (
+                "use count::A as dbg;\n#[::dbg::check]\nfn g() {}",
+                "use count::A as foo;\n#[::dbg::check]\nfn g() {}",
             ),
         ] {
             let (one, two) = (

@@ -767,17 +767,14 @@ impl Drift<'_> {
             return;
         }
         let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
-        for attr in attrs
-            .iter_mut()
-            .filter(|attr| attr.path().is_ident("derive"))
-        {
-            let syn::Meta::List(list) = &mut attr.meta else {
-                continue;
-            };
-            let Ok(mut paths) = parser.parse2(list.tokens.clone()) else {
-                continue;
-            };
-            let mut marked = false;
+        let lists = attrs.iter_mut().filter_map(|attr| match &mut attr.meta {
+            syn::Meta::List(list) if list.path.is_ident("derive") => {
+                let paths = parser.parse2(list.tokens.clone()).ok()?;
+                Some((list, paths))
+            }
+            _ => None,
+        });
+        for (list, mut paths) in lists {
             for path in &mut paths {
                 if path.leading_colon.is_none()
                     && path.segments.len() == 1
@@ -788,12 +785,9 @@ impl Drift<'_> {
                 {
                     let ident = &mut path.segments[0].ident;
                     *ident = syn::Ident::new_raw(STD_DERIVES[index], ident.span());
-                    marked = true;
                 }
             }
-            if marked {
-                list.tokens = paths.into_token_stream();
-            }
+            list.tokens = paths.into_token_stream();
         }
     }
 
@@ -1475,19 +1469,16 @@ pub(crate) fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
 pub(crate) fn macro_derive_meta(meta: &syn::Meta) -> bool {
     use syn::parse::Parser;
 
-    if !meta.path().is_ident("derive") {
-        return false;
-    }
-    let syn::Meta::List(list) = meta else {
-        return true;
-    };
     let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
-    parser.parse2(list.tokens.clone()).map_or(true, |paths| {
-        paths.iter().any(|path| {
-            path.get_ident()
-                .is_none_or(|name| !STD_DERIVES.iter().any(|std| name == std))
+    meta.path().is_ident("derive")
+        && meta.require_list().map_or(true, |list| {
+            parser.parse2(list.tokens.clone()).map_or(true, |paths| {
+                paths.iter().any(|path| {
+                    path.get_ident()
+                        .is_none_or(|name| !STD_DERIVES.iter().any(|std| name == std))
+                })
+            })
         })
-    })
 }
 
 pub(crate) fn has_macro_attribute(attrs: &[syn::Attribute]) -> bool {
