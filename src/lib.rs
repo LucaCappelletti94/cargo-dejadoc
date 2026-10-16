@@ -157,8 +157,8 @@ impl Dejadoc {
     /// # Errors
     ///
     /// Fails when `cargo metadata` cannot resolve the workspace, when the
-    /// config cannot be read or parsed, or when a module file cannot be
-    /// canonicalized.
+    /// package selector names no workspace member, when the config cannot be
+    /// read or parsed, or when a module file cannot be canonicalized.
     ///
     /// # Panics
     ///
@@ -396,6 +396,9 @@ pub enum Error {
     /// The workspace could not be resolved.
     #[error("workspace: {0}")]
     Workspace(#[from] cargo_metadata::Error),
+    /// The package selector names no workspace member.
+    #[error("workspace: no workspace member named `{0}`")]
+    UnknownPackage(String),
     /// A file could not be read.
     #[error("I/O: {0}")]
     Io(#[from] std::io::Error),

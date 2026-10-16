@@ -60,14 +60,24 @@ fn mangle_owner(text: &str) -> String {
 struct ModuleId(usize);
 
 /// One indexed module: its seed frame and its own glob uncertainty.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "primitive, derive, observer and helper facts of a module are independent"
+)]
 struct Module {
     seed: Frame,
     prim_fallback: bool,
+    /// Every std derive name the module sees names the std derive.
+    std_derives: bool,
     observed: bool,
     helper_blocked: bool,
 }
 
 /// One original declaration and its module environment.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "primitive, observer and helper facts of a declaration are independent"
+)]
 struct Decl<'a> {
     module: ModuleId,
     /// The original declaration attributes.
@@ -75,6 +85,8 @@ struct Decl<'a> {
     owner: Owner,
     prim_fallback: bool,
     observed: bool,
+    /// An enclosing inline module, impl or trait carries an attribute macro reading the function.
+    enclosing_observed: bool,
     helper_module: Vec<String>,
     helper_blocked: bool,
     /// The original enclosing impl or trait generics.
@@ -138,6 +150,8 @@ impl FunctionView<'_> {
                 generics,
                 prim_fallback: self.entry.prim_fallback,
                 observed: self.entry.observed,
+                enclosing_observed: self.entry.enclosing_observed,
+                std_derives: self.ctx.modules[self.entry.module.0].std_derives,
                 self_owner,
                 helper_table: Some(&self.ctx.helpers),
                 helper_module: &self.entry.helper_module,
@@ -183,6 +197,10 @@ impl<'a> SourceContext<'a> {
             register_inline(&mut scopes, path, &file.items);
         }
         let ancestry = module_ancestry(&scopes);
+        // A `#[macro_use] extern crate` sits at a crate root and reaches every module.
+        let macro_use = files.iter().any(|(path, file)| {
+            path.is_empty() && file.items.iter().any(crate::drift::macro_use_crate)
+        });
         let blocked: BTreeSet<Vec<String>> = ancestry
             .iter()
             .filter(|(_, (_, blocked))| *blocked)
@@ -201,6 +219,7 @@ impl<'a> SourceContext<'a> {
                     modules.push(Module {
                         seed: seed_frame(&scopes, path, &scope, prim_fallback),
                         prim_fallback,
+                        std_derives: !macro_use && crate::drift::std_derives_visible(scope.items()),
                         observed,
                         helper_blocked,
                     });
@@ -225,6 +244,7 @@ impl<'a> SourceContext<'a> {
                 &modules,
                 path,
                 ModuleScope::File(file),
+                false,
                 false,
                 false,
                 &mut gen_frames,
@@ -1662,6 +1682,7 @@ fn index_scope<'a>(
     path: &[String],
     scope: ModuleScope<'a>,
     observed: bool,
+    macro_input: bool,
     helper_blocked: bool,
     gen_frames: &mut BTreeMap<*const syn::Generics, Frame>,
 ) {
@@ -1683,6 +1704,7 @@ fn index_scope<'a>(
                         prim_fallback,
                         owner: Owner::Free,
                         observed,
+                        macro_input,
                         helper_module: path,
                         helper_blocked,
                         attrs: &f.attrs,
@@ -1703,6 +1725,7 @@ fn index_scope<'a>(
                         &child,
                         ModuleScope::Inline(m),
                         observed || live_attr(&m.attrs),
+                        macro_input || crate::drift::has_macro_attribute(&m.attrs),
                         helper_blocked || blocking_attr(&m.attrs),
                         gen_frames,
                     );
@@ -1716,6 +1739,7 @@ fn index_scope<'a>(
                     Owner::Inherent(text)
                 };
                 let observed = observed || live_attr(&i.attrs);
+                let macro_input = macro_input || crate::drift::has_macro_attribute(&i.attrs);
                 let key = &raw const i.generics;
                 gen_frames
                     .entry(key)
@@ -1729,6 +1753,7 @@ fn index_scope<'a>(
                                 prim_fallback,
                                 owner: owner.clone(),
                                 observed,
+                                macro_input,
                                 helper_module: path,
                                 helper_blocked: helper_blocked || blocking_attr(&i.attrs),
                                 attrs: &f.attrs,
@@ -1743,6 +1768,7 @@ fn index_scope<'a>(
             syn::Item::Trait(t) => {
                 let text = t.ident.to_string();
                 let observed = observed || live_attr(&t.attrs);
+                let macro_input = macro_input || crate::drift::has_macro_attribute(&t.attrs);
                 let key = &raw const t.generics;
                 gen_frames.entry(key).or_insert_with(|| {
                     generics_frame(module, modules, &t.generics, trait_roles(&t.generics))
@@ -1758,6 +1784,7 @@ fn index_scope<'a>(
                                 prim_fallback,
                                 owner: Owner::Trait(text.clone()),
                                 observed,
+                                macro_input,
                                 attrs: &f.attrs,
                                 helper_module: path,
                                 helper_blocked: helper_blocked || blocking_attr(&t.attrs),
@@ -1775,11 +1802,17 @@ fn index_scope<'a>(
 }
 
 /// The module facts one indexed function is recorded with.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "primitive, observer, macro input and helper facts of a function are independent"
+)]
 struct FnDecl<'a, 'path> {
     module: ModuleId,
     prim_fallback: bool,
     owner: Owner,
     observed: bool,
+    /// An enclosing inline module, impl or trait carries an attribute macro reading the function.
+    macro_input: bool,
     helper_module: &'path [String],
     helper_blocked: bool,
     attrs: &'a [syn::Attribute],
@@ -1804,6 +1837,7 @@ fn index_fn<'a>(
             owner: facts.owner,
             prim_fallback: facts.prim_fallback,
             observed: facts.observed || live_attr(facts.attrs),
+            enclosing_observed: facts.macro_input,
             helper_module: facts.helper_module.to_vec(),
             helper_blocked: facts.helper_blocked || blocking_attr(facts.attrs),
             generics: facts.generics,
@@ -1870,7 +1904,7 @@ pub(crate) fn blocking_attr(attrs: &[syn::Attribute]) -> bool {
 
 /// The metas `meta` wraps after its first `skip` arguments, `None` when
 /// they don't parse.
-fn wrapped(meta: &syn::Meta, skip: usize) -> Option<Vec<syn::Meta>> {
+pub(crate) fn wrapped(meta: &syn::Meta, skip: usize) -> Option<Vec<syn::Meta>> {
     let syn::Meta::List(list) = meta else {
         return None;
     };

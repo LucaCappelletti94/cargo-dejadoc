@@ -25,6 +25,10 @@ use crate::scope::{
 };
 
 /// The normalization options of a file pass.
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "primitive, observer, derive and helper facts of a pass are independent"
+)]
 pub(crate) struct Options<'a> {
     /// The seed frame of the view's module, when one is indexed.
     pub(crate) seed: Option<&'a Frame>,
@@ -38,6 +42,10 @@ pub(crate) struct Options<'a> {
     pub(crate) prim_fallback: bool,
     /// A live observer attribute on the declaration or an enclosing item.
     pub(crate) observed: bool,
+    /// An attribute macro on an enclosing item reads the declaration as written.
+    pub(crate) enclosing_observed: bool,
+    /// The scopes around the file leave every std derive name bound to the std derive.
+    pub(crate) std_derives: bool,
     /// The source context's helper summary table, when one is indexed.
     pub(crate) helper_table: Option<&'a crate::helpers::HelperTable>,
     pub(crate) helper_module: &'a [String],
@@ -936,6 +944,22 @@ impl<'env> Renamer<'env> {
             && resolved.target.is_none()
         {
             rename(ident, &self.render(&resolved));
+        }
+    }
+
+    /// Resolve the head of an attribute or derive macro path, a single segment in the
+    /// macro namespace and a longer path's first segment in the type namespace.
+    fn resolve_macro_path(&mut self, path: &mut syn::Path) {
+        if path.leading_colon.is_some() {
+            return;
+        }
+        let ns: &[Ns] = if path.segments.len() > 1 {
+            &[Ns::Type]
+        } else {
+            &[Ns::Macro]
+        };
+        if let Some(first) = path.segments.first_mut() {
+            self.resolve(ns, &mut first.ident);
         }
     }
 
@@ -3475,12 +3499,31 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_attribute_mut(&mut self, attribute: &mut syn::Attribute) {
+        use syn::parse::Parser;
+
         let prepared = core::mem::replace(&mut self.constants_prepared, true);
         let observed = core::mem::replace(&mut self.constants_observed, true);
-        // Attribute paths name external items, but a `#[attr = expr]`
-        // value may reference the local bindings.
-        if let syn::Meta::NameValue(name_value) = &mut attribute.meta {
-            syn::visit_mut::visit_expr_mut(self, &mut name_value.value);
+        // An attribute macro or a derive names the macro binding it resolves to, and a
+        // `#[attr = expr]` value may reference the local bindings.
+        match &mut attribute.meta {
+            syn::Meta::Path(path) => self.resolve_macro_path(path),
+            syn::Meta::List(list) => {
+                self.resolve_macro_path(&mut list.path);
+                let parser =
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
+                if list.path.is_ident("derive")
+                    && let Ok(mut paths) = parser.parse2(list.tokens.clone())
+                {
+                    paths
+                        .iter_mut()
+                        .for_each(|path| self.resolve_macro_path(path));
+                    list.tokens = paths.into_token_stream();
+                }
+            }
+            syn::Meta::NameValue(name_value) => {
+                self.resolve_macro_path(&mut name_value.path);
+                syn::visit_mut::visit_expr_mut(self, &mut name_value.value);
+            }
         }
         self.constants_prepared = prepared;
         self.constants_observed = observed;

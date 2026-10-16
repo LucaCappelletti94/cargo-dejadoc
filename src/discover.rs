@@ -34,7 +34,8 @@ pub(crate) struct Workspace {
 ///
 /// # Errors
 ///
-/// Fails when `cargo metadata` cannot be run for `root`.
+/// Fails when `cargo metadata` cannot be run for `root`, or when `package` names no workspace
+/// member.
 pub(crate) fn workspace(
     root: &std::path::Path,
     package: Option<&str>,
@@ -45,11 +46,13 @@ pub(crate) fn workspace(
         .no_deps()
         .exec()?;
     let mut targets = Vec::new();
+    let mut selected = false;
     for package in metadata
         .packages
         .iter()
         .filter(|p| package.is_none_or(|want| p.name == want))
     {
+        selected = true;
         for target in &package.targets {
             targets.push(Target {
                 name: target.name.clone(),
@@ -61,10 +64,16 @@ pub(crate) fn workspace(
                         cargo_metadata::TargetKind::Lib
                             | cargo_metadata::TargetKind::RLib
                             | cargo_metadata::TargetKind::DyLib
+                            | cargo_metadata::TargetKind::ProcMacro
                     )
                 }),
             });
         }
+    }
+    if let Some(name) = package
+        && !selected
+    {
+        return Err(crate::Error::UnknownPackage(name.to_string()));
     }
     Ok(Workspace {
         root: metadata.workspace_root.clone().into(),
@@ -826,7 +835,27 @@ mod tests {
         let ws = workspace(dir.path(), Some("beta"), false).unwrap();
         assert_eq!(ws.targets.len(), 1);
         assert_eq!(ws.targets[0].name, "beta");
-        let ws = workspace(dir.path(), Some("nope"), false).unwrap();
-        assert!(ws.targets.is_empty());
+        let err = workspace(dir.path(), Some("nope"), false).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "workspace: no workspace member named `nope`"
+        );
+    }
+
+    #[test]
+    fn proc_macro_targets_are_libraries() {
+        let dir = tempfile::tempdir().unwrap();
+        cargo_package(
+            dir.path(),
+            "ws",
+            "[lib]\nproc-macro = true\n[[bin]]\nname = \"tool\"\npath = \"src/bin/tool.rs\"\n[workspace]\n",
+        );
+        let ws = workspace(dir.path(), None, false).unwrap();
+        let targets: Vec<(&str, bool)> = ws
+            .targets
+            .iter()
+            .map(|t| (t.name.as_str(), t.library))
+            .collect();
+        assert_eq!(targets, [("ws", true), ("tool", false)]);
     }
 }

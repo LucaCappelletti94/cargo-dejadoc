@@ -49,6 +49,8 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
             self_owner: None,
             prim_fallback: true,
             observed: false,
+            enclosing_observed: false,
+            std_derives: true,
             helper_table: None,
             helper_module: &[],
             helper_blocked: false,
@@ -91,33 +93,31 @@ const COMMA_BLIND_ATTRIBUTES: [&str; 10] = [
 /// attribute that may match on it, and respell literals outside `opaque` macro and attribute tokens.
 pub(crate) fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) -> Vec<TokenTree> {
     let mut out: Vec<TokenTree> = Vec::new();
-    // A proc macro derive was seen, then the `struct`, `enum` or `union` whose body it reads.
-    let (mut derived, mut derived_item) = (false, false);
+    // An attribute macro or a proc macro derive was seen, then the item it reads, up to its
+    // closing `;` or its braced body.
+    let mut observed = false;
     for tree in stream {
         let tree = match tree {
-            TokenTree::Ident(ident) => {
-                derived_item |= derived && ["struct", "enum", "union"].iter().any(|kw| ident == kw);
-                TokenTree::Ident(ident)
-            }
+            TokenTree::Ident(ident) => TokenTree::Ident(ident),
             TokenTree::Punct(punct) => {
                 if punct.as_char() == ';' {
-                    (derived, derived_item) = (false, false);
+                    observed = false;
                 }
                 TokenTree::Punct(punct)
             }
             TokenTree::Group(group) => {
                 let shut = opaque
                     || matches!(out.last(), Some(TokenTree::Punct(p)) if matches!(p.as_char(), '!' | '#'));
-                derived |= macro_derive_attribute(&group);
-                let body = derived_item
-                    && matches!(
-                        group.delimiter(),
-                        proc_macro2::Delimiter::Brace | proc_macro2::Delimiter::Parenthesis
-                    );
-                if body {
-                    (derived, derived_item) = (false, false);
+                let attribute = group.delimiter() == proc_macro2::Delimiter::Bracket
+                    && matches!(out.last(), Some(TokenTree::Punct(p)) if p.as_char() == '#');
+                let read = observed && !attribute;
+                if attribute {
+                    observed |= observer_attribute(&group);
                 }
-                let keep = keep_commas || body || reads_commas(&out, &group);
+                if read && group.delimiter() == proc_macro2::Delimiter::Brace {
+                    observed = false;
+                }
+                let keep = keep_commas || read || reads_commas(&out, &group);
                 drift::map_group(&group, |inner| {
                     let mut inner = fold_tokens(inner, shut, keep);
                     // A one-tuple keeps its comma, the paren fold already told it apart.
@@ -137,19 +137,12 @@ pub(crate) fn fold_tokens(stream: TokenStream, opaque: bool, keep_commas: bool) 
     out
 }
 
-/// Whether `group` is a `[derive(…)]` naming a proc macro. Only an attribute puts one right
-/// before an item keyword, so the `#` ahead of it needs no check.
-fn macro_derive_attribute(group: &proc_macro2::Group) -> bool {
-    let mut inner = group.stream().into_iter();
-    match (inner.next(), inner.next()) {
-        (Some(TokenTree::Ident(name)), Some(TokenTree::Group(list))) if name == "derive" => {
-            list.stream().into_iter().any(|tree| {
-                matches!(tree, TokenTree::Ident(name)
-                    if !drift::STD_DERIVES.iter().any(|std| name == std))
-            })
-        }
-        _ => false,
-    }
+/// Whether the outer attribute `group` may be a macro or a proc macro derive that reads the
+/// item after it, the same reading the syntax pass gives the attribute.
+fn observer_attribute(group: &proc_macro2::Group) -> bool {
+    syn::parse2::<syn::Meta>(group.stream()).map_or(true, |meta| {
+        drift::macro_meta(&meta) || drift::macro_derive_meta(&meta)
+    })
 }
 
 /// Whether `group`, following the tokens in `before`, holds the input of a macro call or an
@@ -1559,6 +1552,195 @@ mod tests {
         );
         let b = canonicalize("#[derive(Debug, Clone)]\nstruct P {\n    x: u8\n}");
         assert_eq!(a.text, b.text);
+    }
+
+    #[test]
+    fn a_std_derive_name_bound_by_another_macro_keeps_its_input() {
+        let pairs = [
+            (
+                "#[derive(Debug)]\nstruct P {\n    x: u8,\n}",
+                "#[derive(Debug)]\nstruct P {\n    x: u8\n}",
+            ),
+            (
+                "#[derive(Debug, Clone)]\nstruct P;",
+                "#[derive(Clone, Debug)]\nstruct P;",
+            ),
+            (
+                "#[derive(Debug)]\nstruct P {\n    /// Help.\n    x: u8,\n}",
+                "#[derive(Debug)]\nstruct P {\n    x: u8,\n}",
+            ),
+        ];
+        for import in [
+            "use count::CommaCount as Debug;",
+            "use count::Debug;",
+            "use count::{Debug, Other};",
+            "use count::*;",
+        ] {
+            for (one, two) in pairs {
+                for (one, two) in [
+                    (format!("{import}\n{one}"), format!("{import}\n{two}")),
+                    (
+                        format!("{import}\n{one}\nfn main() {{}}"),
+                        format!("{import}\n{two}\nfn main() {{}}"),
+                    ),
+                    (
+                        format!("{import}\nfn main() {{\n{one}\n}}"),
+                        format!("{import}\nfn main() {{\n{two}\n}}"),
+                    ),
+                ] {
+                    assert_ne!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+                }
+            }
+        }
+        for (one, two) in pairs {
+            let (one, two) = (
+                format!("#[macro_use]\nextern crate count;\n{one}\nfn main() {{}}"),
+                format!("#[macro_use]\nextern crate count;\n{two}\nfn main() {{}}"),
+            );
+            assert_ne!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+        }
+    }
+
+    #[test]
+    fn a_std_derive_keeps_folding_beside_bindings_it_cannot_see() {
+        for scope in [
+            "mod m {\n    use count::Debug;\n}",
+            "fn g() {\n    use count::Debug;\n}",
+            "use count::Other;",
+        ] {
+            let one = format!(
+                "{scope}\n#[derive(Debug, Clone)]\nstruct P {{\n    x: u8,\n}}\nfn main() {{}}"
+            );
+            let two = format!(
+                "{scope}\n#[derive(Clone, Debug)]\nstruct P {{\n    x: u8\n}}\nfn main() {{}}"
+            );
+            assert_eq!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+        }
+    }
+
+    #[test]
+    fn built_in_attributes_leave_their_item_folding() {
+        for (one, two) in [
+            (
+                "#![no_std]\n#![feature(never_type)]\nfn f() -> u8 {\n    return 1;\n}",
+                "#![no_std]\n#![feature(never_type)]\nfn f() -> u8 {\n    1\n}",
+            ),
+            (
+                "#[deny(unused)]\nfn f() -> u8 {\n    return 1;\n}",
+                "#[deny(unused)]\nfn f() -> u8 {\n    1\n}",
+            ),
+            (
+                "struct S;\n#[diagnostic::do_not_recommend]\nimpl S {\n    fn f() -> u8 {\n        return 1;\n    }\n}",
+                "struct S;\n#[diagnostic::do_not_recommend]\nimpl S {\n    fn f() -> u8 {\n        1\n    }\n}",
+            ),
+            (
+                "#[cfg_attr(test, derive(Debug, Clone))]\nstruct S {\n    x: u8,\n}",
+                "#[cfg_attr(test, derive(Debug, Clone))]\nstruct S {\n    x: u8\n}",
+            ),
+        ] {
+            let (one, two) = (
+                format!("{one}\nfn main() {{}}"),
+                format!("{two}\nfn main() {{}}"),
+            );
+            assert_eq!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+        }
+        let observed = |comma: &str| {
+            canonicalize(&format!(
+                "#[cfg_attr(feature = \"serde\", derive(serde::Serialize))]\nstruct S {{\n    x: u8{comma}\n}}\nfn main() {{}}"
+            ))
+            .text
+        };
+        assert_ne!(observed(","), observed(""));
+    }
+
+    #[test]
+    fn a_derive_or_attribute_path_names_the_import_it_resolves_to() {
+        for (one, two) in [
+            (
+                "use count::A as Dbg;\nuse count::B as Foo;\n#[derive(Foo)]\nstruct P;",
+                "use count::A as Foo;\nuse count::B as Dbg;\n#[derive(Foo)]\nstruct P;",
+            ),
+            (
+                "use count::A as dbg;\nuse count::B as foo;\n#[foo]\nfn g() {}",
+                "use count::A as foo;\nuse count::B as dbg;\n#[foo]\nfn g() {}",
+            ),
+        ] {
+            let (one, two) = (
+                format!("{one}\nfn main() {{}}"),
+                format!("{two}\nfn main() {{}}"),
+            );
+            assert_ne!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+        }
+        for (one, two) in [
+            (
+                "use count::A as Dbg;\n#[derive(Dbg)]\nstruct P;",
+                "use count::A as Foo;\n#[derive(Foo)]\nstruct P;",
+            ),
+            (
+                "use count::A as dbg;\n#[dbg]\nfn g() {}",
+                "use count::A as foo;\n#[foo]\nfn g() {}",
+            ),
+        ] {
+            let (one, two) = (
+                format!("{one}\nfn main() {{}}"),
+                format!("{two}\nfn main() {{}}"),
+            );
+            assert_eq!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+        }
+    }
+
+    #[test]
+    fn an_attribute_macro_reads_its_item_unfolded() {
+        for (one, two) in [
+            (
+                "#[observe]\n#[derive(Debug, Clone)]\nstruct S;",
+                "#[observe]\n#[derive(Clone, Debug)]\nstruct S;",
+            ),
+            ("#[observe]\n/// Doc.\nstruct S;", "#[observe]\nstruct S;"),
+            (
+                "#[observe]\nfn f() -> u8 {\n    return 1;\n}",
+                "#[observe]\nfn f() -> u8 {\n    1\n}",
+            ),
+            ("#[observe]\nfn f() -> () {}", "#[observe]\nfn f() {}"),
+            (
+                "#[observe]\nfn f() {\n    let _ = async { return 1; };\n}",
+                "#[observe]\nfn f() {\n    let _ = async { 1 };\n}",
+            ),
+            (
+                "#[observe]\nfn f(x: u8) -> u8 {\n    let mut y = x;\n    y\n}",
+                "#[observe]\nfn f(x: u8) -> u8 {\n    let y = x;\n    y\n}",
+            ),
+            (
+                "#[observe]\nfn f(x: u8) -> u8 {\n    match x {\n        _ => { 1 }\n    }\n}",
+                "#[observe]\nfn f(x: u8) -> u8 {\n    match x {\n        _ => 1,\n    }\n}",
+            ),
+            (
+                "struct S;\n#[observe]\nimpl S {\n    fn f() -> u8 {\n        return 1;\n    }\n}",
+                "struct S;\n#[observe]\nimpl S {\n    fn f() -> u8 {\n        1\n    }\n}",
+            ),
+            (
+                "#[observe]\nmod m {\n    fn f() -> u8 {\n        return 1;\n    }\n}",
+                "#[observe]\nmod m {\n    fn f() -> u8 {\n        1\n    }\n}",
+            ),
+            (
+                "#[observe]\nstruct S {\n    x: u8,\n}",
+                "#[observe]\nstruct S {\n    x: u8\n}",
+            ),
+            (
+                "#[observe]\nfn f() {\n    g(1, 2,);\n}",
+                "#[observe]\nfn f() {\n    g(1, 2);\n}",
+            ),
+            (
+                "struct S;\n#[observe]\nimpl S {\n    fn f() {\n        g(1,);\n    }\n}",
+                "struct S;\n#[observe]\nimpl S {\n    fn f() {\n        g(1);\n    }\n}",
+            ),
+        ] {
+            let (one, two) = (
+                format!("{one}\nfn main() {{}}"),
+                format!("{two}\nfn main() {{}}"),
+            );
+            assert_ne!(canonicalize(&one).text, canonicalize(&two).text, "{one}");
+        }
     }
 
     #[test]

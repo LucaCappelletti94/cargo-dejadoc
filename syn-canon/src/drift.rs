@@ -78,18 +78,33 @@ fn canon_float_str(s: &str) -> String {
 }
 
 /// Fold arm braces, doc attributes, and `use` shapes in place. When `compiles`, also fold the
-/// spellings only a compiling program makes equivalent.
+/// spellings only a compiling program makes equivalent. An `observed` file is the input of an
+/// enclosing attribute macro and keeps its spelling. With `std_derives`, the scopes around the
+/// file leave every std derive name bound to the std derive.
 pub(crate) fn normalize_file(
     file: &mut syn::File,
     compiles: bool,
     helpers: &mut crate::helpers::HelperSyntax,
+    observed: bool,
+    std_derives: bool,
 ) {
     if compiles {
-        crate::const_items::inline_array_constants(file);
+        if !observed {
+            crate::const_items::inline_array_constants(file);
+        }
         helpers.retain_file(file);
+    }
+    if observed {
+        ObservedUses {
+            helpers: Some(&mut *helpers),
+        }
+        .visit_file_mut(file);
+        helpers.retain_file(file);
+        return;
     }
     Drift {
         compiles,
+        std_derives,
         helpers: Some(&mut *helpers),
         ..Drift::default()
     }
@@ -117,15 +132,26 @@ pub(crate) fn fold_fn_body(block: &mut syn::Block) {
     fold_tail_return(&mut block.stmts);
 }
 
+/// The drift folds of everything outside macro input. A node an attribute macro or a
+/// procedural derive reads keeps its spelling, apart from the block `use` hoisting name
+/// resolution relies on.
 #[derive(Default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "compilation, impl header position and derive scope knowledge are independent"
+)]
 struct Drift<'a> {
     /// The code compiles, so an unneeded `mut` and the semicolon of a `()` block fold.
     compiles: bool,
     /// Inside an impl header's trait path or self type, where a path may not
     /// elide its lifetime (E0726).
     in_impl_header: bool,
-    /// Inside syntax read by a procedural macro.
-    in_macro_input: bool,
+    /// The scopes around the file leave every std derive name bound to the std derive.
+    std_derives: bool,
+    /// The crate root holds a `#[macro_use] extern crate`, which may bind any std derive name.
+    macro_use: bool,
+    /// The derive bindings of the scopes around the current node, innermost last.
+    derive_scopes: Vec<DeriveScope>,
     helpers: Option<&'a mut crate::helpers::HelperSyntax>,
 }
 
@@ -135,7 +161,15 @@ impl VisitMut for Drift<'_> {
         reason = "a non-use entry goes back to the list"
     )]
     fn visit_file_mut(&mut self, file: &mut syn::File) {
-        let outer = self.enter_attrs(&file.attrs);
+        if has_macro_attribute(&file.attrs) {
+            self.observed().visit_file_mut(file);
+            return;
+        }
+        self.macro_use = file.items.iter().any(macro_use_crate);
+        let mut root = DeriveScope::of(file.items.iter(), true);
+        if !self.std_derives {
+            root.rebound = DeriveScope::ALL;
+        }
         hoist_uses(
             &mut file.items,
             |item| match item {
@@ -144,8 +178,9 @@ impl VisitMut for Drift<'_> {
             },
             syn::Item::Use,
         );
+        self.derive_scopes.push(root);
         syn::visit_mut::visit_file_mut(self, file);
-        self.in_macro_input = outer;
+        self.derive_scopes.pop();
     }
 
     #[expect(
@@ -177,7 +212,24 @@ impl VisitMut for Drift<'_> {
                 .expect("tracked helper syntax")
                 .put_block(block, handles);
         }
+        self.derive_scopes.push(DeriveScope::of(
+            block.stmts.iter().filter_map(|stmt| match stmt {
+                syn::Stmt::Item(item) => Some(item),
+                _ => None,
+            }),
+            false,
+        ));
         syn::visit_mut::visit_block_mut(self, block);
+        self.derive_scopes.pop();
+    }
+
+    fn visit_item_mod_mut(&mut self, node: &mut syn::ItemMod) {
+        let Some((_, items)) = &node.content else {
+            return;
+        };
+        self.derive_scopes.push(DeriveScope::of(items.iter(), true));
+        syn::visit_mut::visit_item_mod_mut(self, node);
+        self.derive_scopes.pop();
     }
 
     fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {
@@ -203,8 +255,11 @@ impl VisitMut for Drift<'_> {
     }
 
     fn visit_arm_mut(&mut self, arm: &mut syn::Arm) {
+        if has_macro_attribute(&arm.attrs) {
+            self.observed().visit_arm_mut(arm);
+            return;
+        }
         strip_inert_attrs(&mut arm.attrs);
-        let outer = self.enter_attrs(&arm.attrs);
         unwrap_arm_block(arm);
         // The printer writes the comma a non-block arm needs, a written one is drift.
         arm.comma = None;
@@ -212,25 +267,29 @@ impl VisitMut for Drift<'_> {
         if self.compiles {
             drop_binding_mut(&mut arm.pat);
         }
-        self.in_macro_input = outer;
     }
 
     fn visit_local_mut(&mut self, local: &mut syn::Local) {
-        let outer = self.enter_attrs(&local.attrs);
+        if has_macro_attribute(&local.attrs) {
+            self.observed().visit_local_mut(local);
+            return;
+        }
         syn::visit_mut::visit_local_mut(self, local);
         if self.compiles {
             drop_binding_mut(&mut local.pat);
         }
-        self.in_macro_input = outer;
     }
 
     fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
-        let outer = self.enter_attrs(expr_attrs(expr));
+        if has_macro_attribute(expr_attrs(expr)) {
+            self.observed().visit_expr_mut(expr);
+            return;
+        }
         syn::visit_mut::visit_expr_mut(self, expr);
         fold_paren_expr(expr);
         if let syn::Expr::If(expr_if) = expr {
             collapse_else_if(expr_if);
-            if self.compiles && !self.in_macro_input {
+            if self.compiles {
                 fold_empty_else(expr_if);
             }
         }
@@ -239,7 +298,7 @@ impl VisitMut for Drift<'_> {
                 .inputs
                 .iter_mut()
                 .any(|pat| pat_attrs(pat).is_some_and(|attrs| has_macro_attribute(attrs)));
-            if !self.in_macro_input && !protected_inputs {
+            if !protected_inputs {
                 if closure.inputs.trailing_punct() {
                     closure.inputs.pop_punct();
                 }
@@ -259,8 +318,7 @@ impl VisitMut for Drift<'_> {
             unwrap_single_expr_block(&mut closure.body);
         }
         if self.compiles {
-            if !self.in_macro_input
-                && let syn::Expr::Return(ret) = expr
+            if let syn::Expr::Return(ret) = expr
                 && ret.expr.as_ref().is_some_and(
                     |value| matches!(value.as_ref(), syn::Expr::Tuple(tuple) if tuple.elems.is_empty() && tuple.attrs.is_empty()),
                 )
@@ -277,37 +335,37 @@ impl VisitMut for Drift<'_> {
                 drop_tail_semicolon(&mut block.stmts);
             }
         }
-        if !self.in_macro_input {
-            fold_signed_zero(expr);
-            if self.compiles {
-                fold_scalar_const(expr);
-            }
+        fold_signed_zero(expr);
+        if self.compiles {
+            fold_scalar_const(expr);
         }
-        self.in_macro_input = outer;
     }
 
     fn visit_pat_mut(&mut self, pat: &mut syn::Pat) {
-        let outer = pat_attrs(pat).map_or(self.in_macro_input, |attrs| {
+        if let Some(attrs) = pat_attrs(pat) {
+            if has_macro_attribute(attrs) {
+                self.observed().visit_pat_mut(pat);
+                return;
+            }
             strip_inert_attrs(attrs);
-            self.enter_attrs(attrs)
-        });
+        }
         syn::visit_mut::visit_pat_mut(self, pat);
         fold_paren_pat(pat);
-        if self.compiles && !self.in_macro_input {
+        if self.compiles {
             fold_pattern_spelling(pat);
         }
-        self.in_macro_input = outer;
     }
 
     fn visit_fn_arg_mut(&mut self, node: &mut syn::FnArg) {
-        match node {
-            syn::FnArg::Receiver(receiver) => strip_inert_attrs(&mut receiver.attrs),
-            syn::FnArg::Typed(typed) => strip_inert_attrs(&mut typed.attrs),
+        let attrs = match node {
+            syn::FnArg::Receiver(receiver) => &mut receiver.attrs,
+            syn::FnArg::Typed(typed) => &mut typed.attrs,
+        };
+        if has_macro_attribute(attrs) {
+            self.observed().visit_fn_arg_mut(node);
+            return;
         }
-        let outer = self.enter_attrs(match node {
-            syn::FnArg::Receiver(receiver) => &receiver.attrs,
-            syn::FnArg::Typed(typed) => &typed.attrs,
-        });
+        strip_inert_attrs(attrs);
         syn::visit_mut::visit_fn_arg_mut(self, node);
         if self.compiles {
             match node {
@@ -315,57 +373,53 @@ impl VisitMut for Drift<'_> {
                 syn::FnArg::Typed(typed) => drop_binding_mut(&mut typed.pat),
             }
         }
-        if !self.in_macro_input
-            && let syn::FnArg::Receiver(receiver) = node
-        {
+        if let syn::FnArg::Receiver(receiver) = node {
             fold_explicit_receiver(receiver);
         }
-        self.in_macro_input = outer;
     }
 
     fn visit_named_arg_mut(&mut self, node: &mut syn::NamedArg) {
+        if has_macro_attribute(&node.attrs) {
+            self.observed().visit_named_arg_mut(node);
+            return;
+        }
         strip_inert_attrs(&mut node.attrs);
-        let outer = self.enter_attrs(&node.attrs);
         syn::visit_mut::visit_named_arg_mut(self, node);
-        self.in_macro_input = outer;
     }
 
     fn visit_type_mut(&mut self, ty: &mut syn::Type) {
-        let outer = self.enter_attrs(type_attrs(ty));
+        if has_macro_attribute(type_attrs(ty)) {
+            self.observed().visit_type_mut(ty);
+            return;
+        }
         syn::visit_mut::visit_type_mut(self, ty);
         fold_paren_type(ty);
-        self.in_macro_input = outer;
     }
 
     fn visit_type_path_mut(&mut self, node: &mut syn::TypePath) {
         syn::visit_mut::visit_type_path_mut(self, node);
-        if !self.in_macro_input {
-            fold_type_path(&mut node.path);
-        }
+        fold_type_path(&mut node.path);
     }
 
     fn visit_type_fn_ptr_mut(&mut self, node: &mut syn::TypeFnPtr) {
         syn::visit_mut::visit_type_fn_ptr_mut(self, node);
-        if self.compiles && !self.in_macro_input {
+        if self.compiles {
             fold_fn_pointer_lifetime(node);
         }
-        if !self.in_macro_input {
-            fold_unit_return(&mut node.output);
-        }
+        fold_unit_return(&mut node.output);
     }
 
     fn visit_abi_mut(&mut self, node: &mut syn::Abi) {
-        if self.compiles && !self.in_macro_input && node.name.is_none() {
+        if self.compiles && node.name.is_none() {
             node.name = Some(syn::LitStr::new("C", node.extern_token.span));
         }
     }
 
     fn visit_vis_restricted_mut(&mut self, node: &mut syn::VisRestricted) {
         syn::visit_mut::visit_vis_restricted_mut(self, node);
-        if !self.in_macro_input
-            && ["crate", "self", "super"]
-                .iter()
-                .any(|name| node.path.is_ident(name))
+        if ["crate", "self", "super"]
+            .iter()
+            .any(|name| node.path.is_ident(name))
         {
             node.in_token = None;
         }
@@ -376,18 +430,15 @@ impl VisitMut for Drift<'_> {
         node: &mut syn::ParenthesizedGenericArguments,
     ) {
         syn::visit_mut::visit_parenthesized_generic_arguments_mut(self, node);
-        if !self.in_macro_input {
-            fold_unit_return(&mut node.output);
-        }
+        fold_unit_return(&mut node.output);
     }
 
     fn visit_expr_method_call_mut(&mut self, node: &mut syn::ExprMethodCall) {
         syn::visit_mut::visit_expr_method_call_mut(self, node);
-        if !self.in_macro_input
-            && node
-                .turbofish
-                .as_ref()
-                .is_some_and(|args| args.args.is_empty())
+        if node
+            .turbofish
+            .as_ref()
+            .is_some_and(|args| args.args.is_empty())
         {
             node.turbofish = None;
         }
@@ -401,36 +452,32 @@ impl VisitMut for Drift<'_> {
         node: &mut syn::AngleBracketedGenericArguments,
     ) {
         syn::visit_mut::visit_angle_bracketed_generic_arguments_mut(self, node);
-        if !self.in_macro_input {
-            node.args.pop_punct();
-            if self.compiles {
-                for arg in &mut node.args {
-                    if let syn::GenericArgument::Const(expr) = arg {
-                        fold_scalar_argument_block(expr);
-                    }
+        node.args.pop_punct();
+        if self.compiles {
+            for arg in &mut node.args {
+                if let syn::GenericArgument::Const(expr) = arg {
+                    fold_scalar_argument_block(expr);
                 }
             }
         }
     }
 
     fn visit_generics_mut(&mut self, generics: &mut syn::Generics) {
-        let outer = self.in_macro_input;
-        self.in_macro_input = outer
-            || generics.params.iter().any(|param| {
-                has_macro_attribute(match param {
-                    syn::GenericParam::Lifetime(param) => &param.attrs,
-                    syn::GenericParam::Type(param) => &param.attrs,
-                    syn::GenericParam::Const(param) => &param.attrs,
-                })
-            });
+        let observed = generics.params.iter().any(|param| {
+            has_macro_attribute(match param {
+                syn::GenericParam::Lifetime(param) => &param.attrs,
+                syn::GenericParam::Type(param) => &param.attrs,
+                syn::GenericParam::Const(param) => &param.attrs,
+            })
+        });
+        if observed {
+            self.observed().visit_generics_mut(generics);
+            return;
+        }
         syn::visit_mut::visit_generics_mut(self, generics);
         bounds_to_where(generics);
-        if !self.in_macro_input {
-            generics.params.pop_punct();
-        }
-        if !self.in_macro_input
-            && let Some(clause) = &mut generics.where_clause
-        {
+        generics.params.pop_punct();
+        if let Some(clause) = &mut generics.where_clause {
             for predicate in &mut clause.predicates {
                 match predicate {
                     syn::WherePredicate::Type(predicate) => {
@@ -443,59 +490,44 @@ impl VisitMut for Drift<'_> {
                 }
             }
         }
-        self.in_macro_input = outer;
     }
 
     fn visit_item_trait_mut(&mut self, node: &mut syn::ItemTrait) {
         syn::visit_mut::visit_item_trait_mut(self, node);
-        if !self.in_macro_input {
-            drop_trailing_plus(&mut node.supertraits);
-        }
+        drop_trailing_plus(&mut node.supertraits);
     }
 
     fn visit_item_trait_alias_mut(&mut self, node: &mut syn::ItemTraitAlias) {
         syn::visit_mut::visit_item_trait_alias_mut(self, node);
-        if !self.in_macro_input {
-            drop_trailing_plus(&mut node.bounds);
-        }
+        drop_trailing_plus(&mut node.bounds);
     }
 
     fn visit_trait_bound_mut(&mut self, node: &mut syn::TraitBound) {
         syn::visit_mut::visit_trait_bound_mut(self, node);
-        if !self.in_macro_input {
-            fold_type_path(&mut node.path);
-            if node.paren_token.is_some() && !fn_sugar_output(&node.path) {
-                node.paren_token = None;
-            }
+        fold_type_path(&mut node.path);
+        if node.paren_token.is_some() && !fn_sugar_output(&node.path) {
+            node.paren_token = None;
         }
     }
 
     fn visit_trait_item_type_mut(&mut self, node: &mut syn::TraitItemType) {
         syn::visit_mut::visit_trait_item_type_mut(self, node);
-        if !self.in_macro_input {
-            drop_trailing_plus(&mut node.bounds);
-        }
+        drop_trailing_plus(&mut node.bounds);
     }
 
     fn visit_type_impl_trait_mut(&mut self, node: &mut syn::TypeImplTrait) {
         syn::visit_mut::visit_type_impl_trait_mut(self, node);
-        if !self.in_macro_input {
-            drop_trailing_plus(&mut node.bounds);
-        }
+        drop_trailing_plus(&mut node.bounds);
     }
 
     fn visit_type_trait_object_mut(&mut self, node: &mut syn::TypeTraitObject) {
         syn::visit_mut::visit_type_trait_object_mut(self, node);
-        if !self.in_macro_input {
-            drop_trailing_plus(&mut node.bounds);
-        }
+        drop_trailing_plus(&mut node.bounds);
     }
 
     fn visit_constraint_mut(&mut self, node: &mut syn::Constraint) {
         syn::visit_mut::visit_constraint_mut(self, node);
-        if !self.in_macro_input {
-            drop_trailing_plus(&mut node.bounds);
-        }
+        drop_trailing_plus(&mut node.bounds);
     }
 
     fn visit_type_reference_mut(&mut self, node: &mut syn::TypeReference) {
@@ -510,9 +542,7 @@ impl VisitMut for Drift<'_> {
         if !self.in_impl_header {
             drop_anonymous_lifetimes(node);
         }
-        if !self.in_macro_input
-            && matches!(node, syn::PathArguments::AngleBracketed(args) if args.args.is_empty())
-        {
+        if matches!(node, syn::PathArguments::AngleBracketed(args) if args.args.is_empty()) {
             *node = syn::PathArguments::None;
         }
     }
@@ -525,9 +555,7 @@ impl VisitMut for Drift<'_> {
         let outer = core::mem::replace(&mut self.in_impl_header, true);
         if let Some((path, _)) = &mut node.trait_ {
             self.visit_path_mut(path);
-            if !self.in_macro_input {
-                fold_type_path(path);
-            }
+            fold_type_path(path);
         }
         self.visit_type_mut(&mut node.self_ty);
         self.in_impl_header = outer;
@@ -561,100 +589,90 @@ impl VisitMut for Drift<'_> {
     }
 
     fn visit_item_mut(&mut self, item: &mut syn::Item) {
-        let derived = match item {
-            syn::Item::Struct(syn::ItemStruct { attrs, .. })
-            | syn::Item::Enum(syn::ItemEnum { attrs, .. })
-            | syn::Item::Union(syn::ItemUnion { attrs, .. }) => Some(attrs),
-            _ => None,
-        };
-        let macro_derived = derived
-            .as_ref()
-            .is_some_and(|attrs| has_macro_derive(attrs));
-        if let Some(attrs) = derived {
+        if item_attrs(item).is_some_and(|attrs| has_macro_attribute(attrs)) {
+            self.observed().visit_item_mut(item);
+            return;
+        }
+        if let syn::Item::Struct(syn::ItemStruct { attrs, .. })
+        | syn::Item::Enum(syn::ItemEnum { attrs, .. })
+        | syn::Item::Union(syn::ItemUnion { attrs, .. }) = item
+        {
+            self.mark_rebound_derives(attrs);
+            if has_macro_derive(attrs) {
+                self.observed().visit_item_mut(item);
+                return;
+            }
             fold_std_derives(attrs);
         }
-        if !macro_derived && let Some(attrs) = item_attrs(item) {
+        if let Some(attrs) = item_attrs(item) {
             strip_inert_attrs(attrs);
         }
-        let macro_input = self.in_macro_input
-            || macro_derived
-            || item_attrs(item).is_some_and(|attrs| has_macro_attribute(attrs));
-        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
         syn::visit_mut::visit_item_mut(self, item);
-        self.in_macro_input = outer;
     }
 
     fn visit_impl_item_mut(&mut self, item: &mut syn::ImplItem) {
         let attrs = match item {
-            syn::ImplItem::Const(v) => Some(&mut v.attrs),
-            syn::ImplItem::Fn(v) => Some(&mut v.attrs),
-            syn::ImplItem::Type(v) => Some(&mut v.attrs),
-            syn::ImplItem::Macro(v) => Some(&mut v.attrs),
-            _ => None,
+            syn::ImplItem::Const(v) => &mut v.attrs,
+            syn::ImplItem::Fn(v) => &mut v.attrs,
+            syn::ImplItem::Type(v) => &mut v.attrs,
+            syn::ImplItem::Macro(v) => &mut v.attrs,
+            _ => return,
         };
-        let macro_input = self.in_macro_input
-            || attrs
-                .as_ref()
-                .is_some_and(|attrs| has_macro_attribute(attrs));
-        if let Some(attrs) = attrs {
-            strip_inert_attrs(attrs);
+        if has_macro_attribute(attrs) {
+            self.observed().visit_impl_item_mut(item);
+            return;
         }
-        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
+        strip_inert_attrs(attrs);
         syn::visit_mut::visit_impl_item_mut(self, item);
-        self.in_macro_input = outer;
     }
 
     fn visit_trait_item_mut(&mut self, item: &mut syn::TraitItem) {
         let attrs = match item {
-            syn::TraitItem::Const(v) => Some(&mut v.attrs),
-            syn::TraitItem::Fn(v) => Some(&mut v.attrs),
-            syn::TraitItem::Type(v) => Some(&mut v.attrs),
-            syn::TraitItem::Macro(v) => Some(&mut v.attrs),
-            _ => None,
+            syn::TraitItem::Const(v) => &mut v.attrs,
+            syn::TraitItem::Fn(v) => &mut v.attrs,
+            syn::TraitItem::Type(v) => &mut v.attrs,
+            syn::TraitItem::Macro(v) => &mut v.attrs,
+            _ => return,
         };
-        let macro_input = self.in_macro_input
-            || attrs
-                .as_ref()
-                .is_some_and(|attrs| has_macro_attribute(attrs));
-        if let Some(attrs) = attrs {
-            strip_inert_attrs(attrs);
+        if has_macro_attribute(attrs) {
+            self.observed().visit_trait_item_mut(item);
+            return;
         }
-        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
+        strip_inert_attrs(attrs);
         syn::visit_mut::visit_trait_item_mut(self, item);
-        self.in_macro_input = outer;
     }
 
     fn visit_foreign_item_mut(&mut self, item: &mut syn::ForeignItem) {
         let attrs = match item {
-            syn::ForeignItem::Fn(v) => Some(&v.attrs),
-            syn::ForeignItem::Static(v) => Some(&v.attrs),
-            syn::ForeignItem::Type(v) => Some(&v.attrs),
-            syn::ForeignItem::Macro(v) => Some(&v.attrs),
-            _ => None,
+            syn::ForeignItem::Fn(v) => &v.attrs,
+            syn::ForeignItem::Static(v) => &v.attrs,
+            syn::ForeignItem::Type(v) => &v.attrs,
+            syn::ForeignItem::Macro(v) => &v.attrs,
+            _ => return,
         };
-        let macro_input =
-            self.in_macro_input || attrs.is_some_and(|attrs| has_macro_attribute(attrs));
-        let outer = core::mem::replace(&mut self.in_macro_input, macro_input);
+        if has_macro_attribute(attrs) {
+            self.observed().visit_foreign_item_mut(item);
+            return;
+        }
         syn::visit_mut::visit_foreign_item_mut(self, item);
-        self.in_macro_input = outer;
     }
 
     fn visit_field_mut(&mut self, field: &mut syn::Field) {
-        if !self.in_macro_input {
-            strip_inert_attrs(&mut field.attrs);
+        if has_macro_attribute(&field.attrs) {
+            self.observed().visit_field_mut(field);
+            return;
         }
-        let outer = self.enter_attrs(&field.attrs);
+        strip_inert_attrs(&mut field.attrs);
         syn::visit_mut::visit_field_mut(self, field);
-        self.in_macro_input = outer;
     }
 
     fn visit_variant_mut(&mut self, variant: &mut syn::Variant) {
-        if !self.in_macro_input {
-            strip_inert_attrs(&mut variant.attrs);
+        if has_macro_attribute(&variant.attrs) {
+            self.observed().visit_variant_mut(variant);
+            return;
         }
-        let outer = self.enter_attrs(&variant.attrs);
+        strip_inert_attrs(&mut variant.attrs);
         syn::visit_mut::visit_variant_mut(self, variant);
-        self.in_macro_input = outer;
     }
 
     fn visit_expr_macro_mut(&mut self, node: &mut syn::ExprMacro) {
@@ -695,11 +713,104 @@ impl VisitMut for Drift<'_> {
     }
 }
 
+/// Hoists the `use` items of every block in a node a macro reads, the one rewrite name
+/// resolution needs there, and leaves the rest as written.
+struct ObservedUses<'a> {
+    helpers: Option<&'a mut crate::helpers::HelperSyntax>,
+}
+
+impl VisitMut for ObservedUses<'_> {
+    #[expect(
+        clippy::result_large_err,
+        reason = "a non-use entry goes back to the list"
+    )]
+    fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        let handles = self
+            .helpers
+            .as_mut()
+            .map(|helpers| helpers.take_block(block));
+        hoist_uses(
+            &mut block.stmts,
+            |stmt| match stmt {
+                syn::Stmt::Item(syn::Item::Use(u)) => Ok(u),
+                other => Err(other),
+            },
+            |u| syn::Stmt::Item(syn::Item::Use(u)),
+        );
+        if let Some(handles) = handles {
+            self.helpers
+                .as_mut()
+                .expect("tracked helper syntax")
+                .put_block(block, handles);
+        }
+        syn::visit_mut::visit_block_mut(self, block);
+    }
+
+    fn visit_attribute_mut(&mut self, _node: &mut syn::Attribute) {}
+}
+
 impl Drift<'_> {
-    fn enter_attrs(&mut self, attrs: &[syn::Attribute]) -> bool {
-        let outer = self.in_macro_input;
-        self.in_macro_input = outer || has_macro_attribute(attrs);
-        outer
+    /// The visitor of a node a macro reads.
+    fn observed(&mut self) -> ObservedUses<'_> {
+        ObservedUses {
+            helpers: self.helpers.as_deref_mut(),
+        }
+    }
+
+    /// Spell each std derive name an enclosing binding may give another macro as a raw
+    /// identifier, which names the same binding and which no pass reads as the std derive.
+    fn mark_rebound_derives(&self, attrs: &mut [syn::Attribute]) {
+        use syn::parse::Parser;
+
+        let rebound = self.rebound_derives();
+        if rebound == 0 {
+            return;
+        }
+        let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
+        for attr in attrs
+            .iter_mut()
+            .filter(|attr| attr.path().is_ident("derive"))
+        {
+            let syn::Meta::List(list) = &mut attr.meta else {
+                continue;
+            };
+            let Ok(mut paths) = parser.parse2(list.tokens.clone()) else {
+                continue;
+            };
+            let mut marked = false;
+            for path in &mut paths {
+                if path.leading_colon.is_none()
+                    && path.segments.len() == 1
+                    && let Some(index) = STD_DERIVES
+                        .iter()
+                        .position(|std| path.segments[0].ident == std)
+                    && rebound & (1 << index) != 0
+                {
+                    let ident = &mut path.segments[0].ident;
+                    *ident = syn::Ident::new_raw(STD_DERIVES[index], ident.span());
+                    marked = true;
+                }
+            }
+            if marked {
+                list.tokens = paths.into_token_stream();
+            }
+        }
+    }
+
+    /// The std derive names the scopes around the current node may bind to another
+    /// macro, all of them past the innermost module scope when none is known.
+    fn rebound_derives(&self) -> u16 {
+        if self.macro_use {
+            return DeriveScope::ALL;
+        }
+        let mut rebound = 0;
+        for scope in self.derive_scopes.iter().rev() {
+            rebound |= scope.rebound;
+            if scope.module {
+                return rebound;
+            }
+        }
+        DeriveScope::ALL
     }
 
     /// Fold a function body's tail `return`, and its tail semicolon when the
@@ -1290,49 +1401,159 @@ pub(crate) const STD_DERIVES: [&str; 9] = [
     "PartialOrd",
 ];
 
+/// The std derive names one scope's items may rebind to another macro, a bit per
+/// [`STD_DERIVES`] entry, every bit set by a glob that can bring any of them in.
+#[derive(Clone, Copy)]
+struct DeriveScope {
+    /// A module scope, whose bindings hide nothing from the scopes outside it.
+    module: bool,
+    rebound: u16,
+}
+
+impl DeriveScope {
+    const ALL: u16 = (1 << STD_DERIVES.len()) - 1;
+
+    fn of<'a>(items: impl Iterator<Item = &'a syn::Item>, module: bool) -> Self {
+        Self {
+            module,
+            rebound: items.fold(0, |rebound, item| match item {
+                syn::Item::Use(item) => rebound | rebound_derives(&item.tree, false),
+                _ => rebound,
+            }),
+        }
+    }
+}
+
+/// The std derive names `tree` binds to anything but the std derive of that name. A
+/// path through `std` or `core` re-exports the derive under its own name, and every
+/// other binding of the name may be a procedural macro.
+fn rebound_derives(tree: &syn::UseTree, from_std: bool) -> u16 {
+    let bit = |ident: &syn::Ident| {
+        let name = crate::scope::ident_name(ident);
+        STD_DERIVES
+            .iter()
+            .position(|std| *std == name)
+            .map_or(0, |index| 1 << index)
+    };
+    match tree {
+        syn::UseTree::Path(path) => rebound_derives(
+            &path.tree,
+            from_std || ["std", "core"].iter().any(|root| path.ident == root),
+        ),
+        syn::UseTree::Name(_) | syn::UseTree::Glob(_) if from_std => 0,
+        syn::UseTree::Name(name) => bit(&name.ident),
+        syn::UseTree::Rename(rename) if from_std && rename.ident == rename.rename => 0,
+        syn::UseTree::Rename(rename) => bit(&rename.rename),
+        syn::UseTree::Glob(_) => DeriveScope::ALL,
+        syn::UseTree::Group(group) => group
+            .items
+            .iter()
+            .fold(0, |rebound, tree| rebound | rebound_derives(tree, from_std)),
+    }
+}
+
+/// Whether `item` is a `#[macro_use] extern crate`, whose derives the whole crate sees
+/// ahead of the std ones.
+pub(crate) fn macro_use_crate(item: &syn::Item) -> bool {
+    matches!(item, syn::Item::ExternCrate(krate)
+        if krate.attrs.iter().any(|attr| attr.path().is_ident("macro_use")))
+}
+
+/// Whether a module whose crate root holds no `#[macro_use] extern crate` keeps every
+/// std derive name its `items` can see bound to the std derive.
+pub(crate) fn std_derives_visible(items: &[syn::Item]) -> bool {
+    DeriveScope::of(items.iter(), true).rebound == 0
+}
+
 /// Whether `attrs` derive anything outside the std derives, a proc macro that reads the item.
 pub(crate) fn has_macro_derive(attrs: &[syn::Attribute]) -> bool {
+    attrs.iter().any(|attr| macro_derive_meta(&attr.meta))
+}
+
+/// Whether `meta` is a `derive` naming anything outside the std derives. A raw identifier
+/// marks a std name another binding may hold.
+pub(crate) fn macro_derive_meta(meta: &syn::Meta) -> bool {
     use syn::parse::Parser;
 
+    if !meta.path().is_ident("derive") {
+        return false;
+    }
+    let syn::Meta::List(list) = meta else {
+        return true;
+    };
     let parser = syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated;
-    attrs
-        .iter()
-        .filter(|attr| attr.path().is_ident("derive"))
-        .any(|attr| {
-            let syn::Meta::List(list) = &attr.meta else {
-                return true;
-            };
-            parser.parse2(list.tokens.clone()).map_or(true, |paths| {
-                paths.iter().any(|path| {
-                    path.get_ident()
-                        .is_none_or(|name| !STD_DERIVES.iter().any(|std| name == std))
-                })
-            })
+    parser.parse2(list.tokens.clone()).map_or(true, |paths| {
+        paths.iter().any(|path| {
+            path.get_ident()
+                .is_none_or(|name| !STD_DERIVES.iter().any(|std| name == std))
         })
+    })
 }
 
 pub(crate) fn has_macro_attribute(attrs: &[syn::Attribute]) -> bool {
-    attrs.iter().any(|attr| {
-        !is_inert_attr(attr)
-            && ![
-                "cfg",
-                "derive",
-                "inline",
-                "cold",
-                "repr",
-                "must_use",
-                "deprecated",
-                "non_exhaustive",
-                "track_caller",
-                "no_mangle",
-                "export_name",
-                "link_name",
-                "link_section",
-                "automatically_derived",
+    attrs.iter().any(|attr| macro_meta(&attr.meta))
+}
+
+/// Whether the attribute `meta` may be a macro that reads the item it sits on. A `cfg_attr` or
+/// an `unsafe` wrapper reads as the attributes it holds.
+pub(crate) fn macro_meta(meta: &syn::Meta) -> bool {
+    let path = meta.path();
+    if path.is_ident("cfg_attr") || path.is_ident("unsafe") {
+        let skip = usize::from(path.is_ident("cfg_attr"));
+        return crate::context::wrapped(meta, skip).is_none_or(|metas| {
+            metas
+                .iter()
+                .any(|meta| macro_meta(meta) || macro_derive_meta(meta))
+        });
+    }
+    // Built-in tool namespaces hold no macros.
+    let tool = path.segments.len() > 1
+        && path.segments.first().is_some_and(|first| {
+            [
+                "clippy",
+                "diagnostic",
+                "miri",
+                "rust_analyzer",
+                "rustdoc",
+                "rustfmt",
             ]
             .iter()
-            .any(|name| attr.path().is_ident(name))
-    })
+            .any(|tool| first.ident == tool)
+        });
+    !tool
+        && !inert_meta(meta)
+        && ![
+            "cfg",
+            "derive",
+            "deny",
+            "forbid",
+            "inline",
+            "cold",
+            "repr",
+            "must_use",
+            "deprecated",
+            "non_exhaustive",
+            "track_caller",
+            "no_mangle",
+            "export_name",
+            "link_name",
+            "link_section",
+            "automatically_derived",
+            "macro_use",
+            "macro_export",
+            "path",
+            "no_std",
+            "no_main",
+            "no_implicit_prelude",
+            "feature",
+            "recursion_limit",
+            "type_length_limit",
+            "crate_name",
+            "crate_type",
+            "windows_subsystem",
+        ]
+        .iter()
+        .any(|name| path.is_ident(name))
 }
 
 /// Merge an item's `derive` attributes into one sorted list at the place of
@@ -1399,8 +1620,12 @@ impl VisitMut for StaticRefs {
 /// `doc` whose value is a macro call runs at compile time and can fail, so it
 /// stays.
 fn is_inert_attr(attr: &syn::Attribute) -> bool {
-    let p = attr.path();
-    (p.is_ident("doc") && !computed_doc(&attr.meta))
+    inert_meta(&attr.meta)
+}
+
+fn inert_meta(meta: &syn::Meta) -> bool {
+    let p = meta.path();
+    (p.is_ident("doc") && !computed_doc(meta))
         || p.is_ident("allow")
         || p.is_ident("expect")
         || p.is_ident("warn")
