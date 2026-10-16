@@ -856,17 +856,6 @@ fn let_name(local: &syn::Local) -> Option<String> {
     }
 }
 
-/// The binding name of a simple `let` pattern, mutable or not.
-pub(crate) fn local_binding_name(local: &syn::Local) -> Option<String> {
-    match &local.pat {
-        syn::Pat::Ident(ident) if ident.subpat.is_none() => {
-            let text = ident.ident.to_string();
-            Some(unraw(&text).to_string())
-        }
-        _ => None,
-    }
-}
-
 /// The assigned binding's name, when the target is a clean identifier.
 pub(crate) fn assign_target(stmt: &syn::Stmt) -> Option<String> {
     let syn::Stmt::Expr(expr, _) = stmt else {
@@ -2100,23 +2089,23 @@ fn label_block(
     for (position, stmt) in block.stmts.iter().enumerate() {
         let (label, stmt_sites) = statement_label(renamer, &inner, stmt, position, locals, orders);
         sites.extend(stmt_sites);
-        if let syn::Stmt::Local(local) = stmt
-            && let Some(name) = local_binding_name(local)
-        {
+        if let syn::Stmt::Local(local) = stmt {
             let prim = if let_name(local).is_some() {
                 label.prim()
             } else {
                 None
             };
-            inner.insert(
-                name,
-                Value {
-                    port: Port::Local(*locals),
-                    prim,
-                    helper: None,
-                },
-            );
-            *locals += 1;
+            for name in pat_names(&local.pat) {
+                inner.insert(
+                    name,
+                    Value {
+                        port: Port::Local(*locals),
+                        prim,
+                        helper: None,
+                    },
+                );
+                *locals += 1;
+            }
         }
         children.push(label);
     }
@@ -3346,7 +3335,7 @@ impl BlockScan {
         );
         self.budget(&label);
         self.note(&sites, USE_OPAQUE, index, label);
-        if let Some(name) = local_binding_name(local) {
+        for name in pat_names(&local.pat) {
             self.invalidate(name);
         }
         self.open = None;

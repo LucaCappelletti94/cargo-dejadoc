@@ -67,16 +67,22 @@ pub(crate) enum Origin {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum IntWidth {
-    W8 = 8,
-    W16 = 16,
-    W32 = 32,
-    W64 = 64,
-    W128 = 128,
+    W8,
+    W16,
+    W32,
+    W64,
+    W128,
 }
 
 impl IntWidth {
     pub(crate) fn bits(self) -> u32 {
-        self as u32
+        match self {
+            Self::W8 => 8,
+            Self::W16 => 16,
+            Self::W32 => 32,
+            Self::W64 => 64,
+            Self::W128 => 128,
+        }
     }
 }
 
