@@ -1,0 +1,6 @@
+//i> e*loop {*****~~
+ enum EX{   }
+/// **e ~~~for
+ enum EX{   }
+///o
+pub fn f() {}

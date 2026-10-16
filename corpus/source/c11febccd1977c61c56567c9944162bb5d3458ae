@@ -1,0 +1,3 @@
+///[test_harness("..t _]:								/doc          
+///      :		  
+pub fn f() {}

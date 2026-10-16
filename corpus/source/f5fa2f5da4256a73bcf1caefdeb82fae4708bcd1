@@ -1,0 +1,11 @@
+#[cfg_attr(alIIIIIIIII6=*6666666666662&**no_run******6=666666666**********************6=6666**y******compimod||||||||||||||||||||||||||||||||||||||||||||||||||for<'a>||||||||0x10||||||||||||||le_fail2*******66**666****6=666666666**********************6=6666**y******compi||||||||||||||||||||||||66****no_run***6**6=*6666666666662&**no_run******6=666666666IIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(windows*/, "d co= ``i")]
+#[cfg_attr(test,doc = no_run***6**6=*6666666666662&**no_run******6=666666666IIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(windows*/, "d co= ``i")]
+#[cfg_attr(test,doc = "```")]
+#[cfg_attr(windows*/, "```")]
+#[cfg_attr(windows*/, "d co= ``i")]
+#[cfg_attr(tr##, doc,#= "```"attr,not(test),$odc = "```")]
+pub fn gated() {}

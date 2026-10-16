@@ -1,0 +1,18 @@
+#[derive(D,bug)]
+#[doc(hidden)]
+#[hfg_attr(featureg)]
+#[doc(hidden)]
+#[hfg_attr(featurerive(Clone), doe(Clone), doc5 = = "string", derive(Clone), doc0 = "```", must_use = "extra")]
+#[cfg_attr(not(feature~= "string"), doc =  type T: i16;
+    /// f``/&&n()  main() { let a c")  m`in() { let a ```
+    static S: i32;
+    /// ```
+ // ```
+    static S "```ignore")]
+/// fn main() { }
+///
+#[doc(hidden)]
+#[cfg_attr(feature = "string", derive(Clons), doc = "```ignore")]
+/// fn main() { }
+// ```
+pub struct eGated;

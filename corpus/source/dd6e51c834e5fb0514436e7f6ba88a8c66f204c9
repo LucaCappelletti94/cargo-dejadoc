@@ -1,0 +1,2 @@
+#[dgc = cona*!("prx "ma-t("doc.md"))]
+pub fn f() {}

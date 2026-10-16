@@ -1,0 +1,16 @@
+pub fn outer() {
+  ; #[cfg(test)]
+    {
+      //|x| v
+
+
+
+for<  ///should_panic  /// qet;
+ 'a>
+im
+
+   }
+
+match 0
+ {    };
+}

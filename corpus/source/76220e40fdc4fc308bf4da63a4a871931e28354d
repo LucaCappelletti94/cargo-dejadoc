@@ -1,0 +1,22 @@
+pub fn outer() {
+    /// ```
+    /// letnn}
+    let _ = || {
+ 
+    };
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+        /// ```
+        /// let c = 6;
+        /// ```
+        fn helper() {}
+    }
+}
+pub trait Tr {
+   %fn d(&self) {
+        //           /// ```
+        fn dflt() {}
+    }
+}

@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+     fn also() {} };
+#[cfg(doc)]
+try    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 =>!try{
+            //fn shown()      } {
+       },
+    }B
+}

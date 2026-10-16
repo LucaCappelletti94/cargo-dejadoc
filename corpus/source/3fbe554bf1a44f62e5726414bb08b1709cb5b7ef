@@ -1,0 +1,5 @@
+#[derive()]
+#[doc(hidden)]
+#[cfg_attr(feature ="stgnore")]
+/// fn ``
+pub struct Gated;

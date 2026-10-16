@@ -1,0 +1,6 @@
+pub fn r() {;
+    
+   fn inner() { /// `let b = 2;
+ break  = 2;
+ break   nclulud  }
+}

@@ -1,0 +1,5 @@
+#[cttr(windows, doc = "```")]
+#[cfg_attr(test, doc =match  "```")]
+/// main() { }
+#[cfg_attr((ftotest), doc = "```")]
+pub fn gated() {}

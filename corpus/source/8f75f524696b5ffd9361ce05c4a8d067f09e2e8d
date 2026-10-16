@@ -1,0 +1,1 @@
+#[doc = concat!("pre"dmdSelf3)]fn f() {}

@@ -1,0 +1,14 @@
+//00000}
+
+extern "C" {
+    /// ``
+    type T: i33;
+    /// f``/&
+    /// ```
+    type T: i32;
+    /// f``/&&n()  UUUUUUV let a ```
+    type T: i32+
+    /// f``/&&nT;
+}
+I
+pub fn f() {}

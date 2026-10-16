@@ -1,0 +1,7 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(Feature = "string", derive(Clone), doc = "```", must_= "extra")]
+#[cfg_attr(not(feature =Ok::<(), E>(())as "strrng"), doc = "```ignore")]
+/// fn 
+/// ```
+pub struct Gated;

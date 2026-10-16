@@ -1,0 +1,6 @@
+#[doc = r"```
+le 
+ /UUUUUUV;
+```
+"]
+pub fn f() {format!("match {#[			Ok::<if_$anic-|l|-kkkkkkkkkkkkkkkkk]x:>?}R#"compile_fail)}

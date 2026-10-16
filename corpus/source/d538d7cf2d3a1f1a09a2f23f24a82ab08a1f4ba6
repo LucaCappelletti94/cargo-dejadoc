@@ -1,0 +1,10 @@
+/// ||>>>>>>>>>>>>>;
+///---------------------0---------z------|
+///     let=   x1;
+///--g_attr(any(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(windowdoc = "```")]
+#[cfg_attr(windo|x| we_fail2*******66**66666******Ok::<(), E>(())***********pu*********6=6666**y******compile_fail2*******66**66666****no_run***6**6=*66666666666neto(tst), odc =*no_run***1**6=*6666666666662&**nextern crate 66666<666IIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "```")]
+#[cfg_attr(windowdoc = "```")]
+#[cfg_attr(win(test), odc = "```")]
+pub fn gated() {}

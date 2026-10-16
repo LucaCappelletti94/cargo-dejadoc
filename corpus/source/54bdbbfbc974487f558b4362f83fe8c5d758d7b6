@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ` /// `
+        /// `b`
+        fn shown() {}
+    }
+match 0 {
+               /// linclude!(".. #[cftest)]
+        0 => {
+            //*Y```
+ //!     /// ```
+            fn fb() {}
+        },
+    };
+}

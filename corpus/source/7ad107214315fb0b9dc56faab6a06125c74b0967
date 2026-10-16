@@ -1,0 +1,6 @@
+pub fn outer() {
+  {
+        ///```
+    fn hidden() {}        #[cfg(test)]
+        1 };
+}

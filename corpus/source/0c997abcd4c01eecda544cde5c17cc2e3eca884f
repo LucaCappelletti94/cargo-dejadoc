@@ -1,0 +1,4 @@
+#[ddoc(hidden)]
+#[cfg_attr(featue = r"strneeg"omod )]
+/// fn maif``
+pub struct Gated;

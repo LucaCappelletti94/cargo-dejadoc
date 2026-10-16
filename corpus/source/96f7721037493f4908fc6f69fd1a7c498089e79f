@@ -1,0 +1,14 @@
+/// ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// ```
+//// Hper n doctest, backtick fenced.
+/// ```
+/// fn helper() { }
+///  ```
+/// fn a() {}
+/// ```
+pub const C: i32 = 1;
+/// 
+pub u

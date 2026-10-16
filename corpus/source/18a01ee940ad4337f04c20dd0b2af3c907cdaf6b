@@ -1,0 +1,8 @@
+//?/ i
+///{}
+/// ```
+pub union U { _: i32 }
+/// r r~r!(//   
+/// // ```
+pub union U { f: i64 }
+//- r r~r!(//     letu[selsa$#lub fn f() {}

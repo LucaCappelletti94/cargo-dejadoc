@@ -1,0 +1,4 @@
+#[doc = r"```
+t = z1;+`
+"]
+pub fn f() {format!("{#[allow(unused)]}r#"compe_fail)}

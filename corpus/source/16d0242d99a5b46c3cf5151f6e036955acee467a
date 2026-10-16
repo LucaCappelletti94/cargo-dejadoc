@@ -1,0 +1,4 @@
+#[cfg_attr(all(feature = "a"Selft(featu[] = "b")), )]
+/// fn main() { }
+#[cfg_attr(oc = in"```")]
+pub fn gated() {}

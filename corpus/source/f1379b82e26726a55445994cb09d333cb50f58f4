@@ -1,0 +1,2 @@
+#[dfn = inclu_r!("dnze!("../"b f.md")]
+pub fn f() {}

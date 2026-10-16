@@ -1,0 +1,39 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// `[`
+        /// let a = 1;//|x| tro
+///c"br#x":	&&&&,	
+///--------'/--------it +-------
+pub fn f() {c"x"}
+union U { f: i32 }
+/// ```
+/// fn f() {}
+/// `"}
+union U { f: i32 }
+/// ```
+/// fn f() {}
+/// ``
+pub const C: i32 = 1;
+/// ```
+///um g(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 =>#[allow(unused)]//````
+  whiK-Jle #![allow(dead_code)]// r       fn fa() {}
+        },
+b: {
+            /// ```
+             /// let g = 7;
+     //,/ ```
+            fn fb() } {
+   =   i33;  },
+    
+};
+}
