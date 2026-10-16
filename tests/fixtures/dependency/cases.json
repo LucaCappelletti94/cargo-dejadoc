@@ -1,0 +1,324 @@
+[
+  {
+    "id": "D01_literals",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=2u32;let b=3u32;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let b=3u32;let a=2u32;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D02_bitwise",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let low=input&15u32;let high=input>>4;(low,high)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let high=input>>4;let low=input&15u32;(low,high)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D03_chains",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let c=a^3u32;let b=input>>4;let d=b|1u32;(c,d)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let b=input>>4;let a=input&15u32;let d=b|1u32;let c=a^3u32;(c,d)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D04_renamed",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=input>>4;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let z=input>>4;let y=input&15u32;(y,z)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D05_duplicate_labels",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=input&15u32;let c=a^1u32;let d=b^2u32;(c,d)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let b=input&15u32;let a=input&15u32;let d=b^2u32;let c=a^1u32;(c,d)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D06_shadowing",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=input>>4;let a=a^3u32;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let b=input>>4;let a=input&15u32;let a=a^3u32;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D07_local_pure_calls",
+    "family": "schedule",
+    "a": "fn one(x:u32)->u32{x&15u32}fn two(x:u32)->u32{x>>4}\nfn f(input:u32)->(u32,u32){let a=one(input);let b=two(input);(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn one(x:u32)->u32{x&15u32}fn two(x:u32)->u32{x>>4}\nfn f(input:u32)->(u32,u32){let b=two(input);let a=one(input);(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D08_literal_provenance",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let seed=17u32;let low=seed&15u32;let high=seed>>4;(low,high)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let seed=17u32;let high=seed>>4;let low=seed&15u32;(low,high)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "D09_effect_barrier",
+    "family": "schedule",
+    "a": "\nfn f(input:u32)->(u32,u32){let low=input&15u32;let high=input>>4;println!(\"{} {}\",low,high);let a=low^3u32;let b=high|1u32;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let high=input>>4;let low=input&15u32;println!(\"{} {}\",low,high);let b=high|1u32;let a=low^3u32;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A01_commute_bitwise",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->u32{input&15u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{15u32&input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A02_associate_bitwise",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->u32{(input^1u32)^2u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{input^(1u32^2u32)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A03_reverse_comparison",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->bool{input>3u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->bool{3u32<input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A04_double_not",
+    "family": "boolean",
+    "a": "\nfn f(input:bool)->bool{!!input}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:bool)->bool{input}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A05_boolean_tail",
+    "family": "boolean",
+    "a": "\nfn f(input:bool)->bool{if input{true}else{false}}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:bool)->bool{input}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A06_demorgan",
+    "family": "boolean",
+    "a": "\nfn f(input:bool,other:bool)->bool{!(input&&(other))}\nfn main(){for input in [(false,false),(false,true),(true,false),(true,true)]{println!(\"{:?}\",f(input.0,input.1));}}",
+    "b": "\nfn f(input:bool,other:bool)->bool{!input||!other}\nfn main(){for input in [(false,false),(false,true),(true,false),(true,true)]{println!(\"{:?}\",f(input.0,input.1));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A07_copy_alias",
+    "family": "temporary",
+    "a": "\nfn f(input:u32)->u32{let mask=input&15u32;let copied=mask;copied^3u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{let mask=input&15u32;mask^3u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A08_inline_temporary",
+    "family": "temporary",
+    "a": "\nfn f(input:u32)->u32{let mask=input&15u32;mask^3u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{(input&15u32)^3u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A09_constant_eval",
+    "family": "constant",
+    "a": "\nfn f(input:u32)->u32{let n=2u32+3u32;n^input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{let n=5u32;n^input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A10_tuple_destructure",
+    "family": "temporary",
+    "a": "\nfn f(input:u32)->(u32,u32){let (a,b)=(input&15u32,input>>4);(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=input>>4;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A11_compare_true",
+    "family": "boolean",
+    "a": "\nfn f(input:bool)->bool{input==true}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:bool)->bool{input}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A12_bitwise_idempotence",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->u32{input&input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A13_item_order",
+    "family": "items",
+    "a": "fn one()->u32{1}fn two()->u32{2}fn main(){println!(\"{:?}\",(one(),two()));}",
+    "b": "fn two()->u32{2}fn one()->u32{1}fn main(){println!(\"{:?}\",(one(),two()));}",
+    "expected": "same"
+  },
+  {
+    "id": "A14_split_impl",
+    "family": "items",
+    "a": "struct S;impl S{fn one()->u32{1}}impl S{fn two()->u32{2}}fn main(){println!(\"{:?}\",(S::one(),S::two()));}",
+    "b": "struct S;impl S{fn one()->u32{1}fn two()->u32{2}}fn main(){println!(\"{:?}\",(S::one(),S::two()));}",
+    "expected": "same"
+  },
+  {
+    "id": "A15_literal_alternatives",
+    "family": "patterns",
+    "a": "\nfn f(input:u32)->bool{match input{1|2=>true,_=>false}}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->bool{match input{2|1=>true,_=>false}}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A16_branch_inversion",
+    "family": "boolean",
+    "a": "\nfn f(input:bool)->u32{if !input{1u32}else{2u32}}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:bool)->u32{if input{2u32}else{1u32}}\nfn main(){for input in [false,true]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A17_field_order",
+    "family": "schedule",
+    "a": "struct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{x:input&15u32,y:input>>4};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "struct S{x:u32,y:u32}\nfn f(input:u32)->(u32,u32){let s=S{y:input>>4,x:input&15u32};(s.x,s.y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "A18_dead_primitive",
+    "family": "temporary",
+    "a": "\nfn f(input:u32)->u32{let unused=17u32;input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{input}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "N01_io",
+    "family": "negative",
+    "a": "fn one()->u32{println!(\"one\");1}fn two()->u32{println!(\"two\");2}\nfn f(input:u32)->(u32,u32){let a=one();let b=two();(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "fn one()->u32{println!(\"one\");1}fn two()->u32{println!(\"two\");2}\nfn f(input:u32)->(u32,u32){let b=two();let a=one();(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different"
+  },
+  {
+    "id": "N02_drop_order",
+    "family": "negative",
+    "a": "struct D(&'static str);impl Drop for D{fn drop(&mut self){println!(\"drop {}\",self.0);}}fn main(){let a=D(\"a\");let b=D(\"b\");println!(\"point\");}",
+    "b": "struct D(&'static str);impl Drop for D{fn drop(&mut self){println!(\"drop {}\",self.0);}}fn main(){let b=D(\"b\");let a=D(\"a\");println!(\"point\");}",
+    "expected": "different"
+  },
+  {
+    "id": "N03_interior_mutability",
+    "family": "negative",
+    "a": "\nfn f(input:u32)->(u32,u32){let cell=std::cell::Cell::new(input);let a=cell.get();let b=cell.replace(2);(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let cell=std::cell::Cell::new(input);let b=cell.replace(2);let a=cell.get();(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different"
+  },
+  {
+    "id": "N04_panics",
+    "family": "negative",
+    "a": "fn one()->u32{panic!(\"one\")}fn two()->u32{panic!(\"two\")}fn main(){std::panic::set_hook(Box::new(|info|{if let Some(s)=info.payload().downcast_ref::<&str>(){println!(\"{s}\");}}));let a=one();let b=two();println!(\"{} {}\",a,b);}",
+    "b": "fn one()->u32{panic!(\"one\")}fn two()->u32{panic!(\"two\")}fn main(){std::panic::set_hook(Box::new(|info|{if let Some(s)=info.payload().downcast_ref::<&str>(){println!(\"{s}\");}}));let b=two();let a=one();println!(\"{} {}\",a,b);}",
+    "expected": "different"
+  },
+  {
+    "id": "N05_overloaded_add",
+    "family": "negative",
+    "a": "struct N(i32);impl core::ops::Add for N{type Output=N;fn add(self,rhs:N)->N{N(self.0-rhs.0)}}fn main(){println!(\"{}\",(N(8)+N(3)).0);}",
+    "b": "struct N(i32);impl core::ops::Add for N{type Output=N;fn add(self,rhs:N)->N{N(self.0-rhs.0)}}fn main(){println!(\"{}\",(N(3)+N(8)).0);}",
+    "expected": "different"
+  },
+  {
+    "id": "N06_float_association",
+    "family": "negative",
+    "a": "fn main(){let a=1e20f64;let b=-1e20f64;let c=3.14f64;println!(\"{}\",(a+b)+c);}",
+    "b": "fn main(){let a=1e20f64;let b=-1e20f64;let c=3.14f64;println!(\"{}\",a+(b+c));}",
+    "expected": "different"
+  },
+  {
+    "id": "N07_overflow_association",
+    "family": "negative",
+    "a": "\nfn f(input:u8)->u8{(input+1)-1}\nfn main(){for input in [0,1,255]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u8)->u8{input+(1-1)}\nfn main(){for input in [0,1,255]{println!(\"{:?}\",f(input));}}",
+    "expected": "profile-dependent"
+  },
+  {
+    "id": "N08_output_ports",
+    "family": "negative",
+    "a": "\nfn f(input:u32)->(u32,u32){let low=input&15u32;let high=input>>4;(low,high)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let low=input&15u32;let high=input>>4;(high,low)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different"
+  },
+  {
+    "id": "N09_storage_identity",
+    "family": "negative",
+    "a": "fn main(){let a=7u32;let b=a;println!(\"{}\",std::ptr::eq(&a,&b));}",
+    "b": "fn main(){let a=7u32;println!(\"{}\",std::ptr::eq(&a,&a));}",
+    "expected": "different"
+  },
+  {
+    "id": "N10_macro_scope",
+    "family": "negative",
+    "a": "fn main(){macro_rules! m{()=>{1}}let a=m!();macro_rules! m{()=>{2}}let b=m!();println!(\"{} {}\",a,b);}",
+    "b": "fn main(){macro_rules! m{()=>{1}}macro_rules! m{()=>{2}}let a=m!();let b=m!();println!(\"{} {}\",a,b);}",
+    "expected": "different"
+  },
+  {
+    "id": "N11_primitive_name_shadow",
+    "family": "negative",
+    "a": "#[allow(non_camel_case_types)]type u32=Wrap;#[derive(Clone,Copy)]struct Wrap(std::primitive::u32);impl core::ops::BitAnd<std::primitive::u32> for Wrap{type Output=std::primitive::u32;fn bitand(self,rhs:std::primitive::u32)->Self::Output{println!(\"mask {rhs}\");self.0&rhs}}fn f(input:u32)->(std::primitive::u32,std::primitive::u32){let a=input&15u32;let b=input&31u32;(a,b)}fn main(){println!(\"{:?}\",f(Wrap(17)));}",
+    "b": "#[allow(non_camel_case_types)]type u32=Wrap;#[derive(Clone,Copy)]struct Wrap(std::primitive::u32);impl core::ops::BitAnd<std::primitive::u32> for Wrap{type Output=std::primitive::u32;fn bitand(self,rhs:std::primitive::u32)->Self::Output{println!(\"mask {rhs}\");self.0&rhs}}fn f(input:u32)->(std::primitive::u32,std::primitive::u32){let b=input&31u32;let a=input&15u32;(a,b)}fn main(){println!(\"{:?}\",f(Wrap(17)));}",
+    "expected": "different"
+  },
+  {
+    "id": "N12_short_circuit",
+    "family": "negative",
+    "a": "fn check(name:&str,value:bool)->bool{println!(\"{name}\");value}fn main(){println!(\"{}\",check(\"a\",false)&&check(\"b\",true));}",
+    "b": "fn check(name:&str,value:bool)->bool{println!(\"{name}\");value}fn main(){println!(\"{}\",check(\"b\",true)&&check(\"a\",false));}",
+    "expected": "different"
+  },
+  {
+    "id": "N13_duplicate_evaluation",
+    "family": "negative",
+    "a": "static COUNT:core::sync::atomic::AtomicU32=core::sync::atomic::AtomicU32::new(0);fn next()->u32{COUNT.fetch_add(1,core::sync::atomic::Ordering::SeqCst)}fn main(){let a=next();println!(\"{:?}\",(a,a));}",
+    "b": "static COUNT:core::sync::atomic::AtomicU32=core::sync::atomic::AtomicU32::new(0);fn next()->u32{COUNT.fetch_add(1,core::sync::atomic::Ordering::SeqCst)}fn main(){println!(\"{:?}\",(next(),next()));}",
+    "expected": "different"
+  },
+  {
+    "id": "N14_temporary_drop_scope",
+    "family": "negative",
+    "a": "struct D;impl Drop for D{fn drop(&mut self){println!(\"drop\");}}fn observe(_: &D){}fn main(){let a=D;observe(&a);println!(\"point\");}",
+    "b": "struct D;impl Drop for D{fn drop(&mut self){println!(\"drop\");}}fn observe(_: &D){}fn main(){observe(&D);println!(\"point\");}",
+    "expected": "different"
+  },
+  {
+    "id": "C01_alpha_control",
+    "family": "control",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=input>>4;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let x=input&15u32;let y=input>>4;(x,y)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "C02_dependency_change",
+    "family": "negative",
+    "a": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=a>>1;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){let a=input&15u32;let b=input>>1;(a,b)}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "different"
+  },
+  {
+    "id": "A19_literal_condition",
+    "family": "boolean",
+    "a": "\nfn f(input:u32)->u32{if true{5u32}else{6u32}}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->u32{5u32}\nfn main(){for input in [0,1,15,16,31,255,65535,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same"
+  },
+  {
+    "id": "N15_discarded_branch_inference",
+    "family": "negative",
+    "a": "fn main(){let n=if true{0}else{0u8};println!(\"{}\",std::mem::size_of_val(&n));}",
+    "b": "fn main(){let n=0;println!(\"{}\",std::mem::size_of_val(&n));}",
+    "expected": "different"
+  },
+  {
+    "id": "N16_literal_overflow_association",
+    "family": "negative",
+    "a": "#![allow(arithmetic_overflow)]fn main(){let n=(255u8+1u8)-1u8;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]fn main(){let n=255u8+(1u8-1u8);println!(\"{n}\");}",
+    "expected": "profile-dependent"
+  }
+]

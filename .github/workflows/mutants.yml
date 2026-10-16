@@ -19,21 +19,29 @@ env:
 
 jobs:
   shard:
-    name: Mutation testing ${{ matrix.label }}/4
+    name: Mutation testing ${{ matrix.label }}/8
     runs-on: ubuntu-latest
     timeout-minutes: 70
     strategy:
       fail-fast: false
       matrix:
         include:
-          - shard: 0/4
+          - shard: 0/8
             label: 1
-          - shard: 1/4
+          - shard: 1/8
             label: 2
-          - shard: 2/4
+          - shard: 2/8
             label: 3
-          - shard: 3/4
+          - shard: 3/8
             label: 4
+          - shard: 4/8
+            label: 5
+          - shard: 5/8
+            label: 6
+          - shard: 6/8
+            label: 7
+          - shard: 7/8
+            label: 8
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
@@ -61,8 +69,9 @@ jobs:
         timeout-minutes: 10
         run: cargo install cargo-mutants --locked
 
-      # --no-shuffle plus slice sharding keeps the four shard ranges a fixed disjoint partition.
+      # Slice sharding without shuffling keeps the ranges disjoint.
       # Each -E drops a documented unobservable mutant (plans/dejadoc.md) whose observable siblings stay pinned by tests.
+      # Joint and alone punctuation tags remain a bijection when swapped.
       - name: Run mutants
         timeout-minutes: 42
         run: >-
@@ -84,6 +93,7 @@ jobs:
           -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Type::(Macro|Never)\(ty\) in type_attrs$'
           -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Expr::(Continue|Lit|Macro)\(expr\) in expr_attrs$'
           -E '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::ForeignItem::Macro\(v\) in <impl VisitMut for Drift>::visit_foreign_item_mut$'
+          -E '^syn-canon/src/form\.rs:\d+:\d+: replace == with != in framed_tree$'
 
       # Step budgets leave four minutes for job overhead.
       - name: Upload mutation outcome
@@ -91,7 +101,7 @@ jobs:
         uses: actions/upload-artifact@v4
         timeout-minutes: 3
         with:
-          name: mutants-shard-${{ matrix.label }}-of-4
+          name: mutants-shard-${{ matrix.label }}-of-8
           path: mutants.out
           if-no-files-found: warn
 

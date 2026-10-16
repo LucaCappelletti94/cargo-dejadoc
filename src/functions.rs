@@ -1,6 +1,5 @@
 //! Function sites, compared within their module.
 
-use alloc::boxed::Box;
 use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
@@ -15,8 +14,8 @@ pub(crate) struct FnSite {
     pub(crate) site: DocTest,
     /// Crate root file and module path, since two crates may share a target name.
     pub(crate) scope: String,
-    /// The function as compared, without its visibility and inert attributes.
-    pub(crate) func: syn::ItemFn,
+    /// The declaration's finished canonical form in its original context.
+    pub(crate) form: syn_canon::CanonicalForm,
     /// What decides whether a copy can be deleted.
     pub(crate) context: Context,
 }
@@ -67,13 +66,15 @@ pub(crate) fn remedy(sites: &[(DocTest, Context)]) -> Remedy {
     }
 }
 
-/// The free functions, impl methods and trait default methods of `file`, nested functions excluded.
+/// The free functions, impl methods and trait default methods of `file`, nested functions
+/// excluded, each declaration canonicalized in `context`.
 pub(crate) fn functions(
     prefix: &str,
     file: &SourceFile,
     root: &str,
     crate_root: &str,
     library: bool,
+    context: &syn_canon::SourceContext<'_>,
 ) -> Vec<FnSite> {
     let path = file
         .path
@@ -87,6 +88,7 @@ pub(crate) fn functions(
         library,
         lines: &lines,
         cfg: Vec::new(),
+        context,
         out: Vec::new(),
     };
     walk.items(&file.parsed.items, prefix);
@@ -102,6 +104,7 @@ struct Walk<'a> {
     lines: &'a [&'a str],
     /// The `cfg` attributes of the inline modules, impls and traits the walk is inside.
     cfg: Vec<String>,
+    context: &'a syn_canon::SourceContext<'a>,
     out: Vec<FnSite>,
 }
 
@@ -239,13 +242,11 @@ impl Walk<'_> {
                 public: self.library && matches!(vis, syn::Visibility::Public(_)),
             },
             scope: format!("{}\n{module}", self.crate_root),
-            func: syn::ItemFn {
-                attrs: attrs.iter().filter(|a| live(&a.meta)).cloned().collect(),
-                vis: syn::Visibility::Inherited,
-                modifiers: syn::FnModifiers::default(),
-                sig: compared_sig(sig, method.is_some()),
-                block: Box::new(block.clone()),
-            },
+            form: self
+                .context
+                .function(sig, block)
+                .expect("the site's declaration is indexed in the source context")
+                .canonicalize(),
             context: Context {
                 owner,
                 exported: attrs.iter().any(|a| exports(&a.meta)),
@@ -264,58 +265,12 @@ struct Parts<'a> {
     block: &'a syn::Block,
 }
 
-/// The signature as compared. A method's name is not in scope in its body, where a bare
-/// path of that name reaches a free function, so the method's name becomes one no body names.
-fn compared_sig(sig: &syn::Signature, method: bool) -> syn::Signature {
-    let mut sig = sig.clone();
-    if method {
-        sig.ident = syn::Ident::new("__dejadoc_method", sig.ident.span());
-    }
-    sig
-}
-
 /// The printed `cfg` attributes among `attrs`.
 fn cfgs(attrs: &[syn::Attribute]) -> impl Iterator<Item = String> + '_ {
     attrs
         .iter()
         .filter(|a| a.path().is_ident("cfg"))
         .map(|a| quote::ToTokens::to_token_stream(a).to_string())
-}
-
-/// Whether `meta` takes part in the comparison. `cfg`, the hints that leave the body's
-/// meaning alone, the attributes that export a symbol, and a `cfg_attr` wrapping only those
-/// do not.
-fn live(meta: &syn::Meta) -> bool {
-    let path = meta.path();
-    if path.is_ident("cfg_attr") {
-        return wrapped(meta, 1).is_none_or(|metas| metas.iter().any(live));
-    }
-    if path.is_ident("unsafe") {
-        return wrapped(meta, 0).is_none_or(|metas| metas.iter().any(live));
-    }
-    // A `doc` computed by a macro runs at compile time and can fail.
-    if path.is_ident("doc")
-        && matches!(meta, syn::Meta::NameValue(nv) if matches!(nv.value, syn::Expr::Macro(_)))
-    {
-        return true;
-    }
-    let inert = [
-        "cfg",
-        "inline",
-        "cold",
-        "must_use",
-        "track_caller",
-        "doc",
-        "allow",
-        "warn",
-        "deny",
-        "forbid",
-        "expect",
-        "no_mangle",
-        "export_name",
-    ];
-    !inert.iter().any(|name| path.is_ident(name))
-        && path.segments.first().is_none_or(|s| s.ident != "rustfmt")
 }
 
 /// Whether `meta` exports a symbol, which the symbol's users then need.

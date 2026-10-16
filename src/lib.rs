@@ -245,6 +245,12 @@ impl Dejadoc {
                         .strip_prefix(root)
                         .map_or(f.path.as_str(), |p| p.trim_start_matches('/'))
                 });
+                let context = syn_canon::SourceContext::new(
+                    target
+                        .files
+                        .iter()
+                        .map(|file| (file.segments.as_slice(), &file.parsed)),
+                );
                 target
                     .files
                     .iter()
@@ -256,6 +262,7 @@ impl Dejadoc {
                             root,
                             crate_root,
                             target.library,
+                            &context,
                         )
                     })
             });
@@ -333,6 +340,10 @@ const DEFAULT_FN_MIN_TOKENS: usize = 30;
 
 /// Weighted-token floor for lexical contexts.
 const DEFAULT_CONTEXT_MIN_TOKENS: usize = 30;
+
+const DOCTEST_DOMAIN: u8 = 1;
+const TEXT_DOMAIN: u8 = 2;
+const FUNCTION_DOMAIN: u8 = 3;
 
 /// The module path of `file` in `target`.
 fn module_prefix(target: &TargetScan, file: &SourceFile) -> String {
@@ -527,7 +538,7 @@ pub struct Report {
 
 #[cfg(feature = "std")]
 /// Exit status for a finished scan.
-#[must_use = "Use the scan result as the process exit status"]
+#[must_use = "return the status from `main`"]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     use std::process::ExitCode;
     if (report.groups.is_empty() && report.context_groups.is_empty()) || no_fail {
@@ -594,12 +605,20 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         } else {
             normalize::canonicalize(&block.code)
         };
-        let mut hashed = canonical.text.clone();
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[if canonical.unparsed {
+            TEXT_DOMAIN
+        } else {
+            DOCTEST_DOMAIN
+        }]);
+        let length = u64::try_from(canonical.key.len()).expect("the key length fits u64");
+        hasher.update(&length.to_be_bytes());
+        hasher.update(canonical.key.as_bytes());
         for tag in checked_attributes(&block.info) {
-            hashed.push('\n');
-            hashed.push_str(tag);
+            hasher.update(b"\n");
+            hasher.update(tag.as_bytes());
         }
-        let hash = blake3::hash(hashed.as_bytes()).to_hex().to_string();
+        let hash = hasher.finalize().to_hex().to_string();
         (
             hash,
             canonical.unparsed,
@@ -649,16 +668,14 @@ fn group_functions(
         .inspect(|_| total += 1)
         .filter(|f| !f.site.allow)
         .map(|f| {
-            let file = syn::File {
-                shebang: None,
-                frontmatter: None,
-                attrs: Vec::new(),
-                items: alloc::vec![syn::Item::Fn(f.func)],
-            };
-            let canonical = syn_canon::canonicalize(file);
-            let tokens = normalize::body_tokens(canonical.clone());
-            let keyed = format!("{}\n{canonical}", f.scope);
-            let hash = blake3::hash(keyed.as_bytes()).to_hex().to_string();
+            let tokens = f.form.body_units();
+            let mut hasher = blake3::Hasher::new();
+            hasher.update(&[FUNCTION_DOMAIN]);
+            let length = u64::try_from(f.scope.len()).expect("the scope length fits u64");
+            hasher.update(&length.to_be_bytes());
+            hasher.update(f.scope.as_bytes());
+            hasher.update(f.form.key().as_bytes());
+            let hash = hasher.finalize().to_hex().to_string();
             (hash, false, tokens, (f.site, f.context))
         });
     let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens, |sites| {

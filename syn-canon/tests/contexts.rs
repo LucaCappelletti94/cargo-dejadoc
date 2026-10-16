@@ -396,17 +396,17 @@ fn capture_numbering_depends_on_references_not_parameter_order() {
 
 #[test]
 fn literal_values_that_resemble_canonical_names_are_preserved() {
-    struct Strings(Vec<String>);
-    impl<'ast> syn::visit::Visit<'ast> for Strings {
-        fn visit_lit_str(&mut self, literal: &'ast syn::LitStr) {
-            self.0.push(literal.value());
-        }
-    }
-    let (found, _) = sites("fn a(x: u32, y: u32) { consume({ (y, x, \"_iv0\") }); }");
-    let block = syn::parse_str(forms_of(&found, ContextKind::Block)[0]).unwrap();
-    let mut strings = Strings(Vec::new());
-    syn::visit::Visit::visit_block(&mut strings, &block);
-    assert_eq!(strings.0, ["_iv0"]);
+    let (original, _) = sites("fn a(x: u32, y: u32) { consume({ (y, x, \"_iv0\") }); }");
+    let (renamed, _) = sites("fn b(y: u32, x: u32) { consume({ (y, x, \"_iv0\") }); }");
+    let (changed, _) = sites("fn b(y: u32, x: u32) { consume({ (y, x, \"_iv1\") }); }");
+    assert_eq!(
+        forms_of(&original, ContextKind::Block),
+        forms_of(&renamed, ContextKind::Block)
+    );
+    assert_ne!(
+        forms_of(&renamed, ContextKind::Block),
+        forms_of(&changed, ContextKind::Block)
+    );
 }
 
 #[test]
@@ -640,45 +640,25 @@ fn contextual_self_imports_preserve_module_targets() {
 
 #[test]
 fn whole_file_self_imports_preserve_module_member_references() {
+    let original = "
+        mod local { pub fn f() {} pub fn other() {} }
+        mod caller {
+            use super::local::{self};
+            pub fn g() { local::f(); }
+        }";
+    let renamed = "
+        mod local { pub fn helper() {} pub fn neighbor() {} }
+        mod caller {
+            use super::local::{self};
+            pub fn invoke() { local::helper(); }
+        }";
+    let changed = renamed.replace("local::helper()", "local::neighbor()");
     for canonicalize in [syn_canon::canonicalize, syn_canon::canonicalize_failing] {
-        let input = syn::parse_str(
-            "mod local { pub fn f() {} }
-             mod caller {
-                 use super::local::{self};
-                 pub fn g() { local::f(); }
-             }",
-        )
-        .unwrap();
-        let file: syn::File = syn::parse2(canonicalize(input)).unwrap();
-        let modules: Vec<_> = file
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                syn::Item::Mod(module) => module.content.as_ref().map(|(_, items)| items),
-                _ => None,
-            })
-            .collect();
-        let member = modules[0]
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Fn(function) => Some(&function.sig.ident),
-                _ => None,
-            })
-            .unwrap();
-        let caller = modules[1]
-            .iter()
-            .find_map(|item| match item {
-                syn::Item::Fn(function) => Some(&function.block),
-                _ => None,
-            })
-            .unwrap();
-        let syn::Stmt::Expr(syn::Expr::Call(call), _) = &caller.stmts[0] else {
-            panic!("expected a module member call");
-        };
-        let syn::Expr::Path(path) = &*call.func else {
-            panic!("expected a module path");
-        };
-        assert_eq!(path.path.segments.last().unwrap().ident, *member);
+        let original = canonicalize(syn::parse_str(original).unwrap());
+        let renamed = canonicalize(syn::parse_str(renamed).unwrap());
+        let changed = canonicalize(syn::parse_str(&changed).unwrap());
+        assert_eq!(original, renamed);
+        assert_ne!(renamed, changed);
     }
 }
 
@@ -1278,4 +1258,92 @@ fn trait_default_bodies_keep_their_own_self_association() {
         body_of(&self_ref, "Foo::make"),
         body_of(&name_ref, "Foo::make")
     );
+}
+
+/// The canonical view of one indexed declaration, by its written name.
+fn view_of(file: &syn::File, name: &str) -> syn_canon::CanonicalForm {
+    let context = syn_canon::SourceContext::new(core::iter::once((&[][..], file)));
+    let target = file
+        .items
+        .iter()
+        .find_map(|item| match item {
+            syn::Item::Fn(f) if f.sig.ident == name => Some((&f.sig, f.block.as_ref())),
+            syn::Item::Impl(imp) => imp.items.iter().find_map(|member| match member {
+                syn::ImplItem::Fn(f) if f.sig.ident == name => Some((&f.sig, &f.block)),
+                _ => None,
+            }),
+            _ => None,
+        })
+        .unwrap_or_else(|| panic!("{name} fixture"));
+    context.function(target.0, target.1).unwrap().canonicalize()
+}
+
+#[test]
+fn body_references_keep_unresolved_canonical_spellings_apart() {
+    let (a, _) = sites("fn first(x: i32) { consume(x) }");
+    let (b, _) = sites("fn renamed(y: i32) { consume(y) }");
+    let (c, _) = sites("fn third() { consume(_iv0) }");
+    assert_eq!(body_of(&a, "first"), body_of(&b, "renamed"));
+    assert_ne!(body_of(&a, "first"), body_of(&c, "third"));
+}
+
+#[test]
+fn closure_references_keep_unresolved_canonical_spellings_apart() {
+    let (a, _) = sites("fn first(x: i32) { let f = || consume(x); consume(f) }");
+    let (b, _) = sites("fn renamed(y: i32) { let f = || consume(y); consume(f) }");
+    let (c, _) = sites("fn third() { let f = || consume(_iv0); consume(f) }");
+    assert_eq!(
+        forms_of(&a, ContextKind::Closure)[0],
+        forms_of(&b, ContextKind::Closure)[0]
+    );
+    assert_ne!(
+        forms_of(&a, ContextKind::Closure)[0],
+        forms_of(&c, ContextKind::Closure)[0]
+    );
+}
+
+#[test]
+fn arm_references_keep_unresolved_canonical_spellings_apart() {
+    let (a, _) = sites("fn first(x: i32) -> i32 { match w { _ => consume(x) } }");
+    let (b, _) = sites("fn renamed(y: i32) -> i32 { match w { _ => consume(y) } }");
+    let (c, _) = sites("fn third() -> i32 { match w { _ => consume(_iv0) } }");
+    assert_eq!(
+        forms_of(&a, ContextKind::Arm)[0],
+        forms_of(&b, ContextKind::Arm)[0]
+    );
+    assert_ne!(
+        forms_of(&a, ContextKind::Arm)[0],
+        forms_of(&c, ContextKind::Arm)[0]
+    );
+}
+
+#[test]
+fn view_absolute_and_relative_roots_stay_apart_for_bound_items() {
+    let file: syn::File = syn::parse_str(
+        "struct Thing;
+         struct Widget;
+         impl Widget {
+             fn first() -> ::Thing {}
+             fn renamed() -> ::Thing {}
+             fn local() -> Thing {}
+         }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&file, "first"), view_of(&file, "renamed"));
+    assert_ne!(view_of(&file, "first"), view_of(&file, "local"));
+}
+
+#[test]
+fn view_absolute_and_relative_roots_stay_apart_for_generic_parameters() {
+    let file: syn::File = syn::parse_str(
+        "struct Pair;
+         impl<T> Pair {
+             fn first() -> ::T {}
+             fn renamed() -> ::T {}
+             fn local() -> T {}
+         }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&file, "first"), view_of(&file, "renamed"));
+    assert_ne!(view_of(&file, "first"), view_of(&file, "local"));
 }

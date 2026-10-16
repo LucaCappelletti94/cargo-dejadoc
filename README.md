@@ -20,7 +20,7 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 | Functions | `--functions` | `30` weighted body tokens | `--fn-min-tokens` |
 | Contexts | `--context-blocks` | `30` canonical weighted tokens | `--context-min-tokens` |
 
-Groups need at least `2` sites by default, configurable with `--threshold`. Size floors are inclusive and independent. For functions and contexts, a path, lifetime or multi-character operator counts as one token, while commas and grouping delimiters count as zero.
+Groups need at least `2` sites by default, configurable with `--threshold`. Size floors are inclusive, independent and exclude comparison-key framing. For functions and contexts, a path, lifetime or multi-character operator counts as one token, while commas and grouping delimiters count as zero.
 
 Defaults come from `.dejadoc.toml` at the workspace root, with command-line options taking precedence. Set `functions = true` or `context-blocks = true` to enable the optional checks, and `context-min-tokens = 30` to set the context floor. See `cargo dejadoc --help` for package selection, additional targets and `JSON` output.
 
@@ -29,6 +29,8 @@ Generated files are skipped when their first five lines contain `@generated` or 
 Doctest and function groups identify a copy to keep, preferring one that references its own item, then file and line order. Use `rust,dejadoc` on a doctest fence or `// dejadoc: allow` above a function to keep an intentional copy.
 
 Functions compare within their module across targets and `cfg` variants, keeping test markers, `should_panic` and `ignore` distinct. Only eligible free functions and inherent methods receive deletion suggestions. Library public API, exported symbols and differing `cfg` or self types require refactoring.
+
+Function comparisons use original module files, import associations and enclosing owners, keeping calls to different inherited helpers distinct.
 
 ### Contexts
 
