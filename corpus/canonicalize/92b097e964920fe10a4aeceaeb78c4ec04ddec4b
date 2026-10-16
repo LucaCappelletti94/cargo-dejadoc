@@ -1,2 +1,0 @@
-#[derive(De{.class}bug)]
-struct S;
