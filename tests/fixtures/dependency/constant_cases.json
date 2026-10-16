@@ -1,0 +1,2431 @@
+[
+  {
+    "id": "array_len_div_zero",
+    "family": "constant",
+    "a": "fn main(){let a = [0u8; 5usize / 0usize];println!(\"{}\",a.len());}",
+    "b": "fn main(){let a = [0u8; 5usize / 1usize];println!(\"{}\",a.len());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "array_len_fold",
+    "family": "constant",
+    "a": "fn main(){let a = [0u32; 2usize + 3usize];println!(\"{}\",a.len());}",
+    "b": "fn main(){let a = [0u32; 5usize];println!(\"{}\",a.len());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "attr_ancestor_observer",
+    "family": "constant",
+    "a": "use obs::obs;\n\n#[obs]\nfn f() -> u32 {\n    let n = 2u32 + 3u32;\n    n\n}\nfn main() {\n    println!(\"{}\", f());\n}\n",
+    "b": "use obs::obs;\n\n#[obs]\nfn f() -> u32 {\n    let n = 5u32;\n    n\n}\nfn main() {\n    println!(\"{}\", f());\n}\n",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ let n = 2u32 + 3u32; n }\n5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ let n = 2u32 + 3u32; n }\n5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ let n = 5u32; n }\n5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ let n = 5u32; n }\n5\n"
+        }
+      }
+    },
+    "externs": [
+      "obs"
+    ]
+  },
+  {
+    "id": "bitwise_mixed_width",
+    "family": "constant",
+    "a": "fn main(){let n = 2u8 & 3u16;println!(\"{n}\");}",
+    "b": "fn main(){let n = 2u8 & 3u8;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0277]",
+            "error[E0308]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0277]",
+            "error[E0308]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_i128",
+    "family": "constant",
+    "a": "fn main(){let n = 2i128 + 3i128;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5i128;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_i16",
+    "family": "constant",
+    "a": "fn main(){let n = 2i16 + 3i16;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5i16;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_i32",
+    "family": "constant",
+    "a": "fn main(){let n = 2i32 + 3i32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5i32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_i64",
+    "family": "constant",
+    "a": "fn main(){let n = 2i64 + 3i64;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5i64;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_i8",
+    "family": "constant",
+    "a": "fn main(){let n = 2i8 + 3i8;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5i8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_u128",
+    "family": "constant",
+    "a": "fn main(){let n = 2u128 + 3u128;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5u128;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_u16",
+    "family": "constant",
+    "a": "fn main(){let n = 2u16 + 3u16;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5u16;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 2u32 + 3u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_u64",
+    "family": "constant",
+    "a": "fn main(){let n = 2u64 + 3u64;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5u64;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_add_u8",
+    "family": "constant",
+    "a": "fn main(){let n = 2u8 + 3u8;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5u8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_and_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 255u32 & 128u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 128u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_assoc_overflow",
+    "family": "constant",
+    "a": "const N: u8 = (255u8 + 1u8) - 1u8;\nfn main(){println!(\"{}\",N);}",
+    "b": "const N: u8 = 255u8 + (1u8 - 1u8);\nfn main(){println!(\"{}\",N);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "255\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "255\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_div_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 42u32 / 6u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 7u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "7\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "7\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "7\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "7\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_isize",
+    "family": "constant",
+    "a": "fn main(){let n: isize = 2 + 3;println!(\"{n}\");}",
+    "b": "fn main(){let n: isize = 5;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_item_div_zero",
+    "family": "constant",
+    "a": "const N: u32 = 5u32 / 0u32;\nfn main(){println!(\"{}\",N);}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 5u32 / 0u32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to divide by zero"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to divide by zero"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_item_fold",
+    "family": "constant",
+    "a": "const N: u32 = 2u32 + 3u32;\nfn main(){println!(\"{}\",N);}",
+    "b": "const N: u32 = 5u32;\nfn main(){println!(\"{}\",N);}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_item_overflow",
+    "family": "constant",
+    "a": "const N: u8 = 200u8 + 100u8;\nfn main(){println!(\"{}\",N);}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 200u8 + 100u8;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0080]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "44\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to add with overflow"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_add_i128",
+    "family": "constant",
+    "a": "fn main(){let n = -170141183460469231731687303715884105728i128 + 1i128;println!(\"{n}\");}",
+    "b": "fn main(){let n = -170141183460469231731687303715884105727i128;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-170141183460469231731687303715884105727\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-170141183460469231731687303715884105727\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-170141183460469231731687303715884105727\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-170141183460469231731687303715884105727\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_add_i8",
+    "family": "constant",
+    "a": "fn main(){let n = -128i8 + 1i8;println!(\"{n}\");}",
+    "b": "fn main(){let n = -127i8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_div_i32",
+    "family": "constant",
+    "a": "fn main(){let n = -2147483648i32 / -2i32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 1073741824i32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_identity_i16",
+    "family": "constant",
+    "a": "fn main() {\n    let n = -32768i16 + 1i16;\n    println!(\"{n}\");\n}\n",
+    "b": "fn main() {\n    let n = -32767i16;\n    println!(\"{n}\");\n}\n",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-32767\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-32767\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-32767\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-32767\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_identity_i64",
+    "family": "constant",
+    "a": "fn main() {\n    let n = -9223372036854775808i64 + 1i64;\n    println!(\"{n}\");\n}\n",
+    "b": "fn main() {\n    let n = -9223372036854775807i64;\n    println!(\"{n}\");\n}\n",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-9223372036854775807\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-9223372036854775807\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-9223372036854775807\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-9223372036854775807\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_operand_i8",
+    "family": "constant",
+    "a": "fn main(){let n = 1i8 + -128i8;println!(\"{n}\");}",
+    "b": "fn main(){let n = -127i8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_min_rem_i32",
+    "family": "constant",
+    "a": "fn main(){let n = -2147483648i32 % -2i32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 0i32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_mul_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 6u32 * 7u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 42u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "42\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "42\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "42\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "42\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_neg_i32",
+    "family": "constant",
+    "a": "fn main(){let n = -(2i32 + 3i32);println!(\"{n}\");}",
+    "b": "fn main(){let n = -5i32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_not_u32",
+    "family": "constant",
+    "a": "fn main(){let n = !0u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 4294967295u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4294967295\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4294967295\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4294967295\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4294967295\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_or_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 128u32 | 1u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 129u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "129\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "129\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "129\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "129\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_rem_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 42u32 % 8u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 2u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_shl_discard_u8",
+    "family": "constant",
+    "a": "fn main(){let n = 128u8 << 1u8;println!(\"{n}\");}",
+    "b": "fn main(){let n = 0u8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_shl_mixed_width",
+    "family": "constant",
+    "a": "fn main(){let n = 1u8 << 3u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 8u8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_shl_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 1u32 << 3u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 8u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "8\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_shr_arith_i8",
+    "family": "constant",
+    "a": "fn main(){let n = -128i8 >> 1i8;println!(\"{n}\");}",
+    "b": "fn main(){let n = -64i8;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-64\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-64\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-64\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-64\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_shr_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 255u32 >> 1u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 127u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_sub_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 7u32 - 3u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 4u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_unsuffixed",
+    "family": "constant",
+    "a": "fn main(){let n = 2 + 3;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_usize",
+    "family": "constant",
+    "a": "fn main(){let n: usize = 2 + 3;println!(\"{n}\");}",
+    "b": "fn main(){let n: usize = 5;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "const_xor_u32",
+    "family": "constant",
+    "a": "fn main(){let n = 255u32 ^ 128u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 127u32;println!(\"{n}\");}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "div_min_neg1_i32",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -2147483648i32 / -1i32;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -2147483648i32 / -2i32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to divide with overflow"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to divide with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "div_zero_u32",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 5u32 / 0u32;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 5u32 / 1u32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to divide by zero"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to divide by zero"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_div_zero",
+    "family": "constant",
+    "a": "fn main(){let n = 5u32 / 0u32;println!(\"{n}\");}",
+    "b": "fn main(){let n = 5u32 / 1u32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "unconditional_panic"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "unconditional_panic"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_min_div_neg1",
+    "family": "constant",
+    "a": "fn main(){let n = -2147483648i32 / -1i32;println!(\"{n}\");}",
+    "b": "fn main(){let n = -2147483648i32 / -2i32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "unconditional_panic"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "unconditional_panic"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1073741824\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_min_rem_neg1_i8",
+    "family": "constant",
+    "a": "fn main() {\n    let n = -128i8 % -1i8;\n    println!(\"{n}\");\n}\n",
+    "b": "fn main() {\n    let n = 0i8;\n    println!(\"{n}\");\n}\n",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "unconditional_panic"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "unconditional_panic"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_neg_min_i8",
+    "family": "constant",
+    "a": "fn main(){let n = -(-128i8);println!(\"{n}\");}",
+    "b": "fn main(){let n = -(-127i8);println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "arithmetic_overflow"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "arithmetic_overflow"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_neg_zero_u32",
+    "family": "constant",
+    "a": "fn main() {\n    let n = -0u32;\n    println!(\"{n}\");\n}\n",
+    "b": "fn main() {\n    let n = 0u32;\n    println!(\"{n}\");\n}\n",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0600]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0600]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_overflow_u8",
+    "family": "constant",
+    "a": "fn main(){let n = 200u8 + 100u8;println!(\"{n}\");}",
+    "b": "fn main(){let n = 254u8;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "arithmetic_overflow"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "arithmetic_overflow"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "254\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "254\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "literal_shl_overflow_u8",
+    "family": "constant",
+    "a": "fn main(){let n = 1u8 << 8u8;println!(\"{n}\");}",
+    "b": "fn main(){let n = 1u8 << 7u8;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "arithmetic_overflow"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "arithmetic_overflow"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "macro_stringify_observer",
+    "family": "constant",
+    "a": "fn main(){let s = stringify!(2u32 + 3u32);println!(\"{s}\");}",
+    "b": "fn main(){let s = stringify!(5u32);println!(\"{s}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2u32 + 3u32\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2u32 + 3u32\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5u32\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5u32\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "n16_assoc",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = (255u8 + 1u8) - 1u8;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 255u8 + (1u8 - 1u8);println!(\"{n}\");}",
+    "expected": "profile-dependent",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "255\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to add with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "255\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "255\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "neg_min_i128",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -(-170141183460469231731687303715884105728i128);println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 0i128;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-170141183460469231731687303715884105728\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to negate with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "neg_min_i8",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -(-128i8);println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -(-127i8);println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "-128\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to negate with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "ovf_mul_u32",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 0x10000u32 * 0x10000u32;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 0u32;println!(\"{n}\");}",
+    "expected": "profile-dependent",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to multiply with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "rem_min_neg1_i32",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -2147483648i32 % -1i32;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = -2147483648i32 % -2i32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to calculate the remainder with overflow"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to calculate the remainder with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "rem_min_neg1_i8",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main() {\n    let n = -128i8 % -1i8;\n    println!(\"{n}\");\n}\n",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main() {\n    let n = -128i8 % -2i8;\n    println!(\"{n}\");\n}\n",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to calculate the remainder with overflow"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to calculate the remainder with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "rem_zero_u32",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 5u32 % 0u32;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 5u32 % 1u32;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to calculate the remainder with a divisor of zero"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to calculate the remainder with a divisor of zero"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "shl_count_mixed",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 1u8 << 8u32;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 1u8 << 0u32;println!(\"{n}\");}",
+    "expected": "profile-dependent",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to shift left with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "shl_overflow_u8",
+    "family": "constant",
+    "a": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 1u8 << 8u8;println!(\"{n}\");}",
+    "b": "#![allow(arithmetic_overflow)]\n#![allow(unconditional_panic)]\nfn main(){let n = 1u8 << 7u8;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "diverge",
+          "exit": 101,
+          "stdout": "",
+          "stderr": "attempt to shift left with overflow"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "128\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "suffix_mismatch_add",
+    "family": "constant",
+    "a": "fn main(){let n = 2u8 + 3u16;println!(\"{n}\");}",
+    "b": "fn main(){let n = 2u8 + 3u8;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "error[E0277]",
+            "error[E0308]"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "error[E0277]",
+            "error[E0308]"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "suffix_range_u8",
+    "family": "constant",
+    "a": "fn main(){let n: u8 = 300;println!(\"{n}\");}",
+    "b": "fn main(){let n: u16 = 300;println!(\"{n}\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "300\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "300\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "ancestor_module_attribute_observer",
+    "family": "constant",
+    "a": "use obs::obs; #[obs] mod observed { pub fn f() -> u32 { 2u32 + 3u32 } } fn main(){ println!(\"{}\",observed::SPELLING); println!(\"{}\",observed::f()); }",
+    "b": "use obs::obs; #[obs] mod observed { pub fn f() -> u32 { 5u32 } } fn main(){ println!(\"{}\",observed::SPELLING); println!(\"{}\",observed::f()); }",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ pub fn f() -> u32 { 2u32 + 3u32 } }\n5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ pub fn f() -> u32 { 2u32 + 3u32 } }\n5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ pub fn f() -> u32 { 5u32 } }\n5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ pub fn f() -> u32 { 5u32 } }\n5\n"
+        }
+      }
+    },
+    "externs": [
+      "obs"
+    ]
+  },
+  {
+    "id": "fixed_width_array_length",
+    "family": "constant",
+    "a": "fn main(){let a=[0u8;(2u32+3u32) as usize]; println!(\"{}\",a.len());}",
+    "b": "fn main(){let a=[0u8;5u32 as usize]; println!(\"{}\",a.len());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "fixed_width_const_argument",
+    "family": "constant",
+    "a": "struct Owner<const N:u32>; impl<const N:u32> Owner<N>{fn value()->u32{N}} fn main(){println!(\"{}\",Owner::<{2u32+3u32}>::value());}",
+    "b": "struct Owner<const N:u32>; impl<const N:u32> Owner<N>{fn value()->u32{N}} fn main(){println!(\"{}\",Owner::<5u32>::value());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "negative_magnitude_out_of_range_i8",
+    "family": "constant",
+    "a": "fn value()->i8{-129i8} fn main(){println!(\"{}\",value());}",
+    "b": "fn value()->i8{127i8} fn main(){println!(\"{}\",value());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "127\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "negative_magnitude_out_of_range_i16",
+    "family": "constant",
+    "a": "fn value()->i16{-32769i16} fn main(){println!(\"{}\",value());}",
+    "b": "fn value()->i16{32767i16} fn main(){println!(\"{}\",value());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "32767\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "32767\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "negative_magnitude_out_of_range_i32",
+    "family": "constant",
+    "a": "fn value()->i32{-2147483649i32} fn main(){println!(\"{}\",value());}",
+    "b": "fn value()->i32{2147483647i32} fn main(){println!(\"{}\",value());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2147483647\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2147483647\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "negative_magnitude_out_of_range_i64",
+    "family": "constant",
+    "a": "fn value()->i64{-9223372036854775809i64} fn main(){println!(\"{}\",value());}",
+    "b": "fn value()->i64{9223372036854775807i64} fn main(){println!(\"{}\",value());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "9223372036854775807\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "9223372036854775807\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "negative_magnitude_out_of_range_i128",
+    "family": "constant",
+    "a": "fn value()->i128{-170141183460469231731687303715884105729i128} fn main(){println!(\"{}\",value());}",
+    "b": "fn value()->i128{170141183460469231731687303715884105727i128} fn main(){println!(\"{}\",value());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        },
+        "on": {
+          "compile": [
+            "overflowing_literals"
+          ],
+          "run": "absent"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "170141183460469231731687303715884105727\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "170141183460469231731687303715884105727\n"
+        }
+      }
+    }
+  }
+]

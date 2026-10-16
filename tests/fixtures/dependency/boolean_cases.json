@@ -1,0 +1,629 @@
+[
+  {
+    "id": "a04_double_not_two_inputs",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->bool{!!(a&&b)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->bool{a&&b}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a05_opposite_literal_branches",
+    "family": "boolean",
+    "a": "\nfn f(a:bool)->bool{if a{false}else{true}}\nfn main(){for a in [false,true]{println!(\"{:?}\",f(a));}}",
+    "b": "\nfn f(a:bool)->bool{!a}\nfn main(){for a in [false,true]{println!(\"{:?}\",f(a));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a06_demorgan_or_two_inputs",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->bool{!(a||b)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->bool{!a&&!b}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\nfalse\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\nfalse\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\nfalse\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\nfalse\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a06_nested_demorgan_cancellation",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool,c:bool)->bool{!(!(a&&b)||c)}\nfn main(){for a in [false,true]{for b in [false,true]{for c in [false,true]{println!(\"{:?}\",f(a,b,c));}}}}",
+    "b": "\nfn f(a:bool,b:bool,c:bool)->bool{(a&&b)&&!c}\nfn main(){for a in [false,true]{for b in [false,true]{for c in [false,true]{println!(\"{:?}\",f(a,b,c));}}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\nfalse\nfalse\nfalse\ntrue\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a11_compare_true_two_inputs",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->(bool,bool){(a==true,b)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,bool){(a,b)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(false, true)\n(true, false)\n(true, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(false, true)\n(true, false)\n(true, true)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(false, true)\n(true, false)\n(true, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(false, true)\n(true, false)\n(true, true)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a16_polarity_two_inputs",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->(bool,u8){let r=if !a{1u8}else{2u8};(b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,u8){let r=if a{2u8}else{1u8};(b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, 1)\n(true, 1)\n(false, 2)\n(true, 2)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, 1)\n(true, 1)\n(false, 2)\n(true, 2)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, 1)\n(true, 1)\n(false, 2)\n(true, 2)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, 1)\n(true, 1)\n(false, 2)\n(true, 2)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a16_effect_trace",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->(bool,u8){println!(\"before\");let r=if !a{println!(\"left\");1u8}else{println!(\"right\");2u8};(b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,u8){println!(\"before\");let r=if a{println!(\"right\");2u8}else{println!(\"left\");1u8};(b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nleft\n(false, 1)\nbefore\nleft\n(true, 1)\nbefore\nright\n(false, 2)\nbefore\nright\n(true, 2)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nleft\n(false, 1)\nbefore\nleft\n(true, 1)\nbefore\nright\n(false, 2)\nbefore\nright\n(true, 2)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nleft\n(false, 1)\nbefore\nleft\n(true, 1)\nbefore\nright\n(false, 2)\nbefore\nright\n(true, 2)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nleft\n(false, 1)\nbefore\nleft\n(true, 1)\nbefore\nright\n(false, 2)\nbefore\nright\n(true, 2)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a19_literal_condition_true",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->(bool,bool,u8){let r=if true{1u8}else{7u8};(a,b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,bool,u8){let r=1u8;(a,b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 1)\n(false, true, 1)\n(true, false, 1)\n(true, true, 1)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 1)\n(false, true, 1)\n(true, false, 1)\n(true, true, 1)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 1)\n(false, true, 1)\n(true, false, 1)\n(true, true, 1)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 1)\n(false, true, 1)\n(true, false, 1)\n(true, true, 1)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a19_literal_condition_false",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool)->(bool,bool,u8){let r=if false{1u8}else{7u8};(a,b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,bool,u8){let r=7u8;(a,b,r)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 7)\n(false, true, 7)\n(true, false, 7)\n(true, true, 7)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 7)\n(false, true, 7)\n(true, false, 7)\n(true, true, 7)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 7)\n(false, true, 7)\n(true, false, 7)\n(true, true, 7)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, 7)\n(false, true, 7)\n(true, false, 7)\n(true, true, 7)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "boolean_combined_fold",
+    "family": "boolean",
+    "a": "\nfn f(a:bool,b:bool,c:bool)->(bool,bool,bool,bool,u8,u8,bool,u32){let s=a&&b;let n04=!!s;let n05=if b{true}else{false};let n06=!(b&&c);let n11=c==true;let n16=if !c{1u8}else{2u8};let n19=if true{3u8}else{4u8};let m3=3u32^(1u32^2u32);(n04,n05,n06,n11,n16,n19,s,m3)}\nfn main(){for a in [false,true]{for b in [false,true]{for c in [false,true]{println!(\"{:?}\",f(a,b,c));}}}}",
+    "b": "\nfn f(a:bool,b:bool,c:bool)->(bool,bool,bool,bool,u8,u8,bool,u32){let s=a&&b;let n04=s;let n05=b;let n06=!b||!c;let n11=c;let n16=if c{2u8}else{1u8};let n19=3u8;let m3=3u32^3u32;(n04,n05,n06,n11,n16,n19,s,m3)}\nfn main(){for a in [false,true]{for b in [false,true]{for c in [false,true]{println!(\"{:?}\",f(a,b,c));}}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(false, true, true, false, 1, 3, false, 0)\n(false, true, false, true, 2, 3, false, 0)\n(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(true, true, true, false, 1, 3, true, 0)\n(true, true, false, true, 2, 3, true, 0)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(false, true, true, false, 1, 3, false, 0)\n(false, true, false, true, 2, 3, false, 0)\n(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(true, true, true, false, 1, 3, true, 0)\n(true, true, false, true, 2, 3, true, 0)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(false, true, true, false, 1, 3, false, 0)\n(false, true, false, true, 2, 3, false, 0)\n(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(true, true, true, false, 1, 3, true, 0)\n(true, true, false, true, 2, 3, true, 0)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(false, true, true, false, 1, 3, false, 0)\n(false, true, false, true, 2, 3, false, 0)\n(false, false, true, false, 1, 3, false, 0)\n(false, false, true, true, 2, 3, false, 0)\n(true, true, true, false, 1, 3, true, 0)\n(true, true, false, true, 2, 3, true, 0)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a04_overloaded_not_bool_output",
+    "family": "boolean",
+    "a": "\n#[derive(Clone,Copy)]\nstruct Flag{v:bool}\nimpl core::ops::Not for Flag{\ntype Output=bool;\nfn not(self)->bool{!self.v}\n}\nfn main(){for v in [false,true]{println!(\"{:?}\",!!(Flag{v}));}}",
+    "b": "\n#[derive(Clone,Copy)]\nstruct Flag{v:bool}\nimpl core::ops::Not for Flag{\ntype Output=bool;\nfn not(self)->bool{!self.v}\n}\nfn main(){for v in [false,true]{println!(\"{:?}\",!(Flag{v}));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a11_custom_partial_eq_bool",
+    "family": "boolean",
+    "a": "\n#[derive(Clone,Copy)]\nstruct Bit{v:bool}\nimpl core::cmp::PartialEq<bool> for Bit{\nfn eq(&self,other:&bool)->bool{self.v!=*other}\n}\nfn main(){for v in [false,true]{println!(\"{:?}\",(Bit{v})==true);}}",
+    "b": "\n#[derive(Clone,Copy)]\nstruct Bit{v:bool}\nimpl core::cmp::PartialEq<bool> for Bit{\nfn eq(&self,other:&bool)->bool{self.v!=*other}\n}\nfn main(){for v in [false,true]{println!(\"{:?}\",(Bit{v}).v);}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\ntrue\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "n15_boolean_discarded_inference",
+    "family": "boolean",
+    "a": "\nfn main(){let n=if true{1u8}else{1};println!(\"{} {}\",std::mem::size_of_val(&n),n);}",
+    "b": "\nfn main(){let n=1u32;println!(\"{} {}\",std::mem::size_of_val(&n),n);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1 1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1 1\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4 1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "4 1\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a19_branch_coercion",
+    "family": "boolean",
+    "a": "\nfn main(){let n=if true{1u8 as u16}else{7u16};println!(\"{} {}\",std::mem::size_of_val(&n),n);}",
+    "b": "\nfn main(){let n=7u16;println!(\"{} {}\",std::mem::size_of_val(&n),n);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2 1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2 1\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2 7\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "2 7\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "n14_boolean_drop_scope",
+    "family": "boolean",
+    "a": "\nstruct D;\nimpl Drop for D{\nfn drop(&mut self){println!(\"drop\");}\n}\nfn observe(_: &D){}\nfn main(){let d=D;let p=true;if p{observe(&d)}else{observe(&d)};println!(\"point\");}",
+    "b": "\nstruct D;\nimpl Drop for D{\nfn drop(&mut self){println!(\"drop\");}\n}\nfn observe(_: &D){}\nfn main(){let p=true;if p{observe(&D)}else{observe(&D)};println!(\"point\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "point\ndrop\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "point\ndrop\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "drop\npoint\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "drop\npoint\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "n12_demorgan_short_circuit",
+    "family": "boolean",
+    "a": "\nfn check(name:&str,value:bool)->bool{println!(\"{name}\");value}\nfn main(){for v in [false,true]{println!(\"{:?}\",!(check(\"a\",v)&&check(\"b\",true)));}}",
+    "b": "\nfn check(name:&str,value:bool)->bool{println!(\"{name}\");value}\nfn main(){for v in [false,true]{println!(\"{:?}\",!(check(\"b\",true)&&check(\"a\",v)));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "a\ntrue\na\nb\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "a\ntrue\na\nb\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "b\na\ntrue\nb\na\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "b\na\ntrue\nb\na\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "n12_logical_or_short_circuit",
+    "family": "boolean",
+    "a": "\nfn check(name:&str,value:bool)->bool{println!(\"{name}\");value}\nfn main(){for v in [false,true]{println!(\"{:?}\",check(\"a\",v)||check(\"b\",true));}}",
+    "b": "\nfn check(name:&str,value:bool)->bool{println!(\"{name}\");value}\nfn main(){for v in [false,true]{println!(\"{:?}\",check(\"b\",true)||check(\"a\",v));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "a\nb\ntrue\na\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "a\nb\ntrue\na\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "b\ntrue\nb\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "b\ntrue\nb\ntrue\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a19_branch_destruction_scope",
+    "family": "boolean",
+    "a": "\nstruct D;\nimpl Drop for D{\nfn drop(&mut self){println!(\"drop\");}\n}\nfn observe(_: &D){}\nfn main(){let p=true;if p{let x=D;observe(&x);println!(\"branch\")}else{println!(\"other\")};println!(\"point\");}",
+    "b": "\nstruct D;\nimpl Drop for D{\nfn drop(&mut self){println!(\"drop\");}\n}\nfn observe(_: &D){}\nfn main(){let x=D;let p=true;if p{observe(&x);println!(\"branch\")}else{println!(\"other\")};println!(\"point\");}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "branch\ndrop\npoint\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "branch\ndrop\npoint\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "branch\npoint\ndrop\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "branch\npoint\ndrop\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a04_receiver_temporary_storage",
+    "family": "boolean",
+    "a": "\ntrait Address{fn same(&self,other:&bool)->bool;}\nimpl Address for bool{fn same(&self,other:&bool)->bool{core::ptr::eq(self,other)}}\nfn f(p:bool)->bool{(!(!p)).same(&p)}\nfn main(){for p in [false,true]{println!(\"{:?}\",f(p));}}",
+    "b": "\ntrait Address{fn same(&self,other:&bool)->bool;}\nimpl Address for bool{fn same(&self,other:&bool)->bool{core::ptr::eq(self,other)}}\nfn f(p:bool)->bool{p.same(&p)}\nfn main(){for p in [false,true]{println!(\"{:?}\",f(p));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\n"
+        }
+      }
+    }
+  }
+]

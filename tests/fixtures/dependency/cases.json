@@ -320,5 +320,26 @@
     "a": "#![allow(arithmetic_overflow)]fn main(){let n=(255u8+1u8)-1u8;println!(\"{n}\");}",
     "b": "#![allow(arithmetic_overflow)]fn main(){let n=255u8+(1u8-1u8);println!(\"{n}\");}",
     "expected": "profile-dependent"
+  },
+  {
+    "id": "M1_raw_primitive_shadow",
+    "family": "m1-control",
+    "a": "fn f(input: u32) -> (u32, u32) { let a = input & 15u32; let b = input >> 4; (a, b) }\nfn main() { println!(\"{:?}\", f(1)); }",
+    "b": "#[derive(Clone, Copy)] struct r#u32(::core::primitive::u32);\nimpl ::core::ops::BitAnd<::core::primitive::u32> for u32 {\n    type Output = Self;\n    fn bitand(self, rhs: ::core::primitive::u32) -> Self { Self(self.0 + rhs) }\n}\nimpl ::core::ops::Shr<::core::primitive::u32> for u32 {\n    type Output = Self;\n    fn shr(self, rhs: ::core::primitive::u32) -> Self { Self(self.0 + rhs) }\n}\nfn f(input: u32) -> (u32, u32) { let a = input & 15u32; let b = input >> 4; (a, b) }\nfn main() { let (a,b) = f(u32(1)); println!(\"{:?}\", (a.0,b.0)); }",
+    "expected": "different"
+  },
+  {
+    "id": "M1_mutable_value_versions",
+    "family": "m1-control",
+    "a": "fn f() -> (u32, u32) { let mut value = 1u32; let first = value & 15u32; value = 2u32; let second = value >> 4; (first, second) }\nfn main() { println!(\"{:?}\", f()); }",
+    "b": "fn f() -> (u32, u32) { let mut value = 1u32; value = 2u32; let first = value & 15u32; let second = value >> 4; (first, second) }\nfn main() { println!(\"{:?}\", f()); }",
+    "expected": "different"
+  },
+  {
+    "id": "M1_format_width_precision",
+    "family": "m1-control",
+    "a": "fn f(input: u32, width: usize, precision: usize) { let low = input & 15u32; let high = input >> 4; println!(\"{low:width$} {high:.precision$}\"); }\nfn main() { f(17, 4, 2); }",
+    "b": "fn f(input: u32, width: usize, precision: usize) { let high = input >> 4; let low = input & 15u32; println!(\"{low:width$} {high:.precision$}\"); }\nfn main() { f(17, 4, 2); }",
+    "expected": "same"
   }
 ]

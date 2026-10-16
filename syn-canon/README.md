@@ -26,6 +26,60 @@ println!("{forms:?}");
 
 Indexed imports bind only their declared namespaces. Ambiguous unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
 
+Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit integer types through resolved type aliases. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
+
+Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving lexical value identities and distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 expression or block levels, or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
+
+Passing-mode comparison evaluates closed fixed-width integer literal operations before dependency scheduling, checking every intermediate result and retaining the result's type. Compatible suffixes or a resolved immediate declaration establish the type, with signed minima and Rust's truncating left shifts preserved. Overflow, zero divisors, signed minimum division or remainder by `-1`, unresolved inference, pointer-sized arithmetic and syntax-observed regions retain their operations.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+assert_eq!(
+    form("fn f() -> u8 { (2u8 + 3u8) * 4u8 }"),
+    form("fn f() -> u8 { 20u8 }"),
+);
+assert_ne!(
+    form("fn f() -> u8 { (255u8 + 1u8) - 1u8 }"),
+    form("fn f() -> u8 { 255u8 }"),
+);
+```
+
+Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, declarations retain their distinct origins, and general `==` and `!=` comparisons keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+assert_eq!(
+    form("fn f(a: u32, b: u32) -> u32 { (a ^ 1u32) ^ b }"),
+    form("fn g(x: u32, y: u32) -> u32 { y ^ (1u32 ^ x) }"),
+);
+assert_eq!(
+    form("fn f(a: bool) -> bool { a | a }"),
+    form("fn g(x: bool) -> bool { x }"),
+);
+assert_eq!(
+    form("fn f(a: u32, b: u32) -> bool { a >= b }"),
+    form("fn g(x: u32, y: u32) -> bool { y <= x }"),
+);
+```
+
+Passing-mode comparison normalizes proven primitive boolean double negations, ordered De Morgan forms, opposite boolean branches and equality with literal `true`. Negated conditions swap complete ordinary blocks, and literal conditions select a tail only when both branches independently prove the same scalar type. Short-circuit operand order, storage and destruction scopes, active attributes and discarded inference constraints stay intact.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+assert_eq!(
+    form("fn f(p: bool, q: bool) -> bool { !(!!p && (q == true)) }"),
+    form("fn g(x: bool, y: bool) -> bool { !x || !y }"),
+);
+assert_eq!(
+    form("fn f(p: bool, q: bool) -> (bool, u8, u8) { (if p { true } else { false }, if !q { 1u8 } else { 2u8 }, if true { 3u8 } else { 4u8 }) }"),
+    form("fn g(x: bool, y: bool) -> (bool, u8, u8) { (x, if y { 2u8 } else { 1u8 }, 3u8) }"),
+);
+assert_ne!(
+    form("fn f() -> usize { let n = 1; let _ = if true { n } else { 2u8 }; std::mem::size_of_val(&n) }"),
+    form("fn f() -> usize { let n = 1; let _ = n; std::mem::size_of_val(&n) }"),
+);
+```
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.

@@ -32,6 +32,10 @@ Functions compare within their module across targets and `cfg` variants, keeping
 
 Function comparisons use original module files, import associations and enclosing owners, keeping calls to different inherited helpers distinct.
 
+Passing doctests and functions compare checked fixed-width literal arithmetic by its typed result before dependency scheduling. Overflowing intermediates, unresolved inference, pointer-sized arithmetic and syntax observers retain their expressions, and `compile_fail` comparisons apply no arithmetic evaluation.
+
+Passing comparisons normalize proven primitive bitwise algebra, comparison orientation and boolean rewrites, preserving exact dependency identities and short-circuit order. Negated conditions swap complete branch blocks, and literal conditions require independently identical scalar branch types. Storage observations, destruction scopes, active attributes and unresolved inference restrict normalization, and `compile_fail` inputs retain their expressions.
+
 ### Contexts
 
 Whole function bodies, explicit blocks, complete match arms and closures are normalized independently using [`syn-canon`](https://docs.rs/syn-canon). Arm patterns and guards and closure inputs contribute to the canonical size.

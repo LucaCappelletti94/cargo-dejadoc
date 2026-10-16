@@ -5,13 +5,16 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+mod algebra;
 mod alpha;
 mod blocks;
 mod const_items;
+mod constants;
 mod context;
 mod drift;
 mod form;
 mod reference;
+mod schedule;
 mod scope;
 
 use alloc::vec::Vec;
@@ -41,12 +44,14 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
             seed: None,
             generics: None,
             self_canon: None,
+            prim_fallback: true,
+            observed: false,
         },
     )
 }
 
 /// The std macros that accept an optional trailing comma and treat it as nothing.
-const COMMA_BLIND_MACROS: [&str; 21] = [
+pub(crate) const COMMA_BLIND_MACROS: [&str; 21] = [
     "assert",
     "assert_eq",
     "assert_ne",

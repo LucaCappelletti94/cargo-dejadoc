@@ -1,0 +1,2134 @@
+[
+  {
+    "id": "a01_bool_full",
+    "family": "algebra",
+    "a": "\nfn f(a:bool,b:bool)->(bool,bool,bool){(a&b,a|b,a^b)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,bool,bool){(b&a,b|a,b^a)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(true, true, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(true, true, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(true, true, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(true, true, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_bool_full",
+    "family": "algebra",
+    "a": "\nfn f(a:bool,b:bool,c:bool)->(bool,bool,bool){((a&b)&c,(a|b)|c,(a^b)^c)}\nfn main(){for a in [false,true]{for b in [false,true]{for c in [false,true]{println!(\"{:?}\",f(a,b,c));}}}}",
+    "b": "\nfn f(a:bool,b:bool,c:bool)->(bool,bool,bool){(a&(b&c),a|(b|c),a^(b^c))}\nfn main(){for a in [false,true]{for b in [false,true]{for c in [false,true]{println!(\"{:?}\",f(a,b,c));}}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(false, true, false)\n(false, true, true)\n(false, true, false)\n(false, true, false)\n(true, true, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(false, true, false)\n(false, true, true)\n(false, true, false)\n(false, true, false)\n(true, true, true)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(false, true, false)\n(false, true, true)\n(false, true, false)\n(false, true, false)\n(true, true, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, false)\n(false, true, true)\n(false, true, true)\n(false, true, false)\n(false, true, true)\n(false, true, false)\n(false, true, false)\n(true, true, true)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_bool_full",
+    "family": "algebra",
+    "a": "\nfn f(a:bool,b:bool)->(bool,bool){(a>b,a>=b)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "b": "\nfn f(a:bool,b:bool)->(bool,bool){(b<a,b<=a)}\nfn main(){for a in [false,true]{for b in [false,true]{println!(\"{:?}\",f(a,b));}}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, true)\n(false, false)\n(true, true)\n(false, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, true)\n(false, false)\n(true, true)\n(false, true)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, true)\n(false, false)\n(true, true)\n(false, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, true)\n(false, false)\n(true, true)\n(false, true)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_bool_full",
+    "family": "algebra",
+    "a": "\nfn f(a:bool)->(bool,bool){(a&a,a|a)}\nfn main(){for a in [false,true]{println!(\"{:?}\",f(a));}}",
+    "b": "\nfn f(a:bool)->(bool,bool){(a,a)}\nfn main(){for a in [false,true]{println!(\"{:?}\",f(a));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(true, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(true, true)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(true, true)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false)\n(true, true)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_u8",
+    "family": "algebra",
+    "a": "\nfn f(input:u8)->(u8,u8,u8){(input&85u8,input|85u8,input^85u8)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u8)->(u8,u8,u8){(85u8&input,85u8|input,85u8^input)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(84, 255, 171)\n(85, 255, 170)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(84, 255, 171)\n(85, 255, 170)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(84, 255, 171)\n(85, 255, 170)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(84, 255, 171)\n(85, 255, 170)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_u8",
+    "family": "algebra",
+    "a": "\nfn f(input:u8)->(u8,u8,u8){((input&7u8)&3u8,(input|1u8)|2u8,(input^5u8)^2u8)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u8)->(u8,u8,u8){(input&(7u8&3u8),input|(1u8|2u8),input^(5u8^2u8))}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(2, 255, 249)\n(3, 255, 248)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(2, 255, 249)\n(3, 255, 248)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(2, 255, 249)\n(3, 255, 248)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(2, 255, 249)\n(3, 255, 248)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_u8",
+    "family": "algebra",
+    "a": "\nfn f(input:u8)->(bool,bool,bool,bool){(input>85u8,input>=85u8,input<85u8,input<=85u8)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u8)->(bool,bool,bool,bool){(85u8<input,85u8<=input,85u8>input,85u8>=input)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_u8",
+    "family": "algebra",
+    "a": "\nfn f(input:u8)->(u8,u8){(input&input,input|input)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u8)->(u8,u8){(input,input)}\nfn main(){for input in [0,1,5,85,u8::MAX-1,u8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(254, 254)\n(255, 255)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(254, 254)\n(255, 255)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(254, 254)\n(255, 255)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(254, 254)\n(255, 255)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_u16",
+    "family": "algebra",
+    "a": "\nfn f(input:u16)->(u16,u16,u16){(input&21845u16,input|21845u16,input^21845u16)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u16)->(u16,u16,u16){(21845u16&input,21845u16|input,21845u16^input)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(21844, 65535, 43691)\n(21845, 65535, 43690)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(21844, 65535, 43691)\n(21845, 65535, 43690)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(21844, 65535, 43691)\n(21845, 65535, 43690)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(21844, 65535, 43691)\n(21845, 65535, 43690)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_u16",
+    "family": "algebra",
+    "a": "\nfn f(input:u16)->(u16,u16,u16){((input&7u16)&3u16,(input|1u16)|2u16,(input^5u16)^2u16)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u16)->(u16,u16,u16){(input&(7u16&3u16),input|(1u16|2u16),input^(5u16^2u16))}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(2, 65535, 65529)\n(3, 65535, 65528)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(2, 65535, 65529)\n(3, 65535, 65528)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(2, 65535, 65529)\n(3, 65535, 65528)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(2, 65535, 65529)\n(3, 65535, 65528)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_u16",
+    "family": "algebra",
+    "a": "\nfn f(input:u16)->(bool,bool,bool,bool){(input>21845u16,input>=21845u16,input<21845u16,input<=21845u16)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u16)->(bool,bool,bool,bool){(21845u16<input,21845u16<=input,21845u16>input,21845u16>=input)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_u16",
+    "family": "algebra",
+    "a": "\nfn f(input:u16)->(u16,u16){(input&input,input|input)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u16)->(u16,u16){(input,input)}\nfn main(){for input in [0,1,5,21845,u16::MAX-1,u16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(65534, 65534)\n(65535, 65535)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(65534, 65534)\n(65535, 65535)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(65534, 65534)\n(65535, 65535)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(65534, 65534)\n(65535, 65535)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_u32",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->(u32,u32,u32){(input&1431655765u32,input|1431655765u32,input^1431655765u32)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32,u32){(1431655765u32&input,1431655765u32|input,1431655765u32^input)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(1431655764, 4294967295, 2863311531)\n(1431655765, 4294967295, 2863311530)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(1431655764, 4294967295, 2863311531)\n(1431655765, 4294967295, 2863311530)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(1431655764, 4294967295, 2863311531)\n(1431655765, 4294967295, 2863311530)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(1431655764, 4294967295, 2863311531)\n(1431655765, 4294967295, 2863311530)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_u32",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->(u32,u32,u32){((input&7u32)&3u32,(input|1u32)|2u32,(input^5u32)^2u32)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32,u32){(input&(7u32&3u32),input|(1u32|2u32),input^(5u32^2u32))}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(2, 4294967295, 4294967289)\n(3, 4294967295, 4294967288)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(2, 4294967295, 4294967289)\n(3, 4294967295, 4294967288)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(2, 4294967295, 4294967289)\n(3, 4294967295, 4294967288)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(2, 4294967295, 4294967289)\n(3, 4294967295, 4294967288)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_u32",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->(bool,bool,bool,bool){(input>1431655765u32,input>=1431655765u32,input<1431655765u32,input<=1431655765u32)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(bool,bool,bool,bool){(1431655765u32<input,1431655765u32<=input,1431655765u32>input,1431655765u32>=input)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_u32",
+    "family": "algebra",
+    "a": "\nfn f(input:u32)->(u32,u32){(input&input,input|input)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u32)->(u32,u32){(input,input)}\nfn main(){for input in [0,1,5,1431655765,u32::MAX-1,u32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(4294967294, 4294967294)\n(4294967295, 4294967295)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(4294967294, 4294967294)\n(4294967295, 4294967295)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(4294967294, 4294967294)\n(4294967295, 4294967295)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(4294967294, 4294967294)\n(4294967295, 4294967295)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_u64",
+    "family": "algebra",
+    "a": "\nfn f(input:u64)->(u64,u64,u64){(input&6148914691236517205u64,input|6148914691236517205u64,input^6148914691236517205u64)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u64)->(u64,u64,u64){(6148914691236517205u64&input,6148914691236517205u64|input,6148914691236517205u64^input)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(6148914691236517204, 18446744073709551615, 12297829382473034411)\n(6148914691236517205, 18446744073709551615, 12297829382473034410)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(6148914691236517204, 18446744073709551615, 12297829382473034411)\n(6148914691236517205, 18446744073709551615, 12297829382473034410)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(6148914691236517204, 18446744073709551615, 12297829382473034411)\n(6148914691236517205, 18446744073709551615, 12297829382473034410)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(6148914691236517204, 18446744073709551615, 12297829382473034411)\n(6148914691236517205, 18446744073709551615, 12297829382473034410)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_u64",
+    "family": "algebra",
+    "a": "\nfn f(input:u64)->(u64,u64,u64){((input&7u64)&3u64,(input|1u64)|2u64,(input^5u64)^2u64)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u64)->(u64,u64,u64){(input&(7u64&3u64),input|(1u64|2u64),input^(5u64^2u64))}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(2, 18446744073709551615, 18446744073709551609)\n(3, 18446744073709551615, 18446744073709551608)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(2, 18446744073709551615, 18446744073709551609)\n(3, 18446744073709551615, 18446744073709551608)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(2, 18446744073709551615, 18446744073709551609)\n(3, 18446744073709551615, 18446744073709551608)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(2, 18446744073709551615, 18446744073709551609)\n(3, 18446744073709551615, 18446744073709551608)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_u64",
+    "family": "algebra",
+    "a": "\nfn f(input:u64)->(bool,bool,bool,bool){(input>6148914691236517205u64,input>=6148914691236517205u64,input<6148914691236517205u64,input<=6148914691236517205u64)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u64)->(bool,bool,bool,bool){(6148914691236517205u64<input,6148914691236517205u64<=input,6148914691236517205u64>input,6148914691236517205u64>=input)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_u64",
+    "family": "algebra",
+    "a": "\nfn f(input:u64)->(u64,u64){(input&input,input|input)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u64)->(u64,u64){(input,input)}\nfn main(){for input in [0,1,5,6148914691236517205,u64::MAX-1,u64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(18446744073709551614, 18446744073709551614)\n(18446744073709551615, 18446744073709551615)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(18446744073709551614, 18446744073709551614)\n(18446744073709551615, 18446744073709551615)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(18446744073709551614, 18446744073709551614)\n(18446744073709551615, 18446744073709551615)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(18446744073709551614, 18446744073709551614)\n(18446744073709551615, 18446744073709551615)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_u128",
+    "family": "algebra",
+    "a": "\nfn f(input:u128)->(u128,u128,u128){(input&113427455640312821154458202477256070485u128,input|113427455640312821154458202477256070485u128,input^113427455640312821154458202477256070485u128)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u128)->(u128,u128,u128){(113427455640312821154458202477256070485u128&input,113427455640312821154458202477256070485u128|input,113427455640312821154458202477256070485u128^input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(113427455640312821154458202477256070484, 340282366920938463463374607431768211455, 226854911280625642308916404954512140971)\n(113427455640312821154458202477256070485, 340282366920938463463374607431768211455, 226854911280625642308916404954512140970)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(113427455640312821154458202477256070484, 340282366920938463463374607431768211455, 226854911280625642308916404954512140971)\n(113427455640312821154458202477256070485, 340282366920938463463374607431768211455, 226854911280625642308916404954512140970)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(113427455640312821154458202477256070484, 340282366920938463463374607431768211455, 226854911280625642308916404954512140971)\n(113427455640312821154458202477256070485, 340282366920938463463374607431768211455, 226854911280625642308916404954512140970)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(113427455640312821154458202477256070484, 340282366920938463463374607431768211455, 226854911280625642308916404954512140971)\n(113427455640312821154458202477256070485, 340282366920938463463374607431768211455, 226854911280625642308916404954512140970)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_u128",
+    "family": "algebra",
+    "a": "\nfn f(input:u128)->(u128,u128,u128){((input&7u128)&3u128,(input|1u128)|2u128,(input^5u128)^2u128)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u128)->(u128,u128,u128){(input&(7u128&3u128),input|(1u128|2u128),input^(5u128^2u128))}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(2, 340282366920938463463374607431768211455, 340282366920938463463374607431768211449)\n(3, 340282366920938463463374607431768211455, 340282366920938463463374607431768211448)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(2, 340282366920938463463374607431768211455, 340282366920938463463374607431768211449)\n(3, 340282366920938463463374607431768211455, 340282366920938463463374607431768211448)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(2, 340282366920938463463374607431768211455, 340282366920938463463374607431768211449)\n(3, 340282366920938463463374607431768211455, 340282366920938463463374607431768211448)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(2, 340282366920938463463374607431768211455, 340282366920938463463374607431768211449)\n(3, 340282366920938463463374607431768211455, 340282366920938463463374607431768211448)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_u128",
+    "family": "algebra",
+    "a": "\nfn f(input:u128)->(bool,bool,bool,bool){(input>113427455640312821154458202477256070485u128,input>=113427455640312821154458202477256070485u128,input<113427455640312821154458202477256070485u128,input<=113427455640312821154458202477256070485u128)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u128)->(bool,bool,bool,bool){(113427455640312821154458202477256070485u128<input,113427455640312821154458202477256070485u128<=input,113427455640312821154458202477256070485u128>input,113427455640312821154458202477256070485u128>=input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(true, true, false, false)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_u128",
+    "family": "algebra",
+    "a": "\nfn f(input:u128)->(u128,u128){(input&input,input|input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:u128)->(u128,u128){(input,input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,u128::MAX-1,u128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(340282366920938463463374607431768211454, 340282366920938463463374607431768211454)\n(340282366920938463463374607431768211455, 340282366920938463463374607431768211455)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(340282366920938463463374607431768211454, 340282366920938463463374607431768211454)\n(340282366920938463463374607431768211455, 340282366920938463463374607431768211455)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(340282366920938463463374607431768211454, 340282366920938463463374607431768211454)\n(340282366920938463463374607431768211455, 340282366920938463463374607431768211455)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(340282366920938463463374607431768211454, 340282366920938463463374607431768211454)\n(340282366920938463463374607431768211455, 340282366920938463463374607431768211455)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_i8",
+    "family": "algebra",
+    "a": "\nfn f(input:i8)->(i8,i8,i8){(input&85i8,input|85i8,input^85i8)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i8)->(i8,i8,i8){(85i8&input,85i8|input,85i8^input)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(0, -43, -43)\n(85, 127, 42)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(0, -43, -43)\n(85, 127, 42)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(0, -43, -43)\n(85, 127, 42)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 85, 85)\n(1, 85, 84)\n(5, 85, 80)\n(85, 85, 0)\n(0, -43, -43)\n(85, 127, 42)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_i8",
+    "family": "algebra",
+    "a": "\nfn f(input:i8)->(i8,i8,i8){((input&7i8)&3i8,(input|1i8)|2i8,(input^5i8)^2i8)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i8)->(i8,i8,i8){(input&(7i8&3i8),input|(1i8|2i8),input^(5i8^2i8))}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(0, -125, -121)\n(3, 127, 120)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(0, -125, -121)\n(3, 127, 120)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(0, -125, -121)\n(3, 127, 120)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 87, 82)\n(0, -125, -121)\n(3, 127, 120)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_i8",
+    "family": "algebra",
+    "a": "\nfn f(input:i8)->(bool,bool,bool,bool){(input>85i8,input>=85i8,input<85i8,input<=85i8)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i8)->(bool,bool,bool,bool){(85i8<input,85i8<=input,85i8>input,85i8>=input)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_i8",
+    "family": "algebra",
+    "a": "\nfn f(input:i8)->(i8,i8){(input&input,input|input)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i8)->(i8,i8){(input,input)}\nfn main(){for input in [0,1,5,85,i8::MIN,i8::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(-128, -128)\n(127, 127)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(-128, -128)\n(127, 127)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(-128, -128)\n(127, 127)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(85, 85)\n(-128, -128)\n(127, 127)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_i16",
+    "family": "algebra",
+    "a": "\nfn f(input:i16)->(i16,i16,i16){(input&21845i16,input|21845i16,input^21845i16)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i16)->(i16,i16,i16){(21845i16&input,21845i16|input,21845i16^input)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(0, -10923, -10923)\n(21845, 32767, 10922)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(0, -10923, -10923)\n(21845, 32767, 10922)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(0, -10923, -10923)\n(21845, 32767, 10922)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 21845, 21845)\n(1, 21845, 21844)\n(5, 21845, 21840)\n(21845, 21845, 0)\n(0, -10923, -10923)\n(21845, 32767, 10922)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_i16",
+    "family": "algebra",
+    "a": "\nfn f(input:i16)->(i16,i16,i16){((input&7i16)&3i16,(input|1i16)|2i16,(input^5i16)^2i16)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i16)->(i16,i16,i16){(input&(7i16&3i16),input|(1i16|2i16),input^(5i16^2i16))}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(0, -32765, -32761)\n(3, 32767, 32760)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(0, -32765, -32761)\n(3, 32767, 32760)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(0, -32765, -32761)\n(3, 32767, 32760)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 21847, 21842)\n(0, -32765, -32761)\n(3, 32767, 32760)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_i16",
+    "family": "algebra",
+    "a": "\nfn f(input:i16)->(bool,bool,bool,bool){(input>21845i16,input>=21845i16,input<21845i16,input<=21845i16)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i16)->(bool,bool,bool,bool){(21845i16<input,21845i16<=input,21845i16>input,21845i16>=input)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_i16",
+    "family": "algebra",
+    "a": "\nfn f(input:i16)->(i16,i16){(input&input,input|input)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i16)->(i16,i16){(input,input)}\nfn main(){for input in [0,1,5,21845,i16::MIN,i16::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(-32768, -32768)\n(32767, 32767)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(-32768, -32768)\n(32767, 32767)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(-32768, -32768)\n(32767, 32767)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(21845, 21845)\n(-32768, -32768)\n(32767, 32767)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_i32",
+    "family": "algebra",
+    "a": "\nfn f(input:i32)->(i32,i32,i32){(input&1431655765i32,input|1431655765i32,input^1431655765i32)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i32)->(i32,i32,i32){(1431655765i32&input,1431655765i32|input,1431655765i32^input)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(0, -715827883, -715827883)\n(1431655765, 2147483647, 715827882)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(0, -715827883, -715827883)\n(1431655765, 2147483647, 715827882)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(0, -715827883, -715827883)\n(1431655765, 2147483647, 715827882)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 1431655765, 1431655765)\n(1, 1431655765, 1431655764)\n(5, 1431655765, 1431655760)\n(1431655765, 1431655765, 0)\n(0, -715827883, -715827883)\n(1431655765, 2147483647, 715827882)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_i32",
+    "family": "algebra",
+    "a": "\nfn f(input:i32)->(i32,i32,i32){((input&7i32)&3i32,(input|1i32)|2i32,(input^5i32)^2i32)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i32)->(i32,i32,i32){(input&(7i32&3i32),input|(1i32|2i32),input^(5i32^2i32))}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(0, -2147483645, -2147483641)\n(3, 2147483647, 2147483640)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(0, -2147483645, -2147483641)\n(3, 2147483647, 2147483640)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(0, -2147483645, -2147483641)\n(3, 2147483647, 2147483640)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 1431655767, 1431655762)\n(0, -2147483645, -2147483641)\n(3, 2147483647, 2147483640)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_i32",
+    "family": "algebra",
+    "a": "\nfn f(input:i32)->(bool,bool,bool,bool){(input>1431655765i32,input>=1431655765i32,input<1431655765i32,input<=1431655765i32)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i32)->(bool,bool,bool,bool){(1431655765i32<input,1431655765i32<=input,1431655765i32>input,1431655765i32>=input)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_i32",
+    "family": "algebra",
+    "a": "\nfn f(input:i32)->(i32,i32){(input&input,input|input)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i32)->(i32,i32){(input,input)}\nfn main(){for input in [0,1,5,1431655765,i32::MIN,i32::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(-2147483648, -2147483648)\n(2147483647, 2147483647)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(-2147483648, -2147483648)\n(2147483647, 2147483647)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(-2147483648, -2147483648)\n(2147483647, 2147483647)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(1431655765, 1431655765)\n(-2147483648, -2147483648)\n(2147483647, 2147483647)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_i64",
+    "family": "algebra",
+    "a": "\nfn f(input:i64)->(i64,i64,i64){(input&6148914691236517205i64,input|6148914691236517205i64,input^6148914691236517205i64)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i64)->(i64,i64,i64){(6148914691236517205i64&input,6148914691236517205i64|input,6148914691236517205i64^input)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(0, -3074457345618258603, -3074457345618258603)\n(6148914691236517205, 9223372036854775807, 3074457345618258602)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(0, -3074457345618258603, -3074457345618258603)\n(6148914691236517205, 9223372036854775807, 3074457345618258602)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(0, -3074457345618258603, -3074457345618258603)\n(6148914691236517205, 9223372036854775807, 3074457345618258602)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 6148914691236517205, 6148914691236517205)\n(1, 6148914691236517205, 6148914691236517204)\n(5, 6148914691236517205, 6148914691236517200)\n(6148914691236517205, 6148914691236517205, 0)\n(0, -3074457345618258603, -3074457345618258603)\n(6148914691236517205, 9223372036854775807, 3074457345618258602)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_i64",
+    "family": "algebra",
+    "a": "\nfn f(input:i64)->(i64,i64,i64){((input&7i64)&3i64,(input|1i64)|2i64,(input^5i64)^2i64)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i64)->(i64,i64,i64){(input&(7i64&3i64),input|(1i64|2i64),input^(5i64^2i64))}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(0, -9223372036854775805, -9223372036854775801)\n(3, 9223372036854775807, 9223372036854775800)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(0, -9223372036854775805, -9223372036854775801)\n(3, 9223372036854775807, 9223372036854775800)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(0, -9223372036854775805, -9223372036854775801)\n(3, 9223372036854775807, 9223372036854775800)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 6148914691236517207, 6148914691236517202)\n(0, -9223372036854775805, -9223372036854775801)\n(3, 9223372036854775807, 9223372036854775800)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_i64",
+    "family": "algebra",
+    "a": "\nfn f(input:i64)->(bool,bool,bool,bool){(input>6148914691236517205i64,input>=6148914691236517205i64,input<6148914691236517205i64,input<=6148914691236517205i64)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i64)->(bool,bool,bool,bool){(6148914691236517205i64<input,6148914691236517205i64<=input,6148914691236517205i64>input,6148914691236517205i64>=input)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_i64",
+    "family": "algebra",
+    "a": "\nfn f(input:i64)->(i64,i64){(input&input,input|input)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i64)->(i64,i64){(input,input)}\nfn main(){for input in [0,1,5,6148914691236517205,i64::MIN,i64::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(-9223372036854775808, -9223372036854775808)\n(9223372036854775807, 9223372036854775807)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(-9223372036854775808, -9223372036854775808)\n(9223372036854775807, 9223372036854775807)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(-9223372036854775808, -9223372036854775808)\n(9223372036854775807, 9223372036854775807)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(6148914691236517205, 6148914691236517205)\n(-9223372036854775808, -9223372036854775808)\n(9223372036854775807, 9223372036854775807)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_commute_i128",
+    "family": "algebra",
+    "a": "\nfn f(input:i128)->(i128,i128,i128){(input&113427455640312821154458202477256070485i128,input|113427455640312821154458202477256070485i128,input^113427455640312821154458202477256070485i128)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i128)->(i128,i128,i128){(113427455640312821154458202477256070485i128&input,113427455640312821154458202477256070485i128|input,113427455640312821154458202477256070485i128^input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(0, -56713727820156410577229101238628035243, -56713727820156410577229101238628035243)\n(113427455640312821154458202477256070485, 170141183460469231731687303715884105727, 56713727820156410577229101238628035242)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(0, -56713727820156410577229101238628035243, -56713727820156410577229101238628035243)\n(113427455640312821154458202477256070485, 170141183460469231731687303715884105727, 56713727820156410577229101238628035242)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(0, -56713727820156410577229101238628035243, -56713727820156410577229101238628035243)\n(113427455640312821154458202477256070485, 170141183460469231731687303715884105727, 56713727820156410577229101238628035242)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(1, 113427455640312821154458202477256070485, 113427455640312821154458202477256070484)\n(5, 113427455640312821154458202477256070485, 113427455640312821154458202477256070480)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485, 0)\n(0, -56713727820156410577229101238628035243, -56713727820156410577229101238628035243)\n(113427455640312821154458202477256070485, 170141183460469231731687303715884105727, 56713727820156410577229101238628035242)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_associate_i128",
+    "family": "algebra",
+    "a": "\nfn f(input:i128)->(i128,i128,i128){((input&7i128)&3i128,(input|1i128)|2i128,(input^5i128)^2i128)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i128)->(i128,i128,i128){(input&(7i128&3i128),input|(1i128|2i128),input^(5i128^2i128))}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(0, -170141183460469231731687303715884105725, -170141183460469231731687303715884105721)\n(3, 170141183460469231731687303715884105727, 170141183460469231731687303715884105720)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(0, -170141183460469231731687303715884105725, -170141183460469231731687303715884105721)\n(3, 170141183460469231731687303715884105727, 170141183460469231731687303715884105720)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(0, -170141183460469231731687303715884105725, -170141183460469231731687303715884105721)\n(3, 170141183460469231731687303715884105727, 170141183460469231731687303715884105720)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 3, 7)\n(1, 3, 6)\n(1, 7, 2)\n(1, 113427455640312821154458202477256070487, 113427455640312821154458202477256070482)\n(0, -170141183460469231731687303715884105725, -170141183460469231731687303715884105721)\n(3, 170141183460469231731687303715884105727, 170141183460469231731687303715884105720)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_reverse_i128",
+    "family": "algebra",
+    "a": "\nfn f(input:i128)->(bool,bool,bool,bool){(input>113427455640312821154458202477256070485i128,input>=113427455640312821154458202477256070485i128,input<113427455640312821154458202477256070485i128,input<=113427455640312821154458202477256070485i128)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i128)->(bool,bool,bool,bool){(113427455640312821154458202477256070485i128<input,113427455640312821154458202477256070485i128<=input,113427455640312821154458202477256070485i128>input,113427455640312821154458202477256070485i128>=input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(false, false, true, true)\n(false, false, true, true)\n(false, false, true, true)\n(false, true, false, true)\n(false, false, true, true)\n(true, true, false, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_idempotent_i128",
+    "family": "algebra",
+    "a": "\nfn f(input:i128)->(i128,i128){(input&input,input|input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "b": "\nfn f(input:i128)->(i128,i128){(input,input)}\nfn main(){for input in [0,1,5,113427455640312821154458202477256070485,i128::MIN,i128::MAX]{println!(\"{:?}\",f(input));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(-170141183460469231731687303715884105728, -170141183460469231731687303715884105728)\n(170141183460469231731687303715884105727, 170141183460469231731687303715884105727)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(-170141183460469231731687303715884105728, -170141183460469231731687303715884105728)\n(170141183460469231731687303715884105727, 170141183460469231731687303715884105727)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(-170141183460469231731687303715884105728, -170141183460469231731687303715884105728)\n(170141183460469231731687303715884105727, 170141183460469231731687303715884105727)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(0, 0)\n(1, 1)\n(5, 5)\n(113427455640312821154458202477256070485, 113427455640312821154458202477256070485)\n(-170141183460469231731687303715884105728, -170141183460469231731687303715884105728)\n(170141183460469231731687303715884105727, 170141183460469231731687303715884105727)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_effects",
+    "family": "algebra_risk",
+    "a": "fn left()->u32{println!(\"L\");7u32}\nfn right()->u32{println!(\"R\");3u32}\nfn main(){println!(\"{}\",left()&right());}",
+    "b": "fn left()->u32{println!(\"L\");7u32}\nfn right()->u32{println!(\"R\");3u32}\nfn main(){println!(\"{}\",right()&left());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "L\nR\n3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "L\nR\n3\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "R\nL\n3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "R\nL\n3\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_effects",
+    "family": "algebra_risk",
+    "a": "fn left()->u32{println!(\"L\");7u32}\nfn right()->u32{println!(\"R\");3u32}\nfn main(){println!(\"{}\",left()>right());}",
+    "b": "fn left()->u32{println!(\"L\");7u32}\nfn right()->u32{println!(\"R\");3u32}\nfn main(){println!(\"{}\",right()<left());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "L\nR\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "L\nR\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "R\nL\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "R\nL\ntrue\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_unstable_read",
+    "family": "algebra_risk",
+    "a": "fn read(cell:&std::cell::Cell<u32>)->u32{let v=cell.get();cell.set(v+1);v}\nfn main(){let cell=std::cell::Cell::new(0u32);println!(\"{}\",read(&cell)|read(&cell));}",
+    "b": "fn read(cell:&std::cell::Cell<u32>)->u32{let v=cell.get();cell.set(v+1);v}\nfn main(){let cell=std::cell::Cell::new(0u32);println!(\"{}\",read(&cell));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_xor_multiplicity",
+    "family": "algebra_risk",
+    "a": "\nfn f(x:u32)->u32{x^x}\nfn main(){for x in [0,1,7,0x80000000,4294967295]{println!(\"{}\",f(x));}}",
+    "b": "\nfn f(x:u32)->u32{x}\nfn main(){for x in [0,1,7,0x80000000,4294967295]{println!(\"{}\",f(x));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n0\n0\n0\n0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n0\n0\n0\n0\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n1\n7\n2147483648\n4294967295\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n1\n7\n2147483648\n4294967295\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a12_storage",
+    "family": "algebra_risk",
+    "a": "fn main(){let x=5u32;let r=&(x&x);println!(\"{}\",(r as *const u32)==(&x as *const u32));}",
+    "b": "fn main(){let x=5u32;let r=&x;println!(\"{}\",(r as *const u32)==(&x as *const u32));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_custom_overload",
+    "family": "algebra_risk",
+    "a": "struct W(u32);\nimpl core::ops::BitAnd<W> for W{type Output=u32;fn bitand(self,o:W)->u32{self.0*10+o.0}}\nfn f(x:W,y:W)->u32{x&y}\nfn main(){for (x,y) in [(1u32,2u32),(2u32,1u32),(0u32,5u32),(5u32,0u32)]{println!(\"{}\",f(W(x),W(y)));}}",
+    "b": "struct W(u32);\nimpl core::ops::BitAnd<W> for W{type Output=u32;fn bitand(self,o:W)->u32{self.0*10+o.0}}\nfn g(x:W,y:W)->u32{y&x}\nfn main(){for (x,y) in [(1u32,2u32),(2u32,1u32),(0u32,5u32),(5u32,0u32)]{println!(\"{}\",g(W(x),W(y)));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "12\n21\n5\n50\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "12\n21\n5\n50\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "21\n12\n50\n5\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "21\n12\n50\n5\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a01_heterogeneous_overload",
+    "family": "algebra_risk",
+    "a": "struct W(u32);\nimpl core::ops::BitAnd<W> for u32{type Output=u32;fn bitand(self,o:W)->u32{self+o.0}}\nimpl core::ops::BitAnd<u32> for W{type Output=u32;fn bitand(self,o:u32)->u32{self.0+o+100}}\nfn main(){println!(\"{}\",1u32&W(2u32));}",
+    "b": "struct W(u32);\nimpl core::ops::BitAnd<W> for u32{type Output=u32;fn bitand(self,o:W)->u32{self+o.0}}\nimpl core::ops::BitAnd<u32> for W{type Output=u32;fn bitand(self,o:u32)->u32{self.0+o+100}}\nfn main(){println!(\"{}\",W(2u32)&1u32);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "3\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "103\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "103\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "shadow_primitive_name",
+    "family": "algebra_risk",
+    "a": "mod m{pub struct W(pub u32);}\ntype u32 = m::W;\nimpl core::ops::BitAnd<u32> for u32{type Output=u32;fn bitand(self,o:u32)->u32{m::W(self.0*10+o.0)}}\nfn f(a:u32,b:u32)->u32{a&b}\nfn main(){println!(\"{}\",f(m::W(1),m::W(2)).0);println!(\"{}\",f(m::W(2),m::W(1)).0);}",
+    "b": "mod m{pub struct W(pub u32);}\ntype u32 = m::W;\nimpl core::ops::BitAnd<u32> for u32{type Output=u32;fn bitand(self,o:u32)->u32{m::W(self.0*10+o.0)}}\nfn g(a:u32,b:u32)->u32{b&a}\nfn main(){println!(\"{}\",g(m::W(1),m::W(2)).0);println!(\"{}\",g(m::W(2),m::W(1)).0);}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "12\n21\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "12\n21\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "21\n12\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "21\n12\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "inference_literal_impl",
+    "family": "algebra_risk",
+    "a": "struct W(u32);\nimpl core::ops::BitAnd<W> for u32{type Output=u32;fn bitand(self,o:W)->u32{self+o.0}}\nimpl core::ops::BitAnd<u32> for W{type Output=u32;fn bitand(self,o:u32)->u32{self.0+o+100}}\nfn f(x:W)->u32{x&1}\nfn main(){println!(\"{}\",f(W(2)));}",
+    "b": "struct W(u32);\nimpl core::ops::BitAnd<W> for u32{type Output=u32;fn bitand(self,o:W)->u32{self+o.0}}\nimpl core::ops::BitAnd<u32> for W{type Output=u32;fn bitand(self,o:u32)->u32{self.0+o+100}}\nfn g(x:W)->u32{1&x}\nfn main(){println!(\"{}\",g(W(2)));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "103\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "103\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "3\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "obs_attr_payload",
+    "family": "algebra_risk",
+    "a": "#[obs::obs]\nfn f(a:u32,b:u32)->u32{a & b}\nfn main(){println!(\"{}\",f(7u32,3u32));}",
+    "b": "#[obs::obs]\nfn f(a:u32,b:u32)->u32{b & a}\nfn main(){println!(\"{}\",f(7u32,3u32));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ a & b }\n3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ a & b }\n3\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ b & a }\n3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "{ b & a }\n3\n"
+        }
+      }
+    },
+    "externs": [
+      "obs"
+    ]
+  },
+  {
+    "id": "stringify_payload",
+    "family": "algebra_risk",
+    "a": "fn main(){println!(\"{}\",stringify!(7u32 & 3u32));}",
+    "b": "fn main(){println!(\"{}\",stringify!(3u32 & 7u32));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "7u32 & 3u32\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "7u32 & 3u32\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "3u32 & 7u32\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "3u32 & 7u32\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_mixed_operations",
+    "family": "algebra_risk",
+    "a": "\nfn f(x:u32)->u32{(x&3u32)|1u32}\nfn main(){for x in [0,1,3,5,7]{println!(\"{}\",f(x));}}",
+    "b": "\nfn f(x:u32)->u32{x&(3u32|1u32)}\nfn main(){for x in [0,1,3,5,7]{println!(\"{}\",f(x));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n1\n3\n1\n3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1\n1\n3\n1\n3\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n1\n3\n1\n3\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n1\n3\n1\n3\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_producer_multiplicity",
+    "family": "algebra_risk",
+    "a": "fn side()->u32{println!(\"S\");7u32}\nfn main(){let p=side();println!(\"{}\",p&(p|3u32));}",
+    "b": "fn side()->u32{println!(\"S\");7u32}\nfn main(){println!(\"{}\",side()&(side()|3u32));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "S\n7\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "S\n7\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "S\nS\n7\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "S\nS\n7\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a02_float_rounding",
+    "family": "algebra_risk",
+    "a": "fn main(){let x=(0.1f32+0.1f32)+0.5f32;let y=0.1f32+(0.1f32+0.5f32);println!(\"{}\",x.to_bits());println!(\"{}\",y.to_bits());}",
+    "b": "fn main(){let x=(0.1f32+0.1f32)+0.5f32;let y=0.1f32+(0.1f32+0.5f32);println!(\"{}\",y.to_bits());println!(\"{}\",x.to_bits());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1060320051\n1060320052\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1060320051\n1060320052\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1060320052\n1060320051\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "1060320052\n1060320051\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_custom_comparison",
+    "family": "algebra_risk",
+    "a": "#[derive(PartialEq)]\nstruct W(u32);\nimpl core::cmp::PartialOrd<W> for W{fn partial_cmp(&self,o:&W)->Option<core::cmp::Ordering>{let s=self.0;let t=o.0;if s>t{Some(core::cmp::Ordering::Greater)}else if s<t&&t%2==1{Some(core::cmp::Ordering::Less)}else{Some(core::cmp::Ordering::Equal)}}}\nfn f(x:W,y:W)->bool{x>y}\nfn main(){for (a,b) in [(4u32,3u32),(3u32,4u32),(2u32,2u32),(5u32,1u32)]{println!(\"{}\",f(W(a),W(b)));}}",
+    "b": "#[derive(PartialEq)]\nstruct W(u32);\nimpl core::cmp::PartialOrd<W> for W{fn partial_cmp(&self,o:&W)->Option<core::cmp::Ordering>{let s=self.0;let t=o.0;if s>t{Some(core::cmp::Ordering::Greater)}else if s<t&&t%2==1{Some(core::cmp::Ordering::Less)}else{Some(core::cmp::Ordering::Equal)}}}\nfn g(x:W,y:W)->bool{y<x}\nfn main(){for (a,b) in [(4u32,3u32),(3u32,4u32),(2u32,2u32),(5u32,1u32)]{println!(\"{}\",g(W(a),W(b)));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\nfalse\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\nfalse\nfalse\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_operator_only",
+    "family": "algebra_risk",
+    "a": "\nfn f(x:u32)->bool{x>3u32}\nfn main(){for x in [0,1,3,5,7]{println!(\"{}\",f(x));}}",
+    "b": "\nfn f(x:u32)->bool{x<3u32}\nfn main(){for x in [0,1,3,5,7]{println!(\"{}\",f(x));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\nfalse\nfalse\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\nfalse\nfalse\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_operand_only",
+    "family": "algebra_risk",
+    "a": "\nfn f(x:u32)->bool{x>3u32}\nfn main(){for x in [0,1,3,5,7]{println!(\"{}\",f(x));}}",
+    "b": "\nfn f(x:u32)->bool{3u32>x}\nfn main(){for x in [0,1,3,5,7]{println!(\"{}\",f(x));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\nfalse\ntrue\ntrue\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\nfalse\nfalse\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\nfalse\nfalse\nfalse\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "a03_eq_ineq",
+    "family": "algebra_risk",
+    "a": "\nfn f(x:u32)->bool{x==3u32}\nfn main(){for x in [0,1,3,5]{println!(\"{}\",f(x));}}",
+    "b": "\nfn f(x:u32)->bool{x!=3u32}\nfn main(){for x in [0,1,3,5]{println!(\"{}\",f(x));}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\ntrue\nfalse\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "false\nfalse\ntrue\nfalse\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\nfalse\ntrue\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "true\ntrue\nfalse\ntrue\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "op_kind_and_or",
+    "family": "algebra_risk",
+    "a": "\nfn f(x:u32,y:u32)->u32{x&y}\nfn main(){for x in [0,3,5]{for y in [0,1,2]{println!(\"{}\",f(x,y));}}}",
+    "b": "\nfn f(x:u32,y:u32)->u32{x|y}\nfn main(){for x in [0,3,5]{for y in [0,1,2]{println!(\"{}\",f(x,y));}}}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n0\n0\n0\n1\n2\n0\n1\n0\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n0\n0\n0\n1\n2\n0\n1\n0\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n1\n2\n3\n3\n3\n5\n5\n7\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "0\n1\n2\n3\n3\n3\n5\n5\n7\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "m3_m1_m2_composition",
+    "family": "algebra",
+    "a": "type Scalar=u32;\nfn f(a:Scalar,b:Scalar)->(Scalar,bool){let mask=2u32+3u32;let left=a&mask;let right=b^7u32;let combined=(left^right)^9u32;let comparison=a>b;let copied=combined|combined;(copied,comparison)}\nfn main(){for (a,b) in [(0u32,0u32),(1,2),(7,3),(15,31),(u32::MAX,0),(u32::MAX,u32::MAX)]{println!(\"{:?}\",f(a,b));}}",
+    "b": "type Scalar=u32;\nfn f(x:Scalar,y:Scalar)->(Scalar,bool){let mask=5u32;let second=7u32^y;let first=mask&x;let joined=9u32^(second^first);let order=y<x;let value=joined;(value,order)}\nfn main(){for (a,b) in [(0u32,0u32),(1,2),(7,3),(15,31),(u32::MAX,0),(u32::MAX,u32::MAX)]{println!(\"{:?}\",f(a,b));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(14, false)\n(13, false)\n(8, true)\n(20, false)\n(11, true)\n(4294967284, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(14, false)\n(13, false)\n(8, true)\n(20, false)\n(11, true)\n(4294967284, false)\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(14, false)\n(13, false)\n(8, true)\n(20, false)\n(11, true)\n(4294967284, false)\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "(14, false)\n(13, false)\n(8, true)\n(20, false)\n(11, true)\n(4294967284, false)\n"
+        }
+      }
+    }
+  },
+  {
+    "id": "m3_pattern_shadowing_custom_bitand",
+    "family": "algebra",
+    "a": "struct Scalar(u32); impl core::marker::Copy for Scalar {} impl core::clone::Clone for Scalar {fn clone(&self)->Self{*self}} struct Holder {slot: Scalar} impl core::ops::BitAnd for Scalar {type Output=Self;fn bitand(self,rhs:Self)->Self{Self(self.0+rhs.0)}} fn compute(value:u32)->[Scalar;7]{[{let (value,)=(Scalar(1),);value&value},{let value:Scalar=Scalar(1);value&value},{let &(value,)=&(Scalar(1),);value&value},{let other @ value=Scalar(1);value&value},{let (value,):(Scalar,)=(Scalar(1),);value&value},{let [value]=[Scalar(1)];value&value},{let Holder{slot:value}=Holder{slot:Scalar(1)};value&value}]} fn main(){println!(\"{:?}\",compute(9).map(|v|v.0));}",
+    "b": "struct Scalar(u32); impl core::marker::Copy for Scalar {} impl core::clone::Clone for Scalar {fn clone(&self)->Self{*self}} struct Holder {slot: Scalar} impl core::ops::BitAnd for Scalar {type Output=Self;fn bitand(self,rhs:Self)->Self{Self(self.0+rhs.0)}} fn compute(value:u32)->[Scalar;7]{[{let (value,)=(Scalar(1),);value},{let value:Scalar=Scalar(1);value},{let &(value,)=&(Scalar(1),);value},{let other @ value=Scalar(1);value},{let (value,):(Scalar,)=(Scalar(1),);value},{let [value]=[Scalar(1)];value},{let Holder{slot:value}=Holder{slot:Scalar(1)};value}]} fn main(){println!(\"{:?}\",compute(9).map(|v|v.0));}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "off": {"compile": "ok", "run": "value", "stdout": "[2, 2, 2, 2, 2, 2, 2]\n"},
+        "on": {"compile": "ok", "run": "value", "stdout": "[2, 2, 2, 2, 2, 2, 2]\n"}
+      },
+      "b": {
+        "off": {"compile": "ok", "run": "value", "stdout": "[1, 1, 1, 1, 1, 1, 1]\n"},
+        "on": {"compile": "ok", "run": "value", "stdout": "[1, 1, 1, 1, 1, 1, 1]\n"}
+      }
+    }
+  }
+]

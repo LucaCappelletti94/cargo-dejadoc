@@ -1,0 +1,35 @@
+[
+  {
+    "id": "a16_selected_branch_destruction",
+    "family": "boolean",
+    "a": "struct D(&'static str); impl Drop for D { fn drop(&mut self) { println!(\"drop {}\", self.0); } }\nfn f(p:bool)->u8 {if !p {let _d=D(\"left\"); println!(\"branch left\"); 1u8} else {let _d=D(\"right\"); println!(\"branch right\"); 2u8}}\nfn main(){for p in [false,true]{println!(\"before\");println!(\"{}\",f(p));println!(\"after\");}}",
+    "b": "struct D(&'static str); impl Drop for D { fn drop(&mut self) { println!(\"drop {}\", self.0); } }\nfn f(p:bool)->u8 {if p {let _d=D(\"right\"); println!(\"branch right\"); 2u8} else {let _d=D(\"left\"); println!(\"branch left\"); 1u8}}\nfn main(){for p in [false,true]{println!(\"before\");println!(\"{}\",f(p));println!(\"after\");}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nbranch left\ndrop left\n1\nafter\nbefore\nbranch right\ndrop right\n2\nafter\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nbranch left\ndrop left\n1\nafter\nbefore\nbranch right\ndrop right\n2\nafter\n"
+        }
+      },
+      "b": {
+        "off": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nbranch left\ndrop left\n1\nafter\nbefore\nbranch right\ndrop right\n2\nafter\n"
+        },
+        "on": {
+          "compile": "ok",
+          "run": "value",
+          "stdout": "before\nbranch left\ndrop left\n1\nafter\nbefore\nbranch right\ndrop right\n2\nafter\n"
+        }
+      }
+    }
+  }
+]
