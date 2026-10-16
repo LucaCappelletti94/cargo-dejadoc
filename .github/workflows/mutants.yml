@@ -49,8 +49,10 @@ jobs:
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         timeout-minutes: 5
       - name: Install cargo-mutants
-        timeout-minutes: 10
-        run: taskset -c 0,1 nice -n 10 env RUSTC_WRAPPER=sccache CARGO_BUILD_JOBS=2 cargo install cargo-mutants --version 27.1.0 --locked
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        timeout-minutes: 5
+        with:
+          tool: cargo-mutants@27.1.0
       - name: Enumerate complete inventory
         id: inventory
         timeout-minutes: 2
@@ -95,9 +97,11 @@ jobs:
         timeout-minutes: 5
       - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
         timeout-minutes: 5
-      - name: Install cargo-mutants
-        timeout-minutes: 10
-        run: taskset -c 0,1 nice -n 10 env RUSTC_WRAPPER=sccache CARGO_BUILD_JOBS=2 cargo install cargo-mutants --version 27.1.0 --locked
+      - name: Install cargo-mutants and cargo-nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        timeout-minutes: 5
+        with:
+          tool: cargo-mutants@27.1.0,cargo-nextest
       - name: Download mutation inventory
         uses: actions/download-artifact@v4
         timeout-minutes: 3

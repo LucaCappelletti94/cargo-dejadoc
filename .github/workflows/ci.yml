@@ -10,16 +10,64 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
 
+env:
+  CARGO_INCREMENTAL: 0
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
 jobs:
-  test:
+  lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
-      - run: cargo clippy --workspace --all-targets -- -D warnings
-      - run: cargo doc --workspace --no-deps
-      - run: cargo test --workspace
+      - run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - run: cargo clippy --workspace --lib --no-default-features --locked -- -D warnings
+      - run: cargo clippy -p dejadoc --all-targets --no-default-features --features std --locked -- -D warnings
+      - run: cargo doc --workspace --no-deps --locked
+
+  test:
+    name: test (${{ matrix.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: default
+            run: cargo nextest run --workspace
+          - name: std
+            run: cargo nextest run -p dejadoc --no-default-features --features std
+          - name: no-std
+            run: cargo nextest run --workspace --lib --no-default-features
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-nextest
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+        with:
+          key: ${{ matrix.name }}
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - run: ${{ matrix.run }} --locked --cargo-profile fast-test --profile ci
+      - if: matrix.name == 'default'
+        run: cargo test --workspace --doc --locked
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: junit-${{ matrix.name }}
+          path: target/nextest/ci/junit.xml
+          if-no-files-found: ignore
+
+  witnesses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - run: python3 -B -m unittest discover -s tests -p dependency_witnesses_test.py -v
         env:
           PYTHONDONTWRITEBYTECODE: "1"
@@ -62,7 +110,3 @@ jobs:
           path: |
             ${{ runner.temp }}/dependency-algebra-witnesses.json
             ${{ runner.temp }}/dependency-algebra-signed-witnesses.json
-      - run: cargo clippy --workspace --lib --no-default-features -- -D warnings
-      - run: cargo test --workspace --lib --no-default-features
-      - run: cargo clippy -p dejadoc --all-targets --no-default-features --features std -- -D warnings
-      - run: cargo test -p dejadoc --no-default-features --features std
