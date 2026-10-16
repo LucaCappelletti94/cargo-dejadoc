@@ -80,10 +80,10 @@ fn tied_future_negations_keep_one_form_across_permuted_regions() {
 }
 
 #[test]
-fn tied_future_negations_keep_shared_origin_and_swapped_roots_separate() {
+fn tied_future_negations_merge_shared_origin_and_keep_swapped_roots_separate() {
     let original = source([0, 1], [0, 1, 2, 3], "(y,z,b)");
     let swapped = source([0, 1], [0, 1, 2, 3], "(b,z,y)");
-    separate(&original, SHARED_ORIGIN);
+    same(&original, SHARED_ORIGIN);
     separate(&original, &swapped);
     separate(SHARED_ORIGIN, &swapped);
 }
@@ -133,10 +133,20 @@ fn tied_future_negation_grouping_keeps_the_exact_family_members() {
         members(&report),
         [
             vec![
-                "fam_00", "fam_01", "fam_02", "fam_03", "fam_04", "fam_05", "fam_06", "fam_07",
-                "fam_08", "fam_09", "fam_10", "fam_11"
+                "fam_00",
+                "fam_01",
+                "fam_02",
+                "fam_03",
+                "fam_04",
+                "fam_05",
+                "fam_06",
+                "fam_07",
+                "fam_08",
+                "fam_09",
+                "fam_10",
+                "fam_11",
+                "shared_origin"
             ],
-            vec!["shared_origin"],
             vec!["swapped_roots"]
         ]
     );

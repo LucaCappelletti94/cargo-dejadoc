@@ -1,5 +1,7 @@
 //! Original declaration and inherited reference identities.
 
+use core::fmt::Write;
+
 use syn_canon::{CanonicalForm, SourceContext};
 
 fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
@@ -101,7 +103,7 @@ fn imported_helpers_retain_their_qualified_definition_identity() {
 }
 
 #[test]
-fn inherited_generic_dispatch_retains_its_enclosing_definition() {
+fn owner_generic_dispatch_matches_across_owner_bounds() {
     let source: syn::File = syn::parse_str(
         "
         trait LeftFactory { fn value() -> u32; }
@@ -138,7 +140,7 @@ fn inherited_generic_dispatch_retains_its_enclosing_definition() {
         })
         .collect();
     assert_eq!(forms[0], forms[1]);
-    assert_ne!(forms[0], forms[2]);
+    assert_eq!(forms[0], forms[2]);
 }
 
 #[test]
@@ -687,10 +689,12 @@ fn generic_type_ids_keep_the_parameters_distinct() {
         impl_method(&context, &source, "left"),
         impl_method(&context, &source, "same")
     );
-    assert_ne!(
+    let (left, right) = (
         impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        impl_method(&context, &source, "right"),
     );
+    assert_eq!(left, right);
+    assert_ne!(left.owner_role_key(), right.owner_role_key());
 }
 
 #[test]
@@ -711,10 +715,12 @@ fn generic_const_ids_keep_the_parameters_distinct() {
         impl_method(&context, &source, "left"),
         impl_method(&context, &source, "same")
     );
-    assert_ne!(
+    let (left, right) = (
         impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        impl_method(&context, &source, "right"),
     );
+    assert_eq!(left, right);
+    assert_ne!(left.owner_role_key(), right.owner_role_key());
 }
 
 #[test]
@@ -1360,8 +1366,8 @@ fn owner_literal_payloads_keep_distinct_owners_distinct() {
     let source: syn::File = syn::parse_str(
         "
         struct Owner<const S: &'static str>;
-        impl Owner<\" x\"> { fn f() -> Self { Self } }
-        impl Owner<\"x\"> { fn f() -> Self { Self } }
+        impl Owner<\" x\"> { const K: u32 = 1; fn f() -> u32 { Self::K } }
+        impl Owner<\"x\"> { const K: u32 = 1; fn f() -> u32 { Self::K } }
     ",
     )
     .unwrap();
@@ -1373,46 +1379,52 @@ fn owner_literal_payloads_keep_distinct_owners_distinct() {
 #[test]
 fn self_type_views_retain_their_original_owner_binding() {
     let local: syn::File =
-        syn::parse_str("struct S { v: u32 } impl S { fn f(s: Self) -> Self { s } }").unwrap();
+        syn::parse_str("struct S; impl S { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }")
+            .unwrap();
     let imported: syn::File = syn::parse_str(
-        "mod m { pub struct S { v: u32 } } use m::S; impl S { fn f(s: Self) -> Self { s } }",
+        "mod m { pub struct S; } use m::S; impl S { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
     )
     .unwrap();
     let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
     let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
     assert_ne!(
-        impl_forms(&local_context, &local)[0],
-        impl_forms(&imported_context, &imported)[0],
+        impl_method(&local_context, &local, "f"),
+        impl_method(&imported_context, &imported, "f"),
     );
 }
 
 #[test]
 fn underscored_self_types_keep_their_seed_binding() {
     let local: syn::File =
-        syn::parse_str("struct a_b { v: u32 } impl a_b { fn f(s: Self) -> Self { s } }").unwrap();
+        syn::parse_str("struct a_b; impl a_b { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }")
+            .unwrap();
     let imported: syn::File = syn::parse_str(
-        "mod m { pub struct a_b { v: u32 } } use m::a_b; impl a_b { fn f(s: Self) -> Self { s } }",
+        "mod m { pub struct a_b; } use m::a_b; impl a_b { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
     )
     .unwrap();
     let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
     let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
     assert_ne!(
-        impl_forms(&local_context, &local)[0],
-        impl_forms(&imported_context, &imported)[0],
+        impl_method(&local_context, &local, "f"),
+        impl_method(&imported_context, &imported, "f"),
     );
 }
 
 #[test]
 fn unresolved_self_types_keep_their_injective_owner_text() {
-    let left: syn::File =
-        syn::parse_str("struct W<T>(T); impl<T> W<T> { fn f(s: Self) -> Self { s } }").unwrap();
-    let right: syn::File =
-        syn::parse_str("struct X<T>(T); impl<T> X<T> { fn f(s: Self) -> Self { s } }").unwrap();
+    let left: syn::File = syn::parse_str(
+        "struct W<T>(T); impl<T> W<T> { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
+    )
+    .unwrap();
+    let right: syn::File = syn::parse_str(
+        "struct X<T>(T); impl<T> X<T> { fn h() -> u32 { 1 } fn f() -> u32 { Self::h() } }",
+    )
+    .unwrap();
     let left_context = SourceContext::new(core::iter::once((&[][..], &left)));
     let right_context = SourceContext::new(core::iter::once((&[][..], &right)));
     assert_ne!(
-        impl_forms(&left_context, &left)[0],
-        impl_forms(&right_context, &right)[0],
+        impl_method(&left_context, &left, "f"),
+        impl_method(&right_context, &right, "f"),
     );
 }
 
@@ -1422,8 +1434,8 @@ fn dyn_trait_owners_keep_their_boundary_from_nominal_types() {
         "
         trait _Trait {}
         struct dyn_Trait;
-        impl dyn _Trait { fn f(&self) -> *const Self { self } }
-        impl dyn_Trait { fn f(&self) -> *const Self { self } }
+        impl dyn _Trait { const K: u32 = 1; fn f() -> u32 { Self::K } }
+        impl dyn_Trait { const K: u32 = 1; fn f() -> u32 { Self::K } }
     ",
     )
     .unwrap();
@@ -1827,7 +1839,8 @@ fn const_generic_ids_keep_their_successor_identity() {
     let renamed_context = SourceContext::new(core::iter::once((&[][..], &renamed)));
     let original_fn = &impl_forms(&original_context, &original)[0];
     let renamed_fn = &impl_forms(&renamed_context, &renamed)[0];
-    assert_ne!(original_fn, renamed_fn,);
+    assert_eq!(original_fn, renamed_fn);
+    assert_ne!(original_fn.owner_role_key(), renamed_fn.owner_role_key());
 }
 
 #[test]
@@ -2488,4 +2501,327 @@ fn unmodeled_macro_calls_keep_owner_bodies_opaque() {
         form("", "print!(\"\"); value", "", "value"),
         form("", "print!(\"\"); value", "#[observer::inspect]", "value")
     );
+}
+
+/// A file with two `cfg`-exclusive `imp` modules, inside `speculate` or at file level, each
+/// calling its own nested item.
+fn cfg_exclusive_modules(nested: bool, first: &str, first_call: &str, second: &str) -> syn::File {
+    let modules = format!(
+        "#[cfg(unix)] mod imp {{ pub fn {first}() -> bool {{ true }} pub fn run() -> bool {{ {first_call}() }} }}
+         #[cfg(not(unix))] mod imp {{ pub fn {second}() -> bool {{ false }} pub fn run() -> bool {{ {second}() }} }}"
+    );
+    let source = if nested {
+        format!("fn speculate() -> bool {{ {modules} imp::run() }}")
+    } else {
+        format!("{modules} fn speculate() -> bool {{ imp::run() }}")
+    };
+    syn::parse_str(&source).unwrap()
+}
+
+#[test]
+fn cfg_exclusive_modules_resolve_their_own_items() {
+    for nested in [true, false] {
+        let original = cfg_exclusive_modules(nested, "on", "on", "off");
+        let renamed = cfg_exclusive_modules(nested, "yes", "yes", "no");
+        let unresolved = cfg_exclusive_modules(nested, "on", "missing", "off");
+        let file = |source: &syn::File| syn_canon::canonicalize(source.clone());
+        assert_eq!(file(&original), file(&renamed), "nested {nested}");
+        assert_ne!(file(&original), file(&unresolved), "nested {nested}");
+        // The view of `speculate` contains the modules only when they are nested in its body.
+        if nested {
+            let view = |source: &syn::File| {
+                let context = SourceContext::new(core::iter::once((&[][..], source)));
+                function_form(&context, function(source, "speculate"))
+            };
+            assert_eq!(view(&original), view(&renamed));
+            assert_ne!(view(&original), view(&unresolved));
+        }
+    }
+}
+
+/// Every free function in `items` and their inline modules, in source order.
+fn nested_functions(items: &[syn::Item]) -> Vec<&syn::ItemFn> {
+    items
+        .iter()
+        .flat_map(|item| match item {
+            syn::Item::Fn(function) => vec![function],
+            syn::Item::Mod(syn::ItemMod {
+                content: Some((_, inner)),
+                ..
+            }) => nested_functions(inner),
+            _ => Vec::new(),
+        })
+        .collect()
+}
+
+/// The view of the last `run` among `files`, each indexed at its module path.
+fn last_run(files: &[(Vec<String>, syn::File)]) -> CanonicalForm {
+    let context = SourceContext::new(files.iter().map(|(path, file)| (path.as_slice(), file)));
+    let run = files
+        .iter()
+        .flat_map(|(_, file)| nested_functions(&file.items))
+        .rfind(|function| function.sig.ident == "run")
+        .unwrap();
+    function_form(&context, run)
+}
+
+#[test]
+fn every_module_declaration_resolves_against_its_own_items() {
+    let parse = |source: &str| -> syn::File { syn::parse_str(source).unwrap() };
+    let imp = vec!["imp".to_owned()];
+    let first = "pub const ON: u32 = 1; pub fn run() -> u32 { ON }";
+    let second = "pub const OFF: u32 = 2; pub fn run() -> u32 { OFF }";
+    let inline = |body: &str| format!("#[cfg(not(unix))] mod imp {{ {body} }}");
+    let paths = parse(
+        "#[cfg(unix)] #[path = \"a.rs\"] mod imp; #[cfg(not(unix))] #[path = \"w.rs\"] mod imp;",
+    );
+    let cases = [
+        (
+            vec![(
+                Vec::new(),
+                parse(&format!(
+                    "#[cfg(unix)] mod imp {{ {first} }} {}",
+                    inline(second)
+                )),
+            )],
+            vec![(Vec::new(), parse(&inline(second)))],
+        ),
+        (
+            vec![
+                (Vec::new(), paths.clone()),
+                (imp.clone(), parse(first)),
+                (imp.clone(), parse(second)),
+            ],
+            vec![(Vec::new(), paths), (imp.clone(), parse(second))],
+        ),
+        (
+            vec![
+                (imp, parse(first)),
+                (
+                    Vec::new(),
+                    parse(&format!("#[cfg(unix)] mod imp; {}", inline(second))),
+                ),
+            ],
+            vec![(Vec::new(), parse(&inline(second)))],
+        ),
+    ];
+    for (index, (shared, alone)) in cases.iter().enumerate() {
+        assert_eq!(last_run(shared), last_run(alone), "case {index}");
+    }
+}
+
+#[test]
+fn cfg_exclusive_imports_of_one_alias_stay_ambiguous() {
+    let form = |modules: [&str; 2], imports: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "mod {} {{ pub const N: u32 = 1; }} mod {} {{ pub const N: u32 = 2; }}
+             {imports} fn f() -> u32 {{ N }}",
+            modules[0], modules[1]
+        ))
+        .unwrap();
+        let context = SourceContext::new([(&[][..], &source)]);
+        function_form(&context, function(&source, "f"))
+    };
+    let both = "#[cfg(unix)] use crate::left::N; #[cfg(not(unix))] use crate::right::N;";
+    let ambiguous = form(["left", "right"], both);
+    assert_eq!(
+        ambiguous,
+        form(
+            ["up", "down"],
+            &both.replace("left", "up").replace("right", "down")
+        )
+    );
+    assert_ne!(ambiguous, form(["left", "right"], "use crate::left::N;"));
+    assert_ne!(ambiguous, form(["left", "right"], "use crate::right::N;"));
+    assert_eq!(
+        form(
+            ["left", "right"],
+            "#[cfg(unix)] use crate::left::N; #[cfg(not(unix))] use crate::left::N;"
+        ),
+        form(["left", "right"], "use crate::left::N;")
+    );
+}
+
+#[test]
+fn paths_into_repeated_modules_resolve_through_every_declaration() {
+    let form = |modules: &str, item: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "{modules} use crate::m::{item}; fn f() -> u32 {{ {item} }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new([(&[][..], &source)]);
+        function_form(&context, function(&source, "f"))
+    };
+    let repeated = "#[cfg(unix)] mod m { pub const A: u32 = 1; } #[cfg(not(unix))] mod m { pub const B: u32 = 2; }";
+    let alone = "#[cfg(not(unix))] mod m { pub const B: u32 = 2; }";
+    assert_eq!(form(repeated, "B"), form(alone, "B"));
+    assert_ne!(form(repeated, "B"), form(&repeated.replace('B', "D"), "B"));
+}
+
+#[test]
+fn repeated_module_aliases_prove_primitives_only_when_every_declaration_agrees() {
+    let commutes = |first: &str, second: &str| {
+        let parse = |source: &str| -> syn::File { syn::parse_str(source).unwrap() };
+        let module = vec!["m".to_owned()];
+        let user = vec!["user".to_owned()];
+        let form = |body: &str| {
+            let files = [
+                (Vec::new(), parse("mod m; mod user;")),
+                (module.clone(), parse(first)),
+                (module.clone(), parse(second)),
+                (
+                    user.clone(),
+                    parse(&format!(
+                        "use crate::m::W; fn g(a: W, b: W) -> W {{ {body} }}"
+                    )),
+                ),
+            ];
+            let context =
+                SourceContext::new(files.iter().map(|(path, file)| (path.as_slice(), file)));
+            function_form(&context, function(&files[3].1, "g"))
+        };
+        form("a ^ b") == form("b ^ a")
+    };
+    let word = "pub type W = u8;";
+    let wrapped = "pub type W = Wrap; pub struct Wrap;";
+    assert!(commutes(word, word));
+    assert!(!commutes(word, wrapped));
+    assert!(!commutes(wrapped, word));
+}
+
+/// The view of `f` reading `name` imported from a module `m` declared under three exclusive
+/// `cfg`s with the bodies `first` and `rest`.
+fn repeated_module_reader(first: &str, rest: &str, name: &str) -> CanonicalForm {
+    let source: syn::File = syn::parse_str(&format!(
+        "#[cfg(unix)] mod m {{ {first} }} #[cfg(windows)] mod m {{ {rest} }}
+         #[cfg(not(any(unix, windows)))] mod m {{ {rest} }}
+         use crate::m::{name}; fn f() -> u32 {{ {name} }}"
+    ))
+    .unwrap();
+    let context = SourceContext::new([(&[][..], &source)]);
+    function_form(&context, function(&source, "f"))
+}
+
+#[test]
+fn repeated_modules_that_may_bind_a_name_elsewhere_leave_it_unresolved() {
+    let declared = "pub const B: u32 = 2;";
+    let resolved = repeated_module_reader("pub const A: u32 = 1;", declared, "B");
+    let unresolved = repeated_module_reader("pub const A: u32 = 1;", "pub const C: u32 = 2;", "B");
+    assert_ne!(resolved, unresolved);
+    for first in [
+        "pub use crate::missing::B;",
+        "pub use external::B;",
+        "pub use external::*;",
+        "extern crate external as B;",
+        "generate!();",
+    ] {
+        assert_eq!(
+            repeated_module_reader(first, declared, "B"),
+            unresolved,
+            "{first}"
+        );
+    }
+}
+
+#[test]
+fn import_chains_through_repeated_modules_stay_bounded() {
+    let chain = |hops: usize| {
+        let mut body = String::new();
+        for hop in 0..hops {
+            write!(body, "pub use self::x{} as x{hop};", hop + 1).unwrap();
+        }
+        write!(body, "pub const x{hops}: u32 = 1;").unwrap();
+        body
+    };
+    let unresolved = repeated_module_reader("", "", "x0");
+    assert_ne!(
+        repeated_module_reader(&chain(2), &chain(2), "x0"),
+        unresolved
+    );
+    assert_eq!(
+        repeated_module_reader(&chain(63), &chain(63), "x0"),
+        unresolved
+    );
+}
+
+#[test]
+fn repeated_module_routes_resolve_only_when_every_declaration_agrees() {
+    let form = |imports: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "mod real {{ pub const X: u32 = 1; }} mod other {{ pub const X: u32 = 1; }}
+             {imports} fn f() -> u32 {{ X }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new([(&[][..], &source)]);
+        function_form(&context, function(&source, "f"))
+    };
+    let routed = |first: &str, second: &str| {
+        form(&format!(
+            "#[cfg(unix)] mod m {{ pub use crate::{first} as inner; }}
+             #[cfg(not(unix))] mod m {{ pub use crate::{second} as inner; }}
+             use crate::m::inner::X;"
+        ))
+    };
+    assert_eq!(routed("real", "real"), form("use crate::real::X;"));
+    assert_eq!(routed("real", "other"), form("use crate::missing::X;"));
+    assert_ne!(form("use crate::real::X;"), form("use crate::missing::X;"));
+}
+
+#[test]
+fn a_file_registered_twice_stays_one_declaration() {
+    let file: syn::File = syn::parse_str(
+        "fn h(p: u32) -> u32 { p ^ 1 } fn k(p: u32) -> u32 { p & 1 }
+         fn f(p: u32) -> (u32, u32) { let a = h(p); let b = k(p); (a, b) }
+         fn g(p: u32) -> (u32, u32) { let b = k(p); let a = h(p); (a, b) }",
+    )
+    .unwrap();
+    let reorders = |copies: usize| {
+        let context = SourceContext::new(core::iter::repeat_n((&[][..], &file), copies));
+        function_form(&context, function(&file, "f"))
+            == function_form(&context, function(&file, "g"))
+    };
+    assert!(reorders(1));
+    assert!(reorders(2));
+}
+
+#[test]
+fn gated_local_and_external_imports_of_one_alias_stay_ambiguous() {
+    let form = |module: &str, imports: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "mod {module} {{ pub struct N {{ pub v: u32 }} }}
+             {imports} fn f(x: N) -> u32 {{ x.v }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new([(&[][..], &source)]);
+        function_form(&context, function(&source, "f"))
+    };
+    let local = "use crate::left::N;";
+    let gated = "#[cfg(unix)] use crate::left::N; #[cfg(not(unix))] use external::N;";
+    let swapped = "#[cfg(not(unix))] use external::N; #[cfg(unix)] use crate::left::N;";
+    let ambiguous = form("left", gated);
+    assert_ne!(ambiguous, form("left", local));
+    assert_eq!(ambiguous, form("left", swapped));
+    assert_eq!(ambiguous, form("right", &gated.replace("left", "right")));
+    assert_eq!(
+        form("left", "use crate::left::N; use external::N;"),
+        form("left", local)
+    );
+}
+
+#[test]
+fn gated_mixed_aliases_read_from_another_module_stay_ambiguous() {
+    let form = |module: &str, imports: &str| {
+        let source: syn::File = syn::parse_str(&format!(
+            "mod {module} {{ pub struct N {{ pub v: u32 }} }}
+             mod reexport {{ {imports} }}
+             use crate::reexport::N; fn f(x: N) -> u32 {{ x.v }}"
+        ))
+        .unwrap();
+        let context = SourceContext::new([(&[][..], &source)]);
+        function_form(&context, function(&source, "f"))
+    };
+    let gated = "#[cfg(unix)] pub use crate::left::N; #[cfg(not(unix))] pub use external::N;";
+    let ambiguous = form("left", gated);
+    assert_ne!(ambiguous, form("left", "pub use crate::left::N;"));
+    assert_eq!(ambiguous, form("right", &gated.replace("left", "right")));
 }

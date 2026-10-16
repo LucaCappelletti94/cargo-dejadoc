@@ -67,16 +67,22 @@ pub(crate) enum Origin {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum IntWidth {
-    W8 = 8,
-    W16 = 16,
-    W32 = 32,
-    W64 = 64,
-    W128 = 128,
+    W8,
+    W16,
+    W32,
+    W64,
+    W128,
 }
 
 impl IntWidth {
     pub(crate) fn bits(self) -> u32 {
-        self as u32
+        match self {
+            Self::W8 => 8,
+            Self::W16 => 16,
+            Self::W32 => 32,
+            Self::W64 => 64,
+            Self::W128 => 128,
+        }
     }
 }
 
@@ -166,6 +172,10 @@ pub(crate) fn primitive_suffix(name: &str) -> Option<PrimTy> {
     }
 }
 
+/// A declaration's index in the immutable helper summary table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub(crate) struct HelperId(pub(crate) usize);
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Binding {
     pub(crate) id: BindingId,
@@ -179,6 +189,8 @@ pub(crate) struct Binding {
     pub(crate) value_port: Option<crate::schedule::Port>,
     pub(crate) target: Option<usize>,
     pub(crate) raw: bool,
+    /// The identity handle of an accepted total helper declaration.
+    pub(crate) helper: Option<HelperId>,
 }
 
 #[derive(Clone, Default)]
@@ -202,6 +214,10 @@ impl Frame {
         &self.names[ns as usize]
     }
 
+    pub(crate) fn bindings_mut(&mut self, ns: Ns) -> &mut BTreeMap<String, Binding> {
+        &mut self.names[ns as usize]
+    }
+
     pub(crate) fn next_id(&self) -> usize {
         self.names
             .iter()
@@ -209,6 +225,14 @@ impl Frame {
             .map(|binding| binding.id.0)
             .max()
             .map_or(0, |id| id + 1)
+    }
+
+    /// Attach a declaration's cached helper handle.
+    pub(crate) fn set_helper(&mut self, ns: Ns, name: &str, helper: HelperId) {
+        self.names[ns as usize]
+            .get_mut(ns.key(name))
+            .expect("indexed helper value binding")
+            .helper = Some(helper);
     }
 }
 

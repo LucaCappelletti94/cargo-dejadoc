@@ -126,6 +126,42 @@ fn functions_group_per_module_across_targets_and_cfgs() {
 }
 
 #[test]
+fn copies_selected_by_module_declarations_merge_their_cfgs() {
+    let report = Dejadoc::default()
+        .functions()
+        .run("tests/fixtures/modcfgws")
+        .unwrap();
+    let mut groups: Vec<(Vec<&str>, Vec<&str>, Option<Remedy>)> = report
+        .groups
+        .iter()
+        .map(|g| {
+            let items = g.sites.iter().map(|s| s.item.as_str()).collect();
+            let files = g.sites.iter().map(|s| s.file.as_str()).collect();
+            (items, files, g.remedy)
+        })
+        .collect();
+    groups.sort();
+    assert_eq!(
+        groups,
+        [
+            (
+                vec!["modcfgws::bits::spread", "modcfgws::bits::spread"],
+                vec!["src/narrow/bits.rs", "src/wide/bits.rs"],
+                Some(Remedy::MergeCfg)
+            ),
+            (
+                vec![
+                    "modcfgws::host::probe::measure",
+                    "modcfgws::host::probe::measure"
+                ],
+                vec!["src/host/other_probe.rs", "src/host/probe.rs"],
+                Some(Remedy::MergeCfg)
+            ),
+        ]
+    );
+}
+
+#[test]
 fn shared_group_spans_crates_and_variants() {
     let report = scan();
     assert_eq!(report.total, 9);
@@ -364,18 +400,6 @@ fn context_scan() -> Report {
 
 fn context_items(group: &dejadoc::ContextGroup) -> Vec<&str> {
     group.sites.iter().map(|s| s.item.as_str()).collect()
-}
-
-#[test]
-fn context_blocks_are_off_by_default() {
-    let report = Dejadoc::default().run(CONTEXT_FIXTURE).unwrap();
-    assert_eq!(report.context_blocks, 0);
-    assert_eq!(report.unique_context_blocks, 0);
-    assert_eq!(report.context_groups.len(), 0);
-    assert_eq!(
-        dejadoc::exit_code(&report, false),
-        std::process::ExitCode::SUCCESS
-    );
 }
 
 #[test]

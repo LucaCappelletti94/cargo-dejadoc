@@ -102,6 +102,7 @@ pub(crate) fn module_tree(target: &Target) -> crate::Result<Vec<crate::SourceFil
     let root = Child {
         path: target.src.clone(),
         segments: Vec::new(),
+        cfg: Vec::new(),
         mod_rs: true,
         rustdoc: target.doc,
     };
@@ -158,12 +159,14 @@ fn collect(
         dir,
         &base,
         &file.segments,
+        &file.cfg,
         file.rustdoc,
         &mut children,
     );
     out.push(crate::SourceFile {
         path: file.path.to_string_lossy().into_owned(),
         segments: file.segments,
+        cfg: file.cfg,
         parsed,
         text,
         rustdoc: file.rustdoc,
@@ -178,12 +181,14 @@ fn collect(
     Ok(())
 }
 
-/// The `mod name;` files at every nesting depth, `dir` resolving `#[path]` and `base` the implicit files.
+/// The `mod name;` files at every nesting depth, `dir` resolving `#[path]` and `base` the
+/// implicit files, `cfg` holding the `cfg` attributes of the declarations around `items`.
 fn mod_decls(
     items: &[syn::Item],
     dir: &std::path::Path,
     base: &std::path::Path,
     prefix: &[String],
+    cfg: &[String],
     rustdoc: bool,
     out: &mut Vec<Child>,
 ) {
@@ -198,12 +203,14 @@ fn mod_decls(
         // path keeps it as rustdoc does.
         let name = moditem.ident.unraw().to_string();
         let mut segments = prefix.to_vec();
+        let mut cfg = cfg.to_vec();
+        cfg.extend(crate::cfg::cfgs(&moditem.attrs));
         if let Some((_, children)) = &moditem.content {
             // A `#[path]` on an inline module names its directory, against the declaring file's.
             let inner = declared_path(&moditem.attrs)
                 .map_or_else(|| base.join(&name), |path| lexical_join(dir, &path));
             segments.push(moditem.ident.to_string());
-            mod_decls(children, &inner, &inner, &segments, rustdoc, out);
+            mod_decls(children, &inner, &inner, &segments, &cfg, rustdoc, out);
             continue;
         }
         match resolve_mod_path(dir, base, &name, &moditem.attrs) {
@@ -212,6 +219,7 @@ fn mod_decls(
                 out.push(Child {
                     path,
                     segments,
+                    cfg,
                     mod_rs,
                     rustdoc,
                 });
@@ -228,6 +236,8 @@ fn mod_decls(
 struct Child {
     path: PathBuf,
     segments: Vec<String>,
+    /// The `cfg` attributes of the declarations from the target root to this file.
+    cfg: Vec<String>,
     /// A crate root, `mod.rs` or `#[path]` file, whose children sit beside it.
     mod_rs: bool,
     rustdoc: bool,
@@ -291,6 +301,7 @@ fn lexical_join(dir: &std::path::Path, path: &str) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::vec;
 
     fn target(src: &std::path::Path) -> Target {
         Target {
@@ -338,6 +349,50 @@ mod tests {
             ("a.rs", "pub fn g() {}\n"),
         ]);
         assert_eq!(got, ["lib.rs", "a.rs"]);
+    }
+
+    #[test]
+    fn records_the_cfg_chain_of_the_declarations() {
+        let dir = tempfile::tempdir().unwrap();
+        for (path, text) in [
+            (
+                "lib.rs",
+                "#[cfg(unix)]\nmod outer {\n    #[cfg(feature = \"x\")]\n    pub mod inner;\n}\n#[cfg(windows)]\n#[path = \"w.rs\"]\nmod w;\nmod plain;\n",
+            ),
+            ("outer/inner.rs", "pub fn g() {}\n"),
+            ("w.rs", "pub fn h() {}\n"),
+            ("plain.rs", "pub fn p() {}\n"),
+        ] {
+            let path = dir.path().join(path);
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(path, text).unwrap();
+        }
+        let mut got: Vec<(String, Vec<String>)> = module_tree(&target(&dir.path().join("lib.rs")))
+            .unwrap()
+            .into_iter()
+            .map(|file| {
+                let path = std::path::Path::new(&file.path)
+                    .strip_prefix(dir.path())
+                    .unwrap();
+                (path.to_string_lossy().into_owned(), file.cfg)
+            })
+            .collect();
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("lib.rs".to_string(), vec![]),
+                (
+                    "outer/inner.rs".to_string(),
+                    vec![
+                        "# [cfg (unix)]".to_string(),
+                        "# [cfg (feature = \"x\")]".to_string()
+                    ]
+                ),
+                ("plain.rs".to_string(), vec![]),
+                ("w.rs".to_string(), vec!["# [cfg (windows)]".to_string()]),
+            ]
+        );
     }
 
     #[test]

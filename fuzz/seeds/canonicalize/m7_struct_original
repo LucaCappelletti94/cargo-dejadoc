@@ -1,0 +1,1 @@
+struct P{a:u32,b:u32}fn f(input:u32)->u32{let s=P{a:input&15u32,b:input>>4};s.a}

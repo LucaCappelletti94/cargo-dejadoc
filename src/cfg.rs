@@ -2,7 +2,7 @@
 //! with every feature on and `test` off, so a scan gives the same answer
 //! on every machine.
 
-use alloc::string::ToString;
+use alloc::string::{String, ToString};
 
 use alloc::vec::Vec;
 use syn::{Expr, ExprLit, Lit, LitStr, Meta, Token, punctuated::Punctuated};
@@ -16,6 +16,14 @@ pub(crate) fn allows(attrs: &[syn::Attribute]) -> bool {
                 _ => true,
             }
     })
+}
+
+/// The printed `cfg` attributes among `attrs`.
+pub(crate) fn cfgs(attrs: &[syn::Attribute]) -> impl Iterator<Item = String> + '_ {
+    attrs
+        .iter()
+        .filter(|a| a.path().is_ident("cfg"))
+        .map(|a| quote::ToTokens::to_token_stream(a).to_string())
 }
 
 /// The metas a `#[cfg_attr(pred, …)]` applies, nested ones expanded in

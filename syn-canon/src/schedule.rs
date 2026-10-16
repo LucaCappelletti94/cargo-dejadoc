@@ -1,7 +1,10 @@
 //! Exact, bounded scheduling of proven scalar declaration regions.
 
+use core::cell::RefCell;
+
 use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
+use alloc::collections::BTreeSet;
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec;
@@ -12,7 +15,9 @@ use syn::visit::Visit;
 
 use crate::alpha::{MacroArgs, Renamer};
 use crate::reference::{BlockProof, ReferenceFacts};
-use crate::scope::{FreeKey, PrimTy, unraw};
+use crate::scope::{FreeKey, Ns, PrimTy, unraw};
+
+mod values;
 
 /// The graph nodes a region may still be labeled with.
 pub(crate) const MAX_REGION_NODES: usize = 16_384;
@@ -86,11 +91,12 @@ pub(crate) enum Port {
     Free(FreeKey),
 }
 
-/// A value reference with its proven scalar type.
+/// A reference and its separate helper-cache handle.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord, Debug)]
 pub(crate) struct Value {
     pub(crate) port: Port,
     pub(crate) prim: Option<PrimTy>,
+    pub(crate) helper: Option<crate::scope::HelperId>,
 }
 
 /// A labeled node of the expression language the analysis reads.
@@ -117,6 +123,17 @@ pub(crate) enum Lbl {
     Future(usize, Option<PrimTy>),
     /// An ordered root and its sharing-preserving future definitions.
     Graph(Box<Lbl>, Vec<Lbl>),
+    /// A total call of an accepted helper: callee identity, ordered
+    /// argument labels, and the helper's result type.
+    Call(Box<Lbl>, Vec<Lbl>, PrimTy),
+}
+
+/// The recorded field orders of an analyzed block, keyed by the first owned field buffer, None marking a rejected group.
+pub(crate) type FieldOrders = BTreeMap<*const syn::FieldValue, Option<Vec<usize>>>;
+
+pub(crate) enum FieldOrder<'a> {
+    Rejected,
+    Admitted(&'a [usize]),
 }
 
 impl Lbl {
@@ -126,7 +143,9 @@ impl Lbl {
             Self::Int(_, prim) => *prim,
             Self::Bool(_) | Self::Not(_) => Some(PrimTy::Bool),
             Self::Ref(value) => value.prim,
-            Self::Op(_, _, _, prim) | Self::Flat(_, _, prim) => Some(*prim),
+            Self::Op(_, _, _, prim) | Self::Flat(_, _, prim) | Self::Call(_, _, prim) => {
+                Some(*prim)
+            }
             _ => None,
         }
     }
@@ -152,23 +171,66 @@ enum Ctx {
 
 /// A reference site of a labeled expression.
 #[derive(Clone)]
-struct Site {
+pub(crate) struct Site {
     port: Port,
     ctx: Ctx,
 }
 
-/// A consumer use of a block producer, the consumer side of the region's
-/// labeling.
-#[derive(Clone)]
-struct Use {
-    /// The producer's index.
-    node: usize,
-    /// The consumer-use axis.
+/// Storage identity, excluded from structural comparisons.
+#[derive(Clone, Copy)]
+struct ConsumerId(usize);
+
+struct Consumer {
     kind: u8,
-    /// The consumer's statement index, the tail element position, or zero.
     index: usize,
-    /// The consumer expression's structural label.
     label: Lbl,
+}
+
+/// One reference site with its complete consumer descriptor.
+struct Use {
+    node: usize,
+    consumer: ConsumerId,
+}
+
+/// Immutable consumer labels with multiplicity-preserving producer uses.
+#[derive(Default)]
+struct Uses {
+    consumers: Vec<Consumer>,
+    entries: Vec<Use>,
+}
+
+impl Uses {
+    fn insert(&mut self, kind: u8, index: usize, label: Lbl) -> ConsumerId {
+        let id = ConsumerId(self.consumers.len());
+        self.consumers.push(Consumer { kind, index, label });
+        id
+    }
+
+    fn note(
+        &mut self,
+        sites: &[Site],
+        kind: u8,
+        index: usize,
+        label: Lbl,
+        regions: &mut [Region],
+        producers: &[Producer],
+    ) {
+        if !sites.iter().any(|site| matches!(site.port, Port::Node(_))) {
+            return;
+        }
+        let consumer = self.insert(kind, index, label);
+        for site in sites {
+            if let Port::Node(node) = &site.port {
+                self.entries.push(Use {
+                    node: *node,
+                    consumer,
+                });
+                if site.ctx == Ctx::Storage {
+                    regions[producers[*node].region].dead = true;
+                }
+            }
+        }
+    }
 }
 
 /// A producer of the block being analyzed.
@@ -210,6 +272,7 @@ pub(crate) struct ScopeState {
     pub(crate) next_local: usize,
     /// A function-level `cfg` or `cfg_attr` the source cannot settle.
     pub(crate) cfg: bool,
+    pub(crate) observed: BTreeSet<Port>,
 }
 
 pub(crate) struct BindingPlan {
@@ -222,6 +285,8 @@ pub(crate) struct BindingPlan {
 pub(crate) struct BlockFacts {
     plans: BTreeMap<*const syn::Pat, BindingPlan>,
     permutation: Vec<usize>,
+    field_orders: FieldOrders,
+    original: Option<syn::Block>,
 }
 
 impl BlockFacts {
@@ -231,6 +296,28 @@ impl BlockFacts {
 
     pub(crate) fn can_rewrite(&self) -> bool {
         !self.permutation.is_empty()
+    }
+    pub(crate) fn field_order(&self, first: &syn::FieldValue) -> Option<FieldOrder<'_>> {
+        self.field_orders
+            .get(&core::ptr::from_ref(first))
+            .map(|record| {
+                record
+                    .as_deref()
+                    .map_or(FieldOrder::Rejected, FieldOrder::Admitted)
+            })
+    }
+
+    pub(crate) fn original_on_exhaustion(
+        &mut self,
+        block: &syn::Block,
+        outer: usize,
+    ) -> Option<syn::Block> {
+        let original = self.original.take()?;
+        if values::within_bounds(block, outer) {
+            None
+        } else {
+            Some(original)
+        }
     }
 
     // Cycle-follow the transposition in place, so the loop keeps its own index.
@@ -296,7 +383,7 @@ fn format_refs(format: &str, args: &[syn::Expr]) -> Vec<String> {
                 '}' => break,
                 ':' if !in_spec => in_spec = true,
                 _ if in_spec => spec.push(c),
-                _ if c.is_alphanumeric() || c == '_' => name.push(c),
+                _ if format_name_char(c) => name.push(c),
                 _ => {}
             }
         }
@@ -311,7 +398,7 @@ fn format_refs(format: &str, args: &[syn::Expr]) -> Vec<String> {
             let start = before
                 .char_indices()
                 .rev()
-                .find(|(_, c)| !c.is_alphanumeric() && *c != '_')
+                .find(|(_, c)| !format_name_char(*c))
                 .map_or(0, |(index, c)| index + c.len_utf8());
             if start < before.len() {
                 names.push(before[start..].to_string());
@@ -322,6 +409,10 @@ fn format_refs(format: &str, args: &[syn::Expr]) -> Vec<String> {
         .into_iter()
         .filter(|name| !args.iter().any(|arg| is_arg_path(arg, name)))
         .collect()
+}
+
+fn format_name_char(c: char) -> bool {
+    !c.is_whitespace() && (!c.is_ascii_punctuation() || c == '_')
 }
 
 fn is_arg_path(arg: &syn::Expr, name: &str) -> bool {
@@ -398,8 +489,8 @@ fn peel_paren(expr: &syn::Expr) -> &syn::Expr {
     expr
 }
 
-/// Whether `op` is a compound assignment the labels group under one tag.
-fn is_assign_op(op: &syn::BinOp) -> bool {
+/// Whether `op` is a compound assignment.
+pub(crate) fn is_assign_op(op: syn::BinOp) -> bool {
     matches!(
         op,
         syn::BinOp::AddAssign(_)
@@ -416,7 +507,7 @@ fn is_assign_op(op: &syn::BinOp) -> bool {
 }
 
 /// The kind tag of a binary operator the labels keep distinct.
-fn op_text(op: &syn::BinOp) -> String {
+fn op_text(op: syn::BinOp) -> String {
     match op {
         syn::BinOp::Add(_) => "+".into(),
         syn::BinOp::Sub(_) => "-".into(),
@@ -449,7 +540,7 @@ pub(crate) enum BitwiseOp {
 }
 
 impl BitwiseOp {
-    pub(crate) fn from_bin_op(op: &syn::BinOp) -> Option<Self> {
+    pub(crate) fn from_bin_op(op: syn::BinOp) -> Option<Self> {
         match op {
             syn::BinOp::BitAnd(_) => Some(Self::And),
             syn::BinOp::BitOr(_) => Some(Self::Or),
@@ -503,7 +594,7 @@ pub(crate) enum TotalBinary {
     Flat(BitwiseOp, PrimTy),
 }
 
-pub(crate) fn total_binary(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+pub(crate) fn total_binary(bin_op: syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
     if let Some(op) = BitwiseOp::from_bin_op(bin_op) {
         return Some(TotalBinary::Flat(op, scalar_prim(left, right)?));
     }
@@ -546,7 +637,7 @@ fn scalar_prim(left: &Lbl, right: &Lbl) -> Option<PrimTy> {
 
 /// A comparison or a logical operation over proven scalars, oriented by
 /// kind, a bool result.
-fn comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
+fn comparison(bin_op: syn::BinOp, left: &Lbl, right: &Lbl) -> Option<TotalBinary> {
     let prim = scalar_prim(left, right)?;
     let (tag, reverse) = match bin_op {
         syn::BinOp::Eq(_) => ('=', None),
@@ -586,7 +677,7 @@ pub(crate) fn not_label(operand: Lbl) -> Lbl {
 }
 
 /// The total boolean operand compared with literal `true`.
-pub(crate) fn true_comparison(bin_op: &syn::BinOp, left: &Lbl, right: &Lbl) -> Option<Lbl> {
+pub(crate) fn true_comparison(bin_op: syn::BinOp, left: &Lbl, right: &Lbl) -> Option<Lbl> {
     if !matches!(bin_op, syn::BinOp::Eq(_)) {
         return None;
     }
@@ -658,12 +749,15 @@ pub(crate) fn literal_label(prim: PrimTy, bits: u128) -> Lbl {
 }
 
 /// Count source-label nodes before future projection.
-fn label_nodes(lbl: &Lbl) -> usize {
+pub(crate) fn label_nodes(lbl: &Lbl) -> usize {
     match lbl {
         Lbl::Not(inner) => 1 + label_nodes(inner),
         Lbl::Op(_, left, right, _) => 1 + label_nodes(left) + label_nodes(right),
         Lbl::Flat(_, leaves, _) | Lbl::Other(_, leaves) => {
             1 + leaves.iter().map(label_nodes).sum::<usize>()
+        }
+        Lbl::Call(callee, args, _) => {
+            1 + label_nodes(callee) + args.iter().map(label_nodes).sum::<usize>()
         }
         _ => 1,
     }
@@ -762,17 +856,6 @@ fn let_name(local: &syn::Local) -> Option<String> {
     }
 }
 
-/// The binding name of a simple `let` pattern, mutable or not.
-pub(crate) fn local_binding_name(local: &syn::Local) -> Option<String> {
-    match &local.pat {
-        syn::Pat::Ident(ident) if ident.subpat.is_none() => {
-            let text = ident.ident.to_string();
-            Some(unraw(&text).to_string())
-        }
-        _ => None,
-    }
-}
-
 /// The assigned binding's name, when the target is a clean identifier.
 pub(crate) fn assign_target(stmt: &syn::Stmt) -> Option<String> {
     let syn::Stmt::Expr(expr, _) = stmt else {
@@ -780,7 +863,7 @@ pub(crate) fn assign_target(stmt: &syn::Stmt) -> Option<String> {
     };
     let assign: &syn::Expr = match peel_paren(expr) {
         syn::Expr::Assign(assign) => &assign.left,
-        syn::Expr::Binary(binary) if is_assign_op(&binary.op) => &binary.left,
+        syn::Expr::Binary(binary) if is_assign_op(binary.op) => &binary.left,
         _ => return None,
     };
     match assign {
@@ -869,48 +952,65 @@ pub(crate) fn scalar_leaf(env: &BTreeMap<String, Value>, expr: &syn::Expr) -> Op
 /// loops, arms and closure bodies extend the environment with their local
 /// binders; borrows, addresses, receivers and captures mark the sites on
 /// the storage of the referenced producers.
-fn label_expr(
+pub(crate) fn label_expr(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
     expr: &syn::Expr,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     match expr {
         syn::Expr::Lit(lit) => (label_lit(&lit.lit), Vec::new()),
         syn::Expr::Path(path) if path.qself.is_none() => label_path(env, &path.path),
         syn::Expr::Path(_) => (Lbl::Other("q".into(), Vec::new()), Vec::new()),
-        syn::Expr::Binary(bin) => label_binary(renamer, env, bin, consumer, locals),
-        syn::Expr::Paren(paren) => label_expr(renamer, env, &paren.expr, consumer, locals),
-        syn::Expr::Group(group) => label_expr(renamer, env, &group.expr, consumer, locals),
-        syn::Expr::Tuple(tuple) => label_tuple(renamer, env, &tuple.elems, consumer, locals),
-        syn::Expr::Call(call) => label_call(renamer, env, call, consumer, locals),
-        syn::Expr::MethodCall(method) => label_method(renamer, env, method, consumer, locals),
-        syn::Expr::Macro(mac) => macro_label(renamer, env, &mac.mac, consumer, locals),
+        syn::Expr::Binary(bin) => label_binary(renamer, env, bin, consumer, locals, orders),
+        syn::Expr::Paren(paren) => label_expr(renamer, env, &paren.expr, consumer, locals, orders),
+        syn::Expr::Group(group) => label_expr(renamer, env, &group.expr, consumer, locals, orders),
+        syn::Expr::Tuple(tuple) => {
+            label_tuple(renamer, env, &tuple.elems, consumer, locals, orders)
+        }
+        syn::Expr::Call(call) => label_call(renamer, env, call, consumer, locals, orders),
+        syn::Expr::MethodCall(method) => {
+            label_method(renamer, env, method, consumer, locals, orders)
+        }
+        syn::Expr::Macro(mac) => macro_label(renamer, env, &mac.mac, consumer, locals, orders),
         syn::Expr::Reference(reference) => {
-            label_reference(renamer, env, reference, consumer, locals)
+            label_reference(renamer, env, reference, consumer, locals, orders)
         }
         syn::Expr::Unary(unary) => match crate::constants::signed_literal(expr) {
             Some((prim, bits)) => (Lbl::Int(bits, Some(prim)), Vec::new()),
-            None => label_unary(renamer, env, unary, consumer, locals),
+            None => label_unary(renamer, env, unary, consumer, locals, orders),
         },
-        syn::Expr::Block(block) => label_block(renamer, env, &block.block, consumer, locals),
-        syn::Expr::If(r#if) => label_if_expr(renamer, env, r#if, consumer, locals),
-        syn::Expr::ForLoop(for_loop) => label_for_loop(renamer, env, for_loop, consumer, locals),
-        syn::Expr::While(r#while) => label_while(renamer, env, r#while, consumer, locals),
-        syn::Expr::Loop(r#loop) => label_loop(renamer, env, r#loop, consumer, locals),
-        syn::Expr::Match(r#match) => label_match_expr(renamer, env, r#match, consumer, locals),
-        syn::Expr::Closure(closure) => label_closure(renamer, env, closure, consumer, locals),
-        syn::Expr::Array(array) => label_array(renamer, env, array, consumer, locals),
-        syn::Expr::Repeat(repeat) => label_repeat(renamer, env, repeat, consumer, locals),
-        syn::Expr::Range(range) => label_range(renamer, env, range, consumer, locals),
-        syn::Expr::Index(index_expr) => label_index(renamer, env, index_expr, consumer, locals),
-        syn::Expr::Field(field) => label_field(renamer, env, field, consumer, locals),
-        syn::Expr::Struct(struct_expr) => {
-            label_struct_expr(renamer, env, struct_expr, consumer, locals)
+        syn::Expr::Block(block) => {
+            label_block(renamer, env, &block.block, consumer, locals, orders)
         }
-        syn::Expr::Let(let_expr) => label_let_expr(renamer, env, let_expr, consumer, locals),
-        syn::Expr::Assign(assign) => label_assign(renamer, env, assign, consumer, locals),
+        syn::Expr::If(r#if) => label_if_expr(renamer, env, r#if, consumer, locals, orders),
+        syn::Expr::ForLoop(for_loop) => {
+            label_for_loop(renamer, env, for_loop, consumer, locals, orders)
+        }
+        syn::Expr::While(r#while) => label_while(renamer, env, r#while, consumer, locals, orders),
+        syn::Expr::Loop(r#loop) => label_loop(renamer, env, r#loop, consumer, locals, orders),
+        syn::Expr::Match(r#match) => {
+            label_match_expr(renamer, env, r#match, consumer, locals, orders)
+        }
+        syn::Expr::Closure(closure) => {
+            label_closure(renamer, env, closure, consumer, locals, orders)
+        }
+        syn::Expr::Array(array) => label_array(renamer, env, array, consumer, locals, orders),
+        syn::Expr::Repeat(repeat) => label_repeat(renamer, env, repeat, consumer, locals, orders),
+        syn::Expr::Range(range) => label_range(renamer, env, range, consumer, locals, orders),
+        syn::Expr::Index(index_expr) => {
+            label_index(renamer, env, index_expr, consumer, locals, orders)
+        }
+        syn::Expr::Field(field) => label_field(renamer, env, field, consumer, locals, orders),
+        syn::Expr::Struct(struct_expr) => {
+            label_struct_expr(renamer, env, struct_expr, consumer, locals, orders)
+        }
+        syn::Expr::Let(let_expr) => {
+            label_let_expr(renamer, env, let_expr, consumer, locals, orders)
+        }
+        syn::Expr::Assign(assign) => label_assign(renamer, env, assign, consumer, locals, orders),
         syn::Expr::Return(r#return) => label_optional_value(
             "ret",
             renamer,
@@ -918,6 +1018,7 @@ fn label_expr(
             r#return.expr.as_deref(),
             consumer,
             locals,
+            orders,
         ),
         syn::Expr::Break(break_expr) => label_optional_value(
             "br",
@@ -926,19 +1027,24 @@ fn label_expr(
             break_expr.expr.as_deref(),
             consumer,
             locals,
+            orders,
         ),
-        syn::Expr::Try(try_expr) => label_try(renamer, env, try_expr, consumer, locals),
-        syn::Expr::TryBlock(block) => label_blk(renamer, env, &block.block, consumer, locals),
-        syn::Expr::Unsafe(block) => label_blk(renamer, env, &block.block, consumer, locals),
-        syn::Expr::Async(block) => label_blk(renamer, env, &block.block, consumer, locals),
-        syn::Expr::Const(block) => label_blk(renamer, env, &block.block, consumer, locals),
+        syn::Expr::Try(try_expr) => label_try(renamer, env, try_expr, consumer, locals, orders),
+        syn::Expr::TryBlock(block) => {
+            label_blk(renamer, env, &block.block, consumer, locals, orders)
+        }
+        syn::Expr::Unsafe(block) => label_blk(renamer, env, &block.block, consumer, locals, orders),
+        syn::Expr::Async(block) => label_blk(renamer, env, &block.block, consumer, locals, orders),
+        syn::Expr::Const(block) => label_blk(renamer, env, &block.block, consumer, locals, orders),
         syn::Expr::Verbatim(tokens) => (
             Lbl::Other("v".into(), vec![Lbl::Lit(tokens.to_string())]),
             Vec::new(),
         ),
-        syn::Expr::Await(await_expr) => label_await(renamer, env, await_expr, consumer, locals),
-        syn::Expr::Cast(cast) => label_cast(renamer, env, cast, consumer, locals),
-        syn::Expr::RawAddr(raw) => label_raw_addr(renamer, env, raw, consumer, locals),
+        syn::Expr::Await(await_expr) => {
+            label_await(renamer, env, await_expr, consumer, locals, orders)
+        }
+        syn::Expr::Cast(cast) => label_cast(renamer, env, cast, consumer, locals, orders),
+        syn::Expr::RawAddr(raw) => label_raw_addr(renamer, env, raw, consumer, locals, orders),
         _ => (Lbl::Other("e".into(), Vec::new()), Vec::new()),
     }
 }
@@ -950,7 +1056,10 @@ fn label_path(env: &BTreeMap<String, Value>, path: &syn::Path) -> (Lbl, Vec<Site
         let name = path.segments[0].ident.to_string();
         return match env.get(unraw(&name)) {
             Some(value) => (
-                Lbl::Ref(value.clone()),
+                Lbl::Ref(Value {
+                    helper: None,
+                    ..value.clone()
+                }),
                 vec![Site {
                     port: value.port.clone(),
                     ctx: Ctx::Value,
@@ -960,6 +1069,7 @@ fn label_path(env: &BTreeMap<String, Value>, path: &syn::Path) -> (Lbl, Vec<Site
                 Lbl::Ref(Value {
                     port: Port::Free(FreeKey::Unresolved(unraw(&name).to_string())),
                     prim: None,
+                    helper: None,
                 }),
                 Vec::new(),
             ),
@@ -979,19 +1089,20 @@ fn label_binary(
     bin: &syn::ExprBinary,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (left, mut sites) = label_expr(renamer, env, &bin.left, consumer, locals);
-    let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals);
+    let (left, mut sites) = label_expr(renamer, env, &bin.left, consumer, locals, orders);
+    let (right, r_sites) = label_expr(renamer, env, &bin.right, consumer, locals, orders);
     sites.extend(r_sites);
     let label = if bin.attrs.is_empty()
-        && let Some(reduced) = true_comparison(&bin.op, &left, &right)
+        && let Some(reduced) = true_comparison(bin.op, &left, &right)
     {
         reduced
     } else {
-        match total_binary(&bin.op, &left, &right) {
+        match total_binary(bin.op, &left, &right) {
             Some(TotalBinary::Ordered {
                 tag: '∧' | '∨', ..
-            }) if !bin.attrs.is_empty() => Lbl::Other(op_text(&bin.op), vec![left, right]),
+            }) if !bin.attrs.is_empty() => Lbl::Other(op_text(bin.op), vec![left, right]),
             Some(TotalBinary::Ordered { tag, reverse, prim }) => {
                 let (lo, hi) = if reverse.is_some() {
                     (right, left)
@@ -1007,10 +1118,10 @@ fn label_binary(
                 flat_label(op, prim, leaves)
             }
             None => {
-                let tag = if is_assign_op(&bin.op) {
+                let tag = if is_assign_op(bin.op) {
                     "ao".into()
                 } else {
-                    op_text(&bin.op)
+                    op_text(bin.op)
                 };
                 Lbl::Other(tag, vec![left, right])
             }
@@ -1034,7 +1145,7 @@ fn value_sites(label: &Lbl, sites: &mut Vec<Site>) {
             value_sites(left, sites);
             value_sites(right, sites);
         }
-        Lbl::Flat(_, leaves, _) => {
+        Lbl::Flat(_, leaves, _) | Lbl::Call(_, leaves, _) => {
             for leaf in leaves {
                 value_sites(leaf, sites);
             }
@@ -1050,33 +1161,74 @@ fn label_tuple(
     elems: &syn::punctuated::Punctuated<syn::Expr, syn::token::Comma>,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     let mut children = Vec::new();
     let mut sites = Vec::new();
     for element in elems {
-        let (label, e_sites) = label_expr(renamer, env, element, consumer, locals);
+        let (label, e_sites) = label_expr(renamer, env, element, consumer, locals, orders);
         children.push(label);
         sites.extend(e_sites);
     }
     (Lbl::Other("t".into(), children), sites)
 }
 
-/// The label of a call, its callee and arguments in operand order.
+/// Label a call with its resolved callee and independently total ordered arguments.
 fn label_call(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
     call: &syn::ExprCall,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (callee, mut sites) = label_expr(renamer, env, &call.func, consumer, locals);
-    let mut children = vec![callee];
+    let (callee, mut sites) = label_expr(renamer, env, &call.func, consumer, locals, orders);
+    let mut args: Vec<Lbl> = Vec::new();
     for arg in &call.args {
-        let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals);
-        children.push(label);
+        let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals, orders);
+        args.push(label);
         sites.extend(a_sites);
     }
+    if let syn::Expr::Path(path) = call.func.as_ref()
+        && path.qself.is_none()
+        && let Some(helper) = renamer.helper_id(env, &path.path)
+        && let Some(result) = total_helper(renamer, helper, &args, call)
+        && let Some(key) = renamer.helper_identity(helper)
+    {
+        let identity = Lbl::Ref(Value {
+            port: Port::Free(key),
+            prim: None,
+            helper: None,
+        });
+        let label = Lbl::Call(Box::new(identity), args, result);
+        sites.clear();
+        value_sites(&label, &mut sites);
+        return (label, sites);
+    }
+    let mut children = vec![callee];
+    children.extend(args);
     (Lbl::Other("c".into(), children), sites)
+}
+
+fn total_helper(
+    renamer: &Renamer,
+    helper: crate::scope::HelperId,
+    args: &[Lbl],
+    call: &syn::ExprCall,
+) -> Option<PrimTy> {
+    let facts = renamer.helper_table.get(helper)?;
+    if !call.attrs.is_empty() || !crate::drift::expr_attrs(&call.func).is_empty() {
+        return None;
+    }
+    if call.args.len() != facts.params.len() {
+        return None;
+    }
+    for (arg, param) in args.iter().zip(&facts.params) {
+        if arg.prim() != Some(*param) {
+            return None;
+        }
+    }
+    Some(facts.result)
 }
 
 /// The label of a method call, the receiver's sites marked on its storage,
@@ -1087,8 +1239,10 @@ fn label_method(
     method: &syn::ExprMethodCall,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (receiver, receiver_sites) = label_expr(renamer, env, &method.receiver, consumer, locals);
+    let (receiver, receiver_sites) =
+        label_expr(renamer, env, &method.receiver, consumer, locals, orders);
     let mut sites: Vec<_> = receiver_sites
         .into_iter()
         .map(|site| Site {
@@ -1098,7 +1252,7 @@ fn label_method(
         .collect();
     let mut children = vec![Lbl::Lit(method.method.to_string()), receiver];
     for arg in &method.args {
-        let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals);
+        let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals, orders);
         children.push(label);
         sites.extend(a_sites);
     }
@@ -1113,8 +1267,9 @@ fn label_reference(
     reference: &syn::ExprReference,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (inner, inner_sites) = label_expr(renamer, env, &reference.expr, consumer, locals);
+    let (inner, inner_sites) = label_expr(renamer, env, &reference.expr, consumer, locals, orders);
     let sites = inner_sites
         .into_iter()
         .map(|site| Site {
@@ -1137,8 +1292,9 @@ fn label_unary(
     unary: &syn::ExprUnary,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (inner, sites) = label_expr(renamer, env, &unary.expr, consumer, locals);
+    let (inner, sites) = label_expr(renamer, env, &unary.expr, consumer, locals, orders);
     let label = if matches!(unary.op, syn::UnOp::Not(_))
         && unary.attrs.is_empty()
         && inner.prim() == Some(PrimTy::Bool)
@@ -1203,12 +1359,24 @@ pub(crate) fn condition_polarity(expr: &syn::Expr) -> (&syn::Expr, bool) {
     }
 }
 
-struct BranchScan {
-    attributed: bool,
-    depth: usize,
-    expr_depth: usize,
-    nodes: usize,
-    valid: bool,
+pub(crate) struct BranchScan {
+    pub(crate) attributed: bool,
+    pub(crate) depth: usize,
+    pub(crate) expr_depth: usize,
+    pub(crate) nodes: usize,
+    pub(crate) valid: bool,
+}
+
+impl BranchScan {
+    pub(crate) fn new() -> Self {
+        Self {
+            attributed: false,
+            depth: 0,
+            expr_depth: 0,
+            nodes: 0,
+            valid: true,
+        }
+    }
 }
 
 impl<'ast> Visit<'ast> for BranchScan {
@@ -1267,13 +1435,7 @@ pub(crate) fn branches_unattributed(
     if !attrs.is_empty() {
         return false;
     }
-    let mut scan = BranchScan {
-        attributed: false,
-        depth: 0,
-        expr_depth: 0,
-        nodes: 0,
-        valid: true,
-    };
+    let mut scan = BranchScan::new();
     scan.visit_block(then);
     scan.visit_expr_block(otherwise);
     scan.valid && !scan.attributed
@@ -1302,10 +1464,11 @@ fn oriented_if<'r>(
     r#if: &'r syn::ExprIf,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> Option<(Lbl, Vec<Site>, &'r syn::Block, &'r syn::Block)> {
     let (positive, then, otherwise) = branch_orientation(r#if)?;
     let saved = *locals;
-    let (cond, cond_sites) = label_expr(renamer, env, positive, consumer, locals);
+    let (cond, cond_sites) = label_expr(renamer, env, positive, consumer, locals, orders);
     if cond.prim() != Some(PrimTy::Bool) {
         *locals = saved;
         return None;
@@ -1319,15 +1482,16 @@ fn boolean_branch_fold(
     env: &BTreeMap<String, Value>,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
     cond: &Lbl,
-    then: &syn::Block,
-    otherwise: &syn::Block,
+    branches: (&syn::Block, &syn::Block),
 ) -> Option<Lbl> {
+    let (then, otherwise) = branches;
     let then_tail = scalar_tail(then)?;
     let otherwise_tail = scalar_tail(otherwise)?;
     let saved = *locals;
-    let (then_label, _) = label_expr(renamer, env, then_tail, consumer, locals);
-    let (otherwise_label, _) = label_expr(renamer, env, otherwise_tail, consumer, locals);
+    let (then_label, _) = label_expr(renamer, env, then_tail, consumer, locals, orders);
+    let (otherwise_label, _) = label_expr(renamer, env, otherwise_tail, consumer, locals, orders);
     let Some(value) = branch_value(cond, &then_label, &otherwise_label) else {
         *locals = saved;
         return None;
@@ -1342,20 +1506,27 @@ fn label_if_expr(
     r#if: &syn::ExprIf,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     if let Some((cond, cond_sites, then, otherwise)) =
-        oriented_if(renamer, env, r#if, consumer, locals)
+        oriented_if(renamer, env, r#if, consumer, locals, orders)
     {
-        if let Some(value) =
-            boolean_branch_fold(renamer, env, consumer, locals, &cond, then, otherwise)
-        {
+        if let Some(value) = boolean_branch_fold(
+            renamer,
+            env,
+            consumer,
+            locals,
+            orders,
+            &cond,
+            (then, otherwise),
+        ) {
             let mut sites = Vec::new();
             value_sites(&value, &mut sites);
             return (value, sites);
         }
-        let (then_label, then_sites) = label_block(renamer, env, then, consumer, locals);
+        let (then_label, then_sites) = label_block(renamer, env, then, consumer, locals, orders);
         let (otherwise_label, otherwise_sites) =
-            label_block(renamer, env, otherwise, consumer, locals);
+            label_block(renamer, env, otherwise, consumer, locals, orders);
         let mut sites = cond_sites;
         sites.extend(then_sites);
         sites.extend(otherwise_sites);
@@ -1364,7 +1535,7 @@ fn label_if_expr(
             sites,
         );
     }
-    let (cond, mut sites) = label_cond(renamer, env, &r#if.cond, consumer, locals);
+    let (cond, mut sites) = label_cond(renamer, env, &r#if.cond, consumer, locals, orders);
     let saved = *locals;
     let otherwise = r#if
         .else_branch
@@ -1381,9 +1552,9 @@ fn label_if_expr(
             env,
             consumer,
             locals,
+            orders,
             &cond,
-            &r#if.then_branch,
-            &otherwise.block,
+            (&r#if.then_branch, &otherwise.block),
         )
         && branches_unattributed(&r#if.attrs, &r#if.then_branch, otherwise)
     {
@@ -1392,11 +1563,13 @@ fn label_if_expr(
         return (value, sites);
     }
     *locals = saved;
-    let (then_label, then_sites) = label_block(renamer, env, &r#if.then_branch, consumer, locals);
+    let (then_label, then_sites) =
+        label_block(renamer, env, &r#if.then_branch, consumer, locals, orders);
     let mut children = vec![cond, then_label];
     sites.extend(then_sites);
     if let Some((_, else_expr)) = &r#if.else_branch {
-        let (else_label, else_sites) = label_expr(renamer, env, else_expr, consumer, locals);
+        let (else_label, else_sites) =
+            label_expr(renamer, env, else_expr, consumer, locals, orders);
         sites.extend(else_sites);
         children.push(else_label);
     }
@@ -1410,8 +1583,9 @@ fn label_for_loop(
     for_loop: &syn::ExprForLoop,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (iterable, mut sites) = label_expr(renamer, env, &for_loop.expr, consumer, locals);
+    let (iterable, mut sites) = label_expr(renamer, env, &for_loop.expr, consumer, locals, orders);
     let mut inner = env.clone();
     for name in pat_names(&for_loop.pat) {
         inner.insert(
@@ -1419,11 +1593,12 @@ fn label_for_loop(
             Value {
                 port: Port::Local(*locals),
                 prim: None,
+                helper: None,
             },
         );
         *locals += 1;
     }
-    let (body, body_sites) = label_block(renamer, &inner, &for_loop.body, consumer, locals);
+    let (body, body_sites) = label_block(renamer, &inner, &for_loop.body, consumer, locals, orders);
     sites.extend(body_sites);
     (Lbl::Other("for".into(), vec![iterable, body]), sites)
 }
@@ -1435,9 +1610,10 @@ fn label_while(
     r#while: &syn::ExprWhile,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (cond, mut sites) = label_cond(renamer, env, &r#while.cond, consumer, locals);
-    let (body, body_sites) = label_block(renamer, env, &r#while.body, consumer, locals);
+    let (cond, mut sites) = label_cond(renamer, env, &r#while.cond, consumer, locals, orders);
+    let (body, body_sites) = label_block(renamer, env, &r#while.body, consumer, locals, orders);
     sites.extend(body_sites);
     (Lbl::Other("while".into(), vec![cond, body]), sites)
 }
@@ -1449,8 +1625,9 @@ fn label_loop(
     r#loop: &syn::ExprLoop,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (body, sites) = label_block(renamer, env, &r#loop.body, consumer, locals);
+    let (body, sites) = label_block(renamer, env, &r#loop.body, consumer, locals, orders);
     (Lbl::Other("loop".into(), vec![body]), sites)
 }
 
@@ -1462,8 +1639,9 @@ fn label_match_expr(
     r#match: &syn::ExprMatch,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (scrutinee, mut sites) = label_expr(renamer, env, &r#match.expr, consumer, locals);
+    let (scrutinee, mut sites) = label_expr(renamer, env, &r#match.expr, consumer, locals, orders);
     let mut children = vec![scrutinee];
     for arm in &r#match.arms {
         let mut inner = env.clone();
@@ -1473,16 +1651,19 @@ fn label_match_expr(
                 Value {
                     port: Port::Local(*locals),
                     prim: None,
+                    helper: None,
                 },
             );
             *locals += 1;
         }
         let (guard_label, guard_sites) = match &arm.pat {
-            syn::Pat::Guard(guard) => label_expr(renamer, &inner, &guard.guard, consumer, locals),
+            syn::Pat::Guard(guard) => {
+                label_expr(renamer, &inner, &guard.guard, consumer, locals, orders)
+            }
             _ => (Lbl::Other("ng".into(), Vec::new()), Vec::new()),
         };
         sites.extend(guard_sites);
-        let (body, body_sites) = label_expr(renamer, &inner, &arm.body, consumer, locals);
+        let (body, body_sites) = label_expr(renamer, &inner, &arm.body, consumer, locals, orders);
         sites.extend(body_sites);
         children.push(Lbl::Other(
             "a".into(),
@@ -1500,6 +1681,7 @@ fn label_closure(
     closure: &syn::ExprClosure,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     let mut inner = env.clone();
     for input in &closure.inputs {
@@ -1513,14 +1695,17 @@ fn label_closure(
                 Value {
                     port: Port::Local(*locals),
                     prim,
+                    helper: None,
                 },
             );
             *locals += 1;
         }
     }
     let (body, body_sites) = match &*closure.body {
-        syn::Expr::Block(block) => label_block(renamer, &inner, &block.block, consumer, locals),
-        other => label_expr(renamer, &inner, other, consumer, locals),
+        syn::Expr::Block(block) => {
+            label_block(renamer, &inner, &block.block, consumer, locals, orders)
+        }
+        other => label_expr(renamer, &inner, other, consumer, locals, orders),
     };
     let sites = body_sites
         .into_iter()
@@ -1539,11 +1724,12 @@ fn label_array(
     array: &syn::ExprArray,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     let mut children = Vec::new();
     let mut sites = Vec::new();
     for element in &array.elems {
-        let (label, e_sites) = label_expr(renamer, env, element, consumer, locals);
+        let (label, e_sites) = label_expr(renamer, env, element, consumer, locals, orders);
         children.push(label);
         sites.extend(e_sites);
     }
@@ -1557,9 +1743,10 @@ fn label_repeat(
     repeat: &syn::ExprRepeat,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (element, mut sites) = label_expr(renamer, env, &repeat.expr, consumer, locals);
-    let (length, l_sites) = label_expr(renamer, env, &repeat.len, consumer, locals);
+    let (element, mut sites) = label_expr(renamer, env, &repeat.expr, consumer, locals, orders);
+    let (length, l_sites) = label_expr(renamer, env, &repeat.len, consumer, locals, orders);
     sites.extend(l_sites);
     (Lbl::Other("rep".into(), vec![element, length]), sites)
 }
@@ -1571,16 +1758,17 @@ fn label_range(
     range: &syn::ExprRange,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     let mut children = Vec::new();
     let mut sites = Vec::new();
     if let Some(start) = &range.start {
-        let (label, s_sites) = label_expr(renamer, env, start, consumer, locals);
+        let (label, s_sites) = label_expr(renamer, env, start, consumer, locals, orders);
         children.push(label);
         sites.extend(s_sites);
     }
     if let Some(end) = &range.end {
-        let (label, s_sites) = label_expr(renamer, env, end, consumer, locals);
+        let (label, s_sites) = label_expr(renamer, env, end, consumer, locals, orders);
         children.push(label);
         sites.extend(s_sites);
     }
@@ -1594,9 +1782,10 @@ fn label_index(
     index_expr: &syn::ExprIndex,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (base, mut sites) = label_expr(renamer, env, &index_expr.expr, consumer, locals);
-    let (idx, i_sites) = label_expr(renamer, env, &index_expr.index, consumer, locals);
+    let (base, mut sites) = label_expr(renamer, env, &index_expr.expr, consumer, locals, orders);
+    let (idx, i_sites) = label_expr(renamer, env, &index_expr.index, consumer, locals, orders);
     sites.extend(i_sites);
     (Lbl::Other("idx".into(), vec![base, idx]), sites)
 }
@@ -1608,8 +1797,9 @@ fn label_field(
     field: &syn::ExprField,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (base, sites) = label_expr(renamer, env, &field.base, consumer, locals);
+    let (base, sites) = label_expr(renamer, env, &field.base, consumer, locals, orders);
     (
         Lbl::Other(
             "f".into(),
@@ -1619,22 +1809,82 @@ fn label_field(
     )
 }
 
-/// The label of a struct expression, its fields in source order.
+/// The label of a struct expression, its fields with member identities in the admitted semantic order, and its update base use.
 fn label_struct_expr(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
     struct_expr: &syn::ExprStruct,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let mut children = vec![Lbl::Lit(path_text(&struct_expr.path))];
+    let mut member_names: Vec<String> = Vec::with_capacity(struct_expr.fields.len());
+    let mut labels: Vec<Option<Lbl>> = Vec::with_capacity(struct_expr.fields.len());
+    let mut total: Vec<bool> = Vec::with_capacity(struct_expr.fields.len());
     let mut sites = Vec::new();
+    let mut nodes = 2usize;
     for field in &struct_expr.fields {
-        let (label, f_sites) = label_expr(renamer, env, &field.expr, consumer, locals);
-        children.push(label);
+        member_names.push(crate::structure::member_name(&field.member));
+        let (label, f_sites) = label_expr(renamer, env, &field.expr, consumer, locals, orders);
+        total.push(label.prim().is_some());
+        nodes += 2 + label_nodes(&label);
+        labels.push(Some(label));
         sites.extend(f_sites);
     }
+    let mut base = None;
+    if let Some(rest) = &struct_expr.rest {
+        let (label, b_sites) = label_expr(renamer, env, rest, consumer, locals, orders);
+        nodes += 1 + label_nodes(&label);
+        sites.extend(b_sites);
+        base = Some(label);
+    }
+    let order = crate::structure::named_field_order(struct_expr, &member_names, &total, nodes);
+    if let Some(order) = &order
+        && order
+            .iter()
+            .enumerate()
+            .any(|(position, source)| position != *source)
+    {
+        permute_values(&mut member_names, order);
+        permute_values(&mut labels, order);
+    }
+    let mut children = vec![Lbl::Lit(path_text(&struct_expr.path))];
+    for (name, label) in member_names.into_iter().zip(labels) {
+        children.push(Lbl::Other(
+            "f".into(),
+            vec![Lbl::Lit(name), label.expect("a labeled field")],
+        ));
+    }
+    if let Some(base) = base {
+        children.push(Lbl::Other("b".into(), vec![base]));
+    }
+    if let Some(cell) = orders
+        && let Some(first) = struct_expr.fields.first()
+    {
+        cell.borrow_mut().insert(core::ptr::from_ref(first), order);
+    }
     (Lbl::Other("st".into(), children), sites)
+}
+
+/// In-place cycle rotation of `values` under the destination to source `order`.
+fn permute_values<T>(values: &mut [T], order: &[usize]) {
+    let count = order.len();
+    let mut settled = vec![false; count];
+    for (start, source) in order.iter().copied().enumerate() {
+        if settled[start] || source == start {
+            settled[start] = true;
+            continue;
+        }
+        let mut i = start;
+        let mut j = source;
+        while j != start {
+            values.swap(i, j);
+            settled[j] = true;
+            i = j;
+            j = order[i];
+        }
+        settled[start] = true;
+    }
 }
 
 /// The label of a `let` expression, its scrutinee labeled.
@@ -1644,8 +1894,9 @@ fn label_let_expr(
     let_expr: &syn::ExprLet,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (value, sites) = label_expr(renamer, env, &let_expr.expr, consumer, locals);
+    let (value, sites) = label_expr(renamer, env, &let_expr.expr, consumer, locals, orders);
     (Lbl::Other("le".into(), vec![value]), sites)
 }
 
@@ -1656,9 +1907,10 @@ fn label_assign(
     assign: &syn::ExprAssign,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (left, mut sites) = label_expr(renamer, env, &assign.left, consumer, locals);
-    let (right, r_sites) = label_expr(renamer, env, &assign.right, consumer, locals);
+    let (left, mut sites) = label_expr(renamer, env, &assign.left, consumer, locals, orders);
+    let (right, r_sites) = label_expr(renamer, env, &assign.right, consumer, locals, orders);
     sites.extend(r_sites);
     (Lbl::Other("as".into(), vec![left, right]), sites)
 }
@@ -1672,10 +1924,11 @@ fn label_optional_value(
     value: Option<&syn::Expr>,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     match value {
         Some(value) => {
-            let (label, sites) = label_expr(renamer, env, value, consumer, locals);
+            let (label, sites) = label_expr(renamer, env, value, consumer, locals, orders);
             (Lbl::Other(tag.into(), vec![label]), sites)
         }
         None => (Lbl::Other(tag.into(), Vec::new()), Vec::new()),
@@ -1689,8 +1942,9 @@ fn label_try(
     try_expr: &syn::ExprTry,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (label, sites) = label_expr(renamer, env, &try_expr.expr, consumer, locals);
+    let (label, sites) = label_expr(renamer, env, &try_expr.expr, consumer, locals, orders);
     (Lbl::Other("try".into(), vec![label]), sites)
 }
 
@@ -1702,8 +1956,9 @@ fn label_blk(
     block: &syn::Block,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (label, sites) = label_block(renamer, env, block, consumer, locals);
+    let (label, sites) = label_block(renamer, env, block, consumer, locals, orders);
     (Lbl::Other("blk".into(), vec![label]), sites)
 }
 
@@ -1714,8 +1969,9 @@ fn label_await(
     await_expr: &syn::ExprAwait,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (label, sites) = label_expr(renamer, env, &await_expr.base, consumer, locals);
+    let (label, sites) = label_expr(renamer, env, &await_expr.base, consumer, locals, orders);
     (Lbl::Other("aw".into(), vec![label]), sites)
 }
 
@@ -1726,8 +1982,9 @@ fn label_cast(
     cast: &syn::ExprCast,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (value, sites) = label_expr(renamer, env, &cast.expr, consumer, locals);
+    let (value, sites) = label_expr(renamer, env, &cast.expr, consumer, locals, orders);
     let ty = match &*cast.ty {
         syn::Type::Path(path) if path.qself.is_none() => {
             if path.path.segments.len() == 1 {
@@ -1750,8 +2007,9 @@ fn label_raw_addr(
     raw: &syn::ExprRawAddr,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
-    let (label, inner_sites) = label_expr(renamer, env, &raw.expr, consumer, locals);
+    let (label, inner_sites) = label_expr(renamer, env, &raw.expr, consumer, locals, orders);
     let sites = inner_sites
         .into_iter()
         .map(|site| Site {
@@ -1769,6 +2027,7 @@ fn macro_label(
     mac: &syn::Macro,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     let name = mac
         .path
@@ -1780,9 +2039,34 @@ fn macro_label(
     let mut children = Vec::new();
     let mut sites = Vec::new();
     for arg in &args {
-        let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals);
+        let (label, a_sites) = label_expr(renamer, env, arg, consumer, locals, orders);
         children.push(label);
         sites.extend(a_sites);
+    }
+    if let Some((position, _)) = crate::drift::format_operand(&mac.path)
+        && let Some(argument) = args.get(position)
+    {
+        if let syn::Expr::Lit(syn::ExprLit {
+            lit: syn::Lit::Str(lit),
+            ..
+        }) = argument
+        {
+            sites.extend(
+                format_refs(&lit.value(), &args)
+                    .into_iter()
+                    .filter_map(|name| {
+                        env.get(&name).map(|value| Site {
+                            port: value.port.clone(),
+                            ctx: Ctx::Value,
+                        })
+                    }),
+            );
+        } else {
+            sites.extend(env.values().map(|value| Site {
+                port: value.port.clone(),
+                ctx: Ctx::Value,
+            }));
+        }
     }
     (Lbl::Other(alloc::format!("m:{name}"), children), sites)
 }
@@ -1796,29 +2080,32 @@ fn label_block(
     block: &syn::Block,
     _consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     let mut inner = env.clone();
+    renamer.helper_import_env(block, &mut inner);
     let mut children = Vec::new();
     let mut sites = Vec::new();
     for (position, stmt) in block.stmts.iter().enumerate() {
-        let (label, stmt_sites) = statement_label(renamer, &inner, stmt, position, locals);
+        let (label, stmt_sites) = statement_label(renamer, &inner, stmt, position, locals, orders);
         sites.extend(stmt_sites);
-        if let syn::Stmt::Local(local) = stmt
-            && let Some(name) = local_binding_name(local)
-        {
+        if let syn::Stmt::Local(local) = stmt {
             let prim = if let_name(local).is_some() {
                 label.prim()
             } else {
                 None
             };
-            inner.insert(
-                name,
-                Value {
-                    port: Port::Local(*locals),
-                    prim,
-                },
-            );
-            *locals += 1;
+            for name in pat_names(&local.pat) {
+                inner.insert(
+                    name,
+                    Value {
+                        port: Port::Local(*locals),
+                        prim,
+                        helper: None,
+                    },
+                );
+                *locals += 1;
+            }
         }
         children.push(label);
     }
@@ -1832,15 +2119,16 @@ fn statement_label(
     stmt: &syn::Stmt,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     match stmt {
-        syn::Stmt::Expr(expr, _) => label_expr(renamer, env, expr, consumer, locals),
+        syn::Stmt::Expr(expr, _) => label_expr(renamer, env, expr, consumer, locals, orders),
         syn::Stmt::Macro(stmt_macro) => {
-            macro_label(renamer, env, &stmt_macro.mac, consumer, locals)
+            macro_label(renamer, env, &stmt_macro.mac, consumer, locals, orders)
         }
         syn::Stmt::Local(local) => match local.init.as_ref() {
             Some(init) if init.diverge.is_none() => {
-                label_expr(renamer, env, &init.expr, consumer, locals)
+                label_expr(renamer, env, &init.expr, consumer, locals, orders)
             }
             _ => (Lbl::Other("s".into(), Vec::new()), Vec::new()),
         },
@@ -1856,13 +2144,14 @@ fn label_cond(
     cond: &syn::Expr,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> (Lbl, Vec<Site>) {
     match cond {
         syn::Expr::Let(let_expr) => {
-            let (value, sites) = label_expr(renamer, env, &let_expr.expr, consumer, locals);
+            let (value, sites) = label_expr(renamer, env, &let_expr.expr, consumer, locals, orders);
             (Lbl::Other("lc".into(), vec![value]), sites)
         }
-        other => label_expr(renamer, env, other, consumer, locals),
+        other => label_expr(renamer, env, other, consumer, locals, orders),
     }
 }
 
@@ -1874,13 +2163,14 @@ fn let_producer(
     local: &syn::Local,
     consumer: usize,
     locals: &mut usize,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> Option<(String, Lbl, Vec<Site>)> {
     let name = let_name(local)?;
     let init = local.init.as_ref()?;
     if init.diverge.is_some() {
         return None;
     }
-    let (label, sites) = label_expr(renamer, env, &init.expr, consumer, locals);
+    let (label, sites) = label_expr(renamer, env, &init.expr, consumer, locals, orders);
     Some((name, label, sites))
 }
 
@@ -1890,22 +2180,28 @@ fn total_init(
     renamer: &Renamer,
     env: &BTreeMap<String, Value>,
     expr: &syn::Expr,
+    orders: Option<&RefCell<FieldOrders>>,
 ) -> Option<PrimTy> {
     let mut locals = 0usize;
-    let (label, _) = label_expr(renamer, env, expr, 0, &mut locals);
+    let (label, _) = label_expr(renamer, env, expr, 0, &mut locals, orders);
     label.prim()
 }
 
 /// Whether the tail root of `expr` is a clean read of proven values: a
 /// proven literal, a proven reference, or a total expression over them,
 /// a tuple of such.
-fn tail_root(renamer: &Renamer, env: &BTreeMap<String, Value>, expr: &syn::Expr) -> bool {
+fn tail_root(
+    renamer: &Renamer,
+    env: &BTreeMap<String, Value>,
+    expr: &syn::Expr,
+    orders: Option<&RefCell<FieldOrders>>,
+) -> bool {
     match peel_paren(expr) {
         syn::Expr::Tuple(tuple) => tuple
             .elems
             .iter()
-            .all(|element| tail_root(renamer, env, element)),
-        _ => total_init(renamer, env, expr).is_some(),
+            .all(|element| tail_root(renamer, env, element, orders)),
+        _ => total_init(renamer, env, expr, orders).is_some(),
     }
 }
 
@@ -1915,13 +2211,13 @@ type Color = u32;
 /// The complete structural signature a node refines over, its node
 /// references replaced by the previous round's colors.
 #[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct Sig {
+struct Sig<C> {
     /// The base operation, type and literal label, color-substituted.
     base: Lbl,
     /// The input neighbors' colors, in operand order.
     inputs: Vec<Color>,
     /// The full consumer descriptors, color-substituted, sorted.
-    consumers: Vec<Lbl>,
+    consumers: Vec<C>,
     /// The previous round's class color, to avoid merging.
     prev_color: Color,
 }
@@ -1971,12 +2267,19 @@ fn color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
                 .map(|definition| color_substitute(definition, colors))
                 .collect(),
         ),
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(color_substitute(callee, colors)),
+            args.iter()
+                .map(|arg| color_substitute(arg, colors))
+                .collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
 
 /// The palette assignment: the colors the distinct signatures sort to.
-fn assign_palette(sigs: &[Sig]) -> Vec<Color> {
+fn assign_palette<C: Ord>(sigs: &[Sig<C>]) -> Vec<Color> {
     let mut order: Vec<usize> = (0..sigs.len()).collect();
     order.sort_by(|&a, &b| sigs[a].cmp(&sigs[b]));
     let mut colors = vec![0u32; sigs.len()];
@@ -2018,6 +2321,13 @@ fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
                 .map(|child| future_rank_substitute(child, ranks))
                 .collect(),
         ),
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(future_rank_substitute(callee, ranks)),
+            args.iter()
+                .map(|arg| future_rank_substitute(arg, ranks))
+                .collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2049,6 +2359,13 @@ fn future_color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
                 .map(|child| future_color_substitute(child, colors))
                 .collect(),
         ),
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(future_color_substitute(callee, colors)),
+            args.iter()
+                .map(|arg| future_color_substitute(arg, colors))
+                .collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2064,6 +2381,12 @@ fn future_refs(lbl: &Lbl, visit: &mut impl FnMut(usize)) {
         Lbl::Flat(_, children, _) | Lbl::Other(_, children) => {
             for child in children {
                 future_refs(child, visit);
+            }
+        }
+        Lbl::Call(callee, args, _) => {
+            future_refs(callee, visit);
+            for arg in args {
+                future_refs(arg, visit);
             }
         }
         _ => {}
@@ -2218,6 +2541,11 @@ fn future_summary(lbl: &Lbl) -> Lbl {
         Lbl::Other(kind, children) => {
             Lbl::Other(kind.clone(), children.iter().map(future_summary).collect())
         }
+        Lbl::Call(callee, args, prim) => Lbl::Call(
+            Box::new(future_summary(callee)),
+            args.iter().map(future_summary).collect(),
+            *prim,
+        ),
         other => other.clone(),
     }
 }
@@ -2271,6 +2599,14 @@ fn find_future_tie(colors: &[Color]) -> Option<Vec<usize>> {
     groups.into_values().find(|members| members.len() >= 2)
 }
 
+fn spend_state(states: &mut usize) -> Option<()> {
+    *states += 1;
+    if *states > MAX_LABEL_STATES {
+        return None;
+    }
+    Some(())
+}
+
 /// Minimize complete future identities within the shared region budget.
 fn future_search(
     root: &Lbl,
@@ -2280,10 +2616,7 @@ fn future_search(
     states: &mut usize,
     depth: usize,
 ) -> Option<Lbl> {
-    *states += 1;
-    if *states > MAX_LABEL_STATES {
-        return None;
-    }
+    spend_state(states)?;
     let colors = refine_future(defs, root, seed, marks);
     if let Some(members) = find_future_tie(&colors) {
         let mut best: Option<Lbl> = None;
@@ -2312,6 +2645,57 @@ fn future_search(
     Some(Lbl::Graph(Box::new(root), definitions))
 }
 
+pub(crate) fn item_order(definitions: &[Lbl], root: &Lbl) -> Option<Vec<usize>> {
+    fn search(
+        definitions: &[Lbl],
+        root: &Lbl,
+        seed: &[usize],
+        marks: &mut [usize],
+        states: &mut usize,
+        depth: usize,
+    ) -> Option<(Lbl, Vec<usize>)> {
+        spend_state(states)?;
+        let colors = refine_future(definitions, root, seed, marks);
+        if let Some(members) = find_future_tie(&colors) {
+            let mut best: Option<(Lbl, Vec<usize>)> = None;
+            for member in members {
+                marks[member] = depth + 1;
+                let candidate = search(definitions, root, seed, marks, states, depth + 1);
+                marks[member] = 0;
+                let candidate = candidate?;
+                if best.as_ref().is_none_or(|winner| candidate.0 < winner.0) {
+                    best = Some(candidate);
+                }
+            }
+            return best;
+        }
+        let mut order: Vec<_> = (0..definitions.len()).collect();
+        order.sort_unstable_by_key(|&index| colors[index]);
+        let mut ranks = vec![0; definitions.len()];
+        for (position, &index) in order.iter().enumerate() {
+            ranks[index] = position;
+        }
+        let candidate = Lbl::Graph(
+            Box::new(future_rank_substitute(root, &ranks)),
+            order
+                .iter()
+                .map(|&index| future_rank_substitute(&definitions[index], &ranks))
+                .collect(),
+        );
+        Some((candidate, order))
+    }
+    let seed = vec![0; definitions.len()];
+    search(
+        definitions,
+        root,
+        &seed,
+        &mut vec![0; definitions.len()],
+        &mut 0,
+        0,
+    )
+    .map(|(_, order)| order)
+}
+
 /// Share the region budget across complete future projections.
 fn future_normalize(lbl: &Lbl, states: &mut usize) -> Option<Lbl> {
     match lbl {
@@ -2328,29 +2712,32 @@ fn future_normalize(lbl: &Lbl, states: &mut usize) -> Option<Lbl> {
 /// a size guard stops them. Per-state work, never a search state.
 fn refine_to_point(
     inits: &[Lbl],
-    nodes: &[usize],
     deps: &[Vec<usize>],
-    uses: &[Use],
+    uses: &Uses,
+    by_slot: &[Vec<usize>],
     n: usize,
 ) -> Vec<Color> {
+    let keys: Vec<_> = uses
+        .consumers
+        .iter()
+        .map(|consumer| (consumer.kind.to_string(), consumer.index.to_string()))
+        .collect();
     let mut colors = vec![0u32; n];
     let mut passes = 0;
     loop {
         let previous = colors.clone();
+        let summaries: Vec<_> = uses
+            .consumers
+            .iter()
+            .map(|consumer| future_summary(&color_substitute(&consumer.label, &previous)))
+            .collect();
         let mut sigs = Vec::with_capacity(n);
         for slot in 0..n {
-            let mut consumers: Vec<Lbl> = uses
+            let mut consumers: Vec<_> = by_slot[slot]
                 .iter()
-                .filter(|use_| use_.node == nodes[slot])
-                .map(|use_| {
-                    Lbl::Other(
-                        "k".into(),
-                        vec![
-                            Lbl::Lit(use_.kind.to_string()),
-                            Lbl::Lit(use_.index.to_string()),
-                            future_summary(&color_substitute(&use_.label, &previous)),
-                        ],
-                    )
+                .map(|&entry| {
+                    let id = uses.entries[entry].consumer.0;
+                    (keys[id].0.as_str(), keys[id].1.as_str(), &summaries[id])
                 })
                 .collect();
             consumers.sort();
@@ -2415,12 +2802,14 @@ impl RegionProjection<'_> {
             return Some(Lbl::Ref(Value {
                 port: Port::Node(slot),
                 prim: value.prim,
+                helper: None,
             }));
         }
         if let Some((region, slot)) = self.sealed[id] {
             return Some(Lbl::Ref(Value {
                 port: Port::Sealed(region, slot),
                 prim: value.prim,
+                helper: None,
             }));
         }
         let index = if let Some(&index) = self.future.get(&id) {
@@ -2437,6 +2826,10 @@ impl RegionProjection<'_> {
         Some(Lbl::Future(index, value.prim))
     }
 
+    fn labels(&mut self, labels: &[Lbl]) -> Option<Vec<Lbl>> {
+        labels.iter().map(|label| self.label(label)).collect()
+    }
+
     fn label(&mut self, lbl: &Lbl) -> Option<Lbl> {
         Some(match lbl {
             Lbl::Ref(value) => match value.port {
@@ -2451,20 +2844,14 @@ impl RegionProjection<'_> {
                 *prim,
             ),
             Lbl::Flat(op, leaves, prim) => {
-                let mut leaves = leaves
-                    .iter()
-                    .map(|leaf| self.label(leaf))
-                    .collect::<Option<Vec<_>>>()?;
+                let mut leaves = self.labels(leaves)?;
                 leaves.sort();
                 Lbl::Flat(*op, leaves, *prim)
             }
-            Lbl::Other(kind, children) => Lbl::Other(
-                kind.clone(),
-                children
-                    .iter()
-                    .map(|child| self.label(child))
-                    .collect::<Option<Vec<_>>>()?,
-            ),
+            Lbl::Other(kind, children) => Lbl::Other(kind.clone(), self.labels(children)?),
+            Lbl::Call(callee, args, prim) => {
+                Lbl::Call(Box::new(self.label(callee)?), self.labels(args)?, *prim)
+            }
             other => other.clone(),
         })
     }
@@ -2478,7 +2865,7 @@ fn find_branchable_tie(
     colors: &[Color],
     inits: &[Lbl],
     deps: &[Vec<usize>],
-    uses: &[Use],
+    uses: &Uses,
     nodes: &[usize],
 ) -> Option<Vec<usize>> {
     let mut groups: BTreeMap<Color, Vec<usize>> = BTreeMap::new();
@@ -2492,7 +2879,7 @@ fn find_branchable_tie(
         let twins = members.iter().all(|&slot| {
             inits[slot] == inits[members[0]]
                 && deps[slot] == deps[members[0]]
-                && !uses.iter().any(|use_| use_.node == nodes[slot])
+                && !uses.entries.iter().any(|use_| use_.node == nodes[slot])
                 && !deps.iter().any(|readers| readers.contains(&slot))
         });
         if !twins {
@@ -2505,16 +2892,27 @@ fn find_branchable_tie(
 /// A complete region candidate preserves joint future sharing.
 struct Candidate {
     declarations: Vec<Lbl>,
-    consumers: Vec<(u8, usize, Color, Lbl)>,
+    consumers: Vec<(Color, ConsumerId)>,
+    consumer_labels: Vec<Consumer>,
     context: Lbl,
     order: Vec<usize>,
+}
+
+impl Candidate {
+    fn consumer_keys(&self) -> impl Iterator<Item = (u8, usize, Color, &Lbl)> {
+        self.consumers.iter().map(|&(position, id)| {
+            let consumer = &self.consumer_labels[id.0];
+            (consumer.kind, consumer.index, position, &consumer.label)
+        })
+    }
 }
 
 struct RegionLabels<'a> {
     base: &'a [Lbl],
     nodes: &'a [usize],
     deps: &'a [Vec<usize>],
-    uses: &'a [Use],
+    uses: &'a Uses,
+    by_slot: &'a [Vec<usize>],
     context: &'a Lbl,
 }
 
@@ -2544,22 +2942,46 @@ fn complete_candidate(
         .enumerate()
         .map(|(slot, id)| (id, slot))
         .collect();
-    let mut consumers: Vec<_> = uses
-        .iter()
-        .map(|use_| {
-            Some((
-                use_.kind,
-                use_.index,
-                positions[slots[&use_.node]],
-                future_normalize(&color_substitute(&use_.label, &positions), states)?,
-            ))
-        })
-        .collect::<Option<Vec<_>>>()?;
-    consumers.sort();
+    let mut cache = vec![None; uses.consumers.len()];
+    let mut consumer_labels = Vec::new();
+    let mut consumers = Vec::with_capacity(uses.entries.len());
+    for use_ in &uses.entries {
+        let id = if let Some((id, cost)) = cache[use_.consumer.0] {
+            // Each occurrence spends its complete search-state cost.
+            for _ in 0..cost {
+                spend_state(states)?;
+            }
+            id
+        } else {
+            let original = &uses.consumers[use_.consumer.0];
+            let before = *states;
+            let label = future_normalize(&color_substitute(&original.label, &positions), states)?;
+            let id = ConsumerId(consumer_labels.len());
+            consumer_labels.push(Consumer {
+                kind: original.kind,
+                index: original.index,
+                label,
+            });
+            cache[use_.consumer.0] = Some((id, *states - before));
+            id
+        };
+        consumers.push((positions[slots[&use_.node]], id));
+    }
+    consumers.sort_by(|&(position, id), &(other_position, other_id)| {
+        let consumer = &consumer_labels[id.0];
+        let other = &consumer_labels[other_id.0];
+        (consumer.kind, consumer.index, position, &consumer.label).cmp(&(
+            other.kind,
+            other.index,
+            other_position,
+            &other.label,
+        ))
+    });
     let context = future_normalize(&color_substitute(context, &positions), states)?;
     Some(Candidate {
         declarations,
         consumers,
+        consumer_labels,
         context,
         order,
     })
@@ -2578,11 +3000,8 @@ fn label_region_search(
         uses,
         ..
     } = graph;
-    *states += 1;
-    if *states > MAX_LABEL_STATES {
-        return None;
-    }
-    let colors = refine_to_point(inits, nodes, deps, uses, nodes.len());
+    spend_state(states)?;
+    let colors = refine_to_point(inits, deps, uses, graph.by_slot, nodes.len());
     if let Some(members) = find_branchable_tie(&colors, inits, deps, uses, nodes) {
         let mut best: Option<Candidate> = None;
         for member in members {
@@ -2593,11 +3012,12 @@ fn label_region_search(
             );
             let candidate = label_region_search(graph, &marked, states, depth + 1)?;
             if best.as_ref().is_none_or(|winner| {
-                (
-                    &candidate.declarations,
-                    &candidate.consumers,
-                    &candidate.context,
-                ) < (&winner.declarations, &winner.consumers, &winner.context)
+                candidate
+                    .declarations
+                    .cmp(&winner.declarations)
+                    .then_with(|| candidate.consumer_keys().cmp(winner.consumer_keys()))
+                    .then_with(|| candidate.context.cmp(&winner.context))
+                    .is_lt()
             }) {
                 best = Some(candidate);
             }
@@ -2647,6 +3067,11 @@ fn label_affected(lbl: &Lbl, affected: &[bool]) -> bool {
         Lbl::Flat(_, children, _) | Lbl::Other(_, children) => {
             children.iter().any(|child| label_affected(child, affected))
         }
+        Lbl::Call(callee, args, _) => {
+            label_affected(callee, affected) || {
+                args.iter().any(|arg| label_affected(arg, affected))
+            }
+        }
         _ => false,
     }
 }
@@ -2654,7 +3079,7 @@ fn label_affected(lbl: &Lbl, affected: &[bool]) -> bool {
 fn region_context(
     slots: &BTreeMap<usize, usize>,
     producers: &[Producer],
-    uses: &[Use],
+    uses: &Uses,
     sealed: &[Option<(usize, usize)>],
 ) -> Option<Lbl> {
     let mut affected = vec![false; producers.len()];
@@ -2665,13 +3090,15 @@ fn region_context(
             descendants.push(Lbl::Ref(Value {
                 port: Port::Node(index),
                 prim: Some(producer.prim),
+                helper: None,
             }));
         }
     }
     let mut roots: Vec<_> = uses
+        .consumers
         .iter()
-        .filter(|use_| use_.kind != USE_DOWN && label_affected(&use_.label, &affected))
-        .map(|use_| (use_.kind, use_.index, &use_.label))
+        .filter(|consumer| consumer.kind != USE_DOWN && label_affected(&consumer.label, &affected))
+        .map(|consumer| (consumer.kind, consumer.index, &consumer.label))
         .collect();
     roots.sort();
     roots.dedup();
@@ -2704,7 +3131,7 @@ fn region_context(
 fn schedule_region(
     region: &Region,
     producers: &[Producer],
-    uses: &[Use],
+    uses: &Uses,
     sealed: &[Option<(usize, usize)>],
 ) -> Option<Vec<usize>> {
     let nodes = &region.producers;
@@ -2720,8 +3147,17 @@ fn schedule_region(
         .all(|(slot, &id)| producers[id].deps.contains(&(slot - 1)))
     {
         // Every predecessor is required, so only source order is legal.
-        for use_ in uses.iter().filter(|use_| slots.contains_key(&use_.node)) {
-            region_label(&use_.label, &slots, producers, sealed)?;
+        for use_ in uses
+            .entries
+            .iter()
+            .filter(|use_| slots.contains_key(&use_.node))
+        {
+            region_label(
+                &uses.consumers[use_.consumer.0].label,
+                &slots,
+                producers,
+                sealed,
+            )?;
         }
         return Some((0..n).collect());
     }
@@ -2730,57 +3166,43 @@ fn schedule_region(
         .map(|&id| region_label(&producers[id].init, &slots, producers, sealed))
         .collect::<Option<_>>()?;
     let deps: Vec<Vec<usize>> = nodes.iter().map(|&id| producers[id].deps.clone()).collect();
-    let region_uses: Vec<Use> = uses
+    let mut region_uses = Uses::default();
+    let mut projected = vec![None; uses.consumers.len()];
+    let mut by_slot = vec![Vec::new(); n];
+    for use_ in uses
+        .entries
         .iter()
         .filter(|use_| slots.contains_key(&use_.node))
-        .map(|use_| {
-            Some(Use {
-                node: use_.node,
-                kind: use_.kind,
-                index: use_.index,
-                label: region_label(&use_.label, &slots, producers, sealed)?,
-            })
-        })
-        .collect::<Option<_>>()?;
+    {
+        let consumer = if let Some(id) = projected[use_.consumer.0] {
+            id
+        } else {
+            let original = &uses.consumers[use_.consumer.0];
+            let label = region_label(&original.label, &slots, producers, sealed)?;
+            let id = region_uses.insert(original.kind, original.index, label);
+            projected[use_.consumer.0] = Some(id);
+            id
+        };
+        by_slot[slots[&use_.node]].push(region_uses.entries.len());
+        region_uses.entries.push(Use {
+            node: use_.node,
+            consumer,
+        });
+    }
     let context = region_context(&slots, producers, uses, sealed)?;
     let graph = RegionLabels {
         base: &inits,
         nodes,
         deps: &deps,
         uses: &region_uses,
+        by_slot: &by_slot,
         context: &context,
     };
     let mut states = 0usize;
     label_region_search(&graph, &inits, &mut states, 0).map(|candidate| candidate.order)
 }
 
-/// Record the producer uses the sites carry on `kind` with `index`, and
-/// dead-mark the region of a producer whose storage the sites observe.
-fn note_sites(
-    sites: &[Site],
-    uses: &mut Vec<Use>,
-    kind: u8,
-    index: usize,
-    label: &Lbl,
-    regions: &mut [Region],
-    producers: &[Producer],
-) {
-    for site in sites {
-        if let Port::Node(node) = &site.port {
-            uses.push(Use {
-                node: *node,
-                kind,
-                index,
-                label: label.clone(),
-            });
-            if site.ctx == Ctx::Storage {
-                regions[producers[*node].region].dead = true;
-            }
-        }
-    }
-}
-
-fn record_all_opaque(renamer: &mut Renamer, block: &mut syn::Block) {
+pub(crate) fn record_all_opaque(renamer: &mut Renamer, block: &mut syn::Block) {
     renamer.facts.blocks.insert(
         core::ptr::from_ref(block),
         BlockProof {
@@ -2790,8 +3212,10 @@ fn record_all_opaque(renamer: &mut Renamer, block: &mut syn::Block) {
         },
     );
     renamer.push_facts(BlockFacts {
+        field_orders: BTreeMap::new(),
         plans: BTreeMap::new(),
         permutation: Vec::new(),
+        original: None,
     });
 }
 
@@ -2799,7 +3223,9 @@ struct BlockScan {
     env: BTreeMap<String, Value>,
     producers: Vec<Producer>,
     regions: Vec<Region>,
-    uses: Vec<Use>,
+    uses: Uses,
+    observed: BTreeSet<Port>,
+    forbidden: BTreeSet<Port>,
     tags: Vec<u8>,
     tail_types: Vec<Option<PrimTy>>,
     locals: usize,
@@ -2807,6 +3233,7 @@ struct BlockScan {
     tail_pending: bool,
     open: Option<usize>,
     over_budget: bool,
+    field_orders: RefCell<FieldOrders>,
 }
 
 impl BlockScan {
@@ -2815,7 +3242,9 @@ impl BlockScan {
             env,
             producers: Vec::new(),
             regions: Vec::new(),
-            uses: Vec::new(),
+            uses: Uses::default(),
+            observed: BTreeSet::new(),
+            forbidden: BTreeSet::new(),
             tags: vec![OPAQUE; count],
             tail_types: Vec::new(),
             locals,
@@ -2823,13 +3252,21 @@ impl BlockScan {
             tail_pending: false,
             open: None,
             over_budget: false,
+            field_orders: RefCell::new(BTreeMap::new()),
         }
     }
 
-    fn note(&mut self, sites: &[Site], kind: u8, index: usize, label: &Lbl) {
-        note_sites(
+    fn note(&mut self, sites: &[Site], kind: u8, index: usize, label: Lbl) {
+        for site in sites {
+            if site.ctx == Ctx::Storage {
+                self.observed.insert(site.port.clone());
+            }
+            if site.ctx == Ctx::Storage || !matches!(kind, USE_DOWN | USE_TAIL) {
+                self.forbidden.insert(site.port.clone());
+            }
+        }
+        self.uses.note(
             sites,
-            &mut self.uses,
             kind,
             index,
             label,
@@ -2849,15 +3286,22 @@ impl BlockScan {
     fn statement(&mut self, renamer: &Renamer, index: usize, stmt: &syn::Stmt, last: bool) {
         if last
             && let syn::Stmt::Expr(expr, None) = stmt
-            && (self.unreachable || tail_root(renamer, &self.env, expr))
+            && (self.unreachable || tail_root(renamer, &self.env, expr, Some(&self.field_orders)))
         {
             self.tail_pending = true;
             return;
         }
         if self.unreachable {
-            let (label, sites) = statement_label(renamer, &self.env, stmt, index, &mut self.locals);
+            let (label, sites) = statement_label(
+                renamer,
+                &self.env,
+                stmt,
+                index,
+                &mut self.locals,
+                Some(&self.field_orders),
+            );
             self.budget(&label);
-            self.note(&sites, USE_UNREACHABLE, index, &label);
+            self.note(&sites, USE_UNREACHABLE, index, label);
             return;
         }
         if let syn::Stmt::Local(local) = stmt {
@@ -2868,18 +3312,30 @@ impl BlockScan {
     }
 
     fn local(&mut self, renamer: &Renamer, index: usize, stmt: &syn::Stmt, local: &syn::Local) {
-        if let Some((name, init, sites)) =
-            let_producer(renamer, &self.env, local, index, &mut self.locals)
-            && init.prim().is_some()
+        if let Some((name, init, sites)) = let_producer(
+            renamer,
+            &self.env,
+            local,
+            index,
+            &mut self.locals,
+            Some(&self.field_orders),
+        ) && init.prim().is_some()
         {
             self.budget(&init);
             self.producer(index, name, init, &sites);
             return;
         }
-        let (label, sites) = statement_label(renamer, &self.env, stmt, index, &mut self.locals);
+        let (label, sites) = statement_label(
+            renamer,
+            &self.env,
+            stmt,
+            index,
+            &mut self.locals,
+            Some(&self.field_orders),
+        );
         self.budget(&label);
-        self.note(&sites, USE_OPAQUE, index, &label);
-        if let Some(name) = local_binding_name(local) {
+        self.note(&sites, USE_OPAQUE, index, label);
+        for name in pat_names(&local.pat) {
             self.invalidate(name);
         }
         self.open = None;
@@ -2901,6 +3357,7 @@ impl BlockScan {
                 Value {
                     port: Port::Local(self.locals),
                     prim: init.prim(),
+                    helper: None,
                 },
             );
             self.locals += 1;
@@ -2908,21 +3365,19 @@ impl BlockScan {
         }
         let slot = self.regions[region].producers.len();
         let mut deps = Vec::new();
+        let mut consumer = None;
         for site in sites {
             if let Port::Node(id) = &site.port {
-                let producer = &self.producers[*id];
-                if producer.region == region {
-                    deps.push(producer.slot);
+                let producer_region = self.producers[*id].region;
+                if producer_region == region {
+                    deps.push(self.producers[*id].slot);
                 } else {
-                    self.uses.push(Use {
+                    let consumer = *consumer
+                        .get_or_insert_with(|| self.uses.insert(USE_DOWN, 0, init.clone()));
+                    self.uses.entries.push(Use {
                         node: *id,
-                        kind: USE_DOWN,
-                        index: 0,
-                        label: init.clone(),
+                        consumer,
                     });
-                }
-                if site.ctx == Ctx::Storage {
-                    self.regions[producer.region].dead = true;
                 }
             }
         }
@@ -2945,34 +3400,44 @@ impl BlockScan {
             Value {
                 port: Port::Node(id),
                 prim: Some(prim),
+                helper: None,
             },
         );
     }
 
     fn other(&mut self, renamer: &Renamer, index: usize, stmt: &syn::Stmt) {
         let kind = stmt_kind(renamer, stmt);
-        let (label, sites) = statement_label(renamer, &self.env, stmt, index, &mut self.locals);
+        let (label, sites) = statement_label(
+            renamer,
+            &self.env,
+            stmt,
+            index,
+            &mut self.locals,
+            Some(&self.field_orders),
+        );
         self.budget(&label);
         match kind {
             StmtKind::Barrier => {
                 self.tags[index] = OBSERVATION;
                 self.captures(index, stmt, &label);
-                self.note(&sites, USE_OBSERVED, index, &label);
+                self.note(&sites, USE_OBSERVED, index, label);
             }
             StmtKind::Boundary(definite) => {
                 self.tags[index] = BOUNDARY;
-                self.note(&sites, USE_BOUNDARY, index, &label);
+                self.note(&sites, USE_BOUNDARY, index, label);
                 self.open = None;
                 self.unreachable = definite;
                 return;
             }
-            StmtKind::Plain => self.note(&sites, USE_OPAQUE, index, &label),
+            StmtKind::Plain => self.note(&sites, USE_OPAQUE, index, label),
         }
         if let Some(target) = assign_target(stmt) {
-            if let Some(value) = self.env.get(&target)
-                && let Port::Node(id) = &value.port
-            {
-                self.regions[self.producers[*id].region].dead = true;
+            if let Some(value) = self.env.get(&target) {
+                self.observed.insert(value.port.clone());
+                self.forbidden.insert(value.port.clone());
+                if let Port::Node(id) = &value.port {
+                    self.regions[self.producers[*id].region].dead = true;
+                }
             }
             self.invalidate(target);
         }
@@ -2985,6 +3450,7 @@ impl BlockScan {
             Value {
                 port: Port::Local(self.locals),
                 prim: None,
+                helper: None,
             },
         );
         self.locals += 1;
@@ -3003,18 +3469,28 @@ impl BlockScan {
             return;
         };
         for (position, capture) in format_refs(&lit.value(), &args).into_iter().enumerate() {
-            if let Some(value) = self.env.get(&capture)
-                && let Port::Node(node) = &value.port
-            {
-                self.uses.push(Use {
-                    node: *node,
-                    kind: USE_CAPTURE,
-                    index,
-                    label: Lbl::Other(
-                        "capture".into(),
-                        vec![Lbl::Int(position as u128, None), label.clone()],
-                    ),
-                });
+            if let Some(value) = self.env.get(&capture) {
+                self.forbidden.insert(value.port.clone());
+                if let Port::Node(node) = &value.port {
+                    let consumer = self.uses.insert(
+                        USE_CAPTURE,
+                        index,
+                        Lbl::Other(
+                            "capture".into(),
+                            vec![
+                                Lbl::Int(
+                                    u128::try_from(position).expect("a capture position fits u128"),
+                                    None,
+                                ),
+                                label.clone(),
+                            ],
+                        ),
+                    );
+                    self.uses.entries.push(Use {
+                        node: *node,
+                        consumer,
+                    });
+                }
             }
         }
     }
@@ -3032,9 +3508,16 @@ impl BlockScan {
             .expect("a pending tail has a statement role") =
             if self.unreachable { UNREACHABLE } else { TAIL };
         if self.unreachable {
-            let (label, sites) = label_expr(renamer, &self.env, expr, 0, &mut self.locals);
+            let (label, sites) = label_expr(
+                renamer,
+                &self.env,
+                expr,
+                0,
+                &mut self.locals,
+                Some(&self.field_orders),
+            );
             self.budget(&label);
-            self.note(&sites, USE_UNREACHABLE, 0, &label);
+            self.note(&sites, USE_UNREACHABLE, 0, label);
             return;
         }
         if let syn::Expr::Tuple(tuple) = peel_paren(expr) {
@@ -3047,10 +3530,17 @@ impl BlockScan {
     }
 
     fn tail_element(&mut self, renamer: &Renamer, expr: &syn::Expr, position: usize) {
-        let (label, sites) = label_expr(renamer, &self.env, expr, position, &mut self.locals);
+        let (label, sites) = label_expr(
+            renamer,
+            &self.env,
+            expr,
+            position,
+            &mut self.locals,
+            Some(&self.field_orders),
+        );
         self.budget(&label);
-        self.note(&sites, USE_TAIL, position, &label);
         self.tail_types.push(label.prim());
+        self.note(&sites, USE_TAIL, position, label);
     }
 
     fn schedule(&mut self, region_seq: &[usize]) -> Vec<Vec<usize>> {
@@ -3120,7 +3610,150 @@ impl BlockScan {
     }
 }
 
+struct HelperCallScan<'a, 'env> {
+    renamer: &'a Renamer<'env>,
+    env: &'a BTreeMap<String, Value>,
+    shadows: Vec<BTreeMap<String, Option<crate::scope::HelperId>>>,
+    roots: BTreeSet<crate::scope::HelperId>,
+}
+
+impl<'ast> Visit<'ast> for HelperCallScan<'_, '_> {
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        let mut bindings = BTreeMap::new();
+        for stmt in &block.stmts {
+            if let syn::Stmt::Item(item) = stmt
+                && let Some((namespace, ident)) = crate::alpha::item_binding(item)
+            {
+                let helper = match item {
+                    syn::Item::Fn(function) => self.renamer.helper_declaration(&function.block),
+                    syn::Item::Struct(item) if !matches!(item.fields, syn::Fields::Named(_)) => {
+                        None
+                    }
+                    _ if namespace == Ns::Value => None,
+                    _ => continue,
+                };
+                bindings.insert(crate::scope::ident_name(ident), helper);
+            }
+        }
+        self.shadows.push(bindings);
+        for stmt in &block.stmts {
+            self.visit_stmt(stmt);
+        }
+        self.shadows.pop();
+    }
+
+    fn visit_local(&mut self, local: &'ast syn::Local) {
+        if let Some(init) = &local.init {
+            self.visit_expr(&init.expr);
+            if let Some((_, otherwise)) = &init.diverge {
+                self.visit_expr(otherwise);
+            }
+        }
+        self.visit_pat(&local.pat);
+    }
+
+    fn visit_pat_ident(&mut self, pattern: &'ast syn::PatIdent) {
+        self.shadows
+            .last_mut()
+            .expect("caller shadow frame")
+            .insert(crate::scope::ident_name(&pattern.ident), None);
+        syn::visit::visit_pat_ident(self, pattern);
+    }
+
+    fn visit_item(&mut self, _: &'ast syn::Item) {}
+
+    fn visit_expr_closure(&mut self, closure: &'ast syn::ExprClosure) {
+        self.shadows.push(BTreeMap::new());
+        for input in &closure.inputs {
+            self.visit_pat(input);
+        }
+        self.visit_expr(&closure.body);
+        self.shadows.pop();
+    }
+
+    fn visit_arm(&mut self, arm: &'ast syn::Arm) {
+        self.shadows.push(BTreeMap::new());
+        self.visit_pat(&arm.pat);
+        self.visit_expr(&arm.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr_for_loop(&mut self, for_loop: &'ast syn::ExprForLoop) {
+        self.visit_expr(&for_loop.expr);
+        self.shadows.push(BTreeMap::new());
+        self.visit_pat(&for_loop.pat);
+        self.visit_block(&for_loop.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr_if(&mut self, expr: &'ast syn::ExprIf) {
+        self.shadows.push(BTreeMap::new());
+        self.visit_expr(&expr.cond);
+        self.visit_block(&expr.then_branch);
+        self.shadows.pop();
+        if let Some((_, otherwise)) = &expr.else_branch {
+            self.visit_expr(otherwise);
+        }
+    }
+
+    fn visit_expr_while(&mut self, expr: &'ast syn::ExprWhile) {
+        self.shadows.push(BTreeMap::new());
+        self.visit_expr(&expr.cond);
+        self.visit_block(&expr.body);
+        self.shadows.pop();
+    }
+
+    fn visit_expr_let(&mut self, expr: &'ast syn::ExprLet) {
+        self.visit_expr(&expr.expr);
+        self.visit_pat(&expr.pat);
+    }
+
+    fn visit_expr(&mut self, expr: &'ast syn::Expr) {
+        if let syn::Expr::Call(call) = expr
+            && let syn::Expr::Path(path) = call.func.as_ref()
+            && path.qself.is_none()
+        {
+            let helper = if path.path.leading_colon.is_none() && path.path.segments.len() == 1 {
+                let name = crate::scope::ident_name(&path.path.segments[0].ident);
+                self.shadows
+                    .iter()
+                    .rev()
+                    .find_map(|scope| scope.get(&name))
+                    .copied()
+                    .unwrap_or_else(|| self.renamer.helper_id(self.env, &path.path))
+            } else {
+                self.renamer.helper_id(self.env, &path.path)
+            };
+            if let Some(helper) = helper
+                && self.renamer.helper_table.has_domain(helper)
+            {
+                self.roots.insert(helper);
+            }
+        }
+        syn::visit::visit_expr(self, expr);
+    }
+}
+
+fn called_helper_roots(
+    renamer: &Renamer,
+    env: &BTreeMap<String, Value>,
+    block: &syn::Block,
+) -> BTreeSet<crate::scope::HelperId> {
+    let mut scan = HelperCallScan {
+        renamer,
+        env,
+        shadows: Vec::new(),
+        roots: BTreeSet::new(),
+    };
+    scan.visit_block(block);
+    scan.roots
+}
+
 /// Resolve original statements and plan delayed region permutations.
+#[expect(
+    clippy::too_many_lines,
+    reason = "the complete region proof and its atomic fallbacks stay together"
+)]
 pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
     let (frozen, mut seq, locals) = {
         let scope = renamer.scopes.last_mut().expect("a fn scope");
@@ -3143,12 +3776,29 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
     }
     let mut env = BTreeMap::new();
     renamer.frame_env(&mut env);
+    renamer.helper_import_env(block, &mut env);
+    let roots = called_helper_roots(renamer, &env, block);
+    if !roots.is_empty() && renamer.helper_closure_sum(&roots) > MAX_REGION_NODES {
+        record_all_opaque(renamer, block);
+        return;
+    }
+    let original = match values::normalize(renamer, block) {
+        values::Outcome::Unchanged => None,
+        values::Outcome::Rewritten(original) => Some(original),
+        values::Outcome::Exhausted => {
+            record_all_opaque(renamer, block);
+            return;
+        }
+    };
     let mut scan = BlockScan::new(env, locals, block.stmts.len());
     for (index, stmt) in block.stmts.iter().enumerate() {
         scan.statement(renamer, index, stmt, index + 1 == block.stmts.len());
     }
     scan.finish_tail(renamer, block);
     if scan.over_budget {
+        if let Some(original) = original {
+            *block = original;
+        }
         record_all_opaque(renamer, block);
         let scope = renamer.scopes.last_mut().expect("a fn scope");
         scope.seq = seq;
@@ -3162,7 +3812,16 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
             current
         })
         .collect();
+    let frozen = original
+        .as_ref()
+        .map(|_| scan.regions.iter().filter(|region| region.dead).count());
     let orders = scan.schedule(&region_seq);
+    if frozen.is_some_and(|count| count != scan.regions.iter().filter(|region| region.dead).count())
+    {
+        *block = original.expect("a rewritten block retains its original");
+        record_all_opaque(renamer, block);
+        return;
+    }
     let permutation = scan.permutation(&orders, block.stmts.len());
     let plans = scan.binding_plans(block, &permutation, &region_seq);
     let mut types = vec![None; block.stmts.len()];
@@ -3176,6 +3835,17 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
     let scope = renamer.scopes.last_mut().expect("a fn scope");
     scope.seq = seq;
     scope.next_local = scan.locals;
+    scope.observed.extend(
+        scan.observed
+            .into_iter()
+            .filter(|port| !matches!(port, Port::Node(_))),
+    );
+    scope.observed.extend(
+        plans
+            .values()
+            .filter(|plan| !plan.active)
+            .map(|plan| plan.port.clone()),
+    );
     renamer.facts.blocks.insert(
         core::ptr::from_ref(block),
         BlockProof {
@@ -3184,5 +3854,10 @@ pub(crate) fn analyze(renamer: &mut Renamer, block: &mut syn::Block) {
             tail_types: scan.tail_types,
         },
     );
-    renamer.push_facts(BlockFacts { plans, permutation });
+    renamer.push_facts(BlockFacts {
+        field_orders: scan.field_orders.into_inner(),
+        plans,
+        permutation,
+        original,
+    });
 }

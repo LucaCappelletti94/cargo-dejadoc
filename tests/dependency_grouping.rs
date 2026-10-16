@@ -150,6 +150,7 @@ fn dependency_function_groups_respect_original_module_scopes() {
         files: vec![SourceFile {
             path: "src/lib.rs".to_owned(),
             segments: Vec::new(),
+            cfg: Vec::new(),
             parsed: syn::parse_file(text).unwrap(),
             text: text.to_owned(),
             rustdoc: true,

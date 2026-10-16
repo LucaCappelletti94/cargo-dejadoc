@@ -175,6 +175,7 @@ mod tests {
             files: vec![SourceFile {
                 path: "src/lib.rs".into(),
                 segments: vec![],
+                cfg: vec![],
                 parsed: syn::parse_file(code).unwrap(),
                 text: code.to_string(),
                 rustdoc: true,
@@ -281,6 +282,7 @@ mod tests {
         let file = SourceFile {
             path: "src/shared.rs".into(),
             segments: vec![],
+            cfg: vec![],
             parsed: syn::parse_file(code).unwrap(),
             text: code.into(),
             rustdoc: true,
@@ -460,6 +462,7 @@ mod tests {
             files: vec![SourceFile {
                 path: "src/lib.rs".into(),
                 segments: vec![],
+                cfg: vec![],
                 parsed,
                 text: code.into(),
                 rustdoc: true,

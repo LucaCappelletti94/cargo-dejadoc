@@ -20,6 +20,7 @@ fn file(path: &str, segments: &[&str], code: &str) -> SourceFile {
             .iter()
             .map(|segment| (*segment).to_owned())
             .collect(),
+        cfg: Vec::new(),
         parsed: syn::parse_str(code).unwrap(),
         text: code.to_owned(),
         rustdoc: true,

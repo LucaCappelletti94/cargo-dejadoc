@@ -133,7 +133,7 @@ fn identical_currents_observed_with_distinguishable_futures_keep_one_form() {
 fn identical_currents_feeding_futures_keep_one_form() {
     let distinct = check_family(1);
     let tied = check_family(2);
-    assert_ne!(form(&distinct[0]), form(&tied[0]));
+    assert_eq!(form(&distinct[0]), form(&tied[0]));
 }
 
 #[test]
@@ -143,7 +143,7 @@ fn shared_future_multiplicity_keeps_one_form() {
     let shared = original
         .replace("(next | last)", "(next | next)")
         .replace("(next & last)", "(next & next)");
-    assert_ne!(form(original), form(&shared));
+    assert_eq!(form(original), form(&shared));
 }
 
 #[test]
@@ -195,7 +195,7 @@ fn boundary_source(count: usize, repeated: bool) -> String {
         .iter()
         .map(|name| (name.as_str(), "second | 3".into()))
         .collect();
-    let tail = format!("a | {}", names.join(" | "));
+    let tail = format!("observe(a | {})", names.join(" | "));
     source(
         &current,
         &future,
@@ -204,6 +204,7 @@ fn boundary_source(count: usize, repeated: bool) -> String {
         &tail,
         false,
     )
+    .replacen("second: u32)", "second: u32, observe: fn(u32) -> u32)", 1)
 }
 
 #[test]

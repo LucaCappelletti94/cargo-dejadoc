@@ -312,6 +312,9 @@ pub struct SourceFile {
     pub path: String,
     /// Module-path segments from the target root, empty for the root file.
     pub segments: Vec<String>,
+    /// The printed `cfg` attributes of the `mod` declarations and enclosing inline modules
+    /// from the target root to this file, outermost first, empty for the root file.
+    pub cfg: Vec<String>,
     /// The parsed file.
     pub parsed: syn::File,
     /// The file's source text.
@@ -658,30 +661,56 @@ fn checked_attributes(info: &[String]) -> Vec<&str> {
 }
 
 /// The function count, distinct forms and groups, each function canonicalized as a one-item file.
+/// Functions hashing alike are split by owner role key when one owner has methods under two
+/// role keys among them, so methods of one owner using different parameters stay apart.
 fn group_functions(
     sites: impl Iterator<Item = functions::FnSite>,
     threshold: usize,
     min_tokens: usize,
 ) -> (usize, usize, Vec<Group>) {
     let mut total = 0;
-    let entries = sites
-        .inspect(|_| total += 1)
-        .filter(|f| !f.site.allow)
-        .map(|f| {
-            let tokens = f.form.body_units();
-            let mut hasher = blake3::Hasher::new();
-            hasher.update(&[FUNCTION_DOMAIN]);
-            let length = u64::try_from(f.scope.len()).expect("the scope length fits u64");
-            hasher.update(&length.to_be_bytes());
-            hasher.update(f.scope.as_bytes());
-            hasher.update(f.form.key().as_bytes());
-            let hash = hasher.finalize().to_hex().to_string();
-            (hash, false, tokens, (f.site, f.context))
-        });
+    let mut by_hash: BTreeMap<String, Vec<functions::FnSite>> = BTreeMap::new();
+    for f in sites.inspect(|_| total += 1).filter(|f| !f.site.allow) {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(&[FUNCTION_DOMAIN]);
+        let length = u64::try_from(f.scope.len()).expect("the scope length fits u64");
+        hasher.update(&length.to_be_bytes());
+        hasher.update(f.scope.as_bytes());
+        hasher.update(f.form.key().as_bytes());
+        by_hash
+            .entry(hasher.finalize().to_hex().to_string())
+            .or_default()
+            .push(f);
+    }
+    let entries = by_hash.into_iter().flat_map(|(hash, members)| {
+        let split = owner_roles_conflict(&members);
+        members.into_iter().map(move |f| {
+            let hash = if split {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update(hash.as_bytes());
+                hasher.update(f.form.owner_role_key().unwrap_or_default().as_bytes());
+                hasher.finalize().to_hex().to_string()
+            } else {
+                hash.clone()
+            };
+            (hash, false, f.form.body_units(), (f.site, f.context))
+        })
+    });
     let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens, |sites| {
         Some(functions::remedy(sites))
     });
     (total, unique, groups)
+}
+
+/// Whether one owner has methods under two different owner role keys among `members`.
+fn owner_roles_conflict(members: &[functions::FnSite]) -> bool {
+    let mut roles: BTreeMap<&str, Option<&str>> = BTreeMap::new();
+    members.iter().any(|f| {
+        f.site.self_type.as_deref().is_some_and(|owner| {
+            let role = f.form.owner_role_key();
+            *roles.entry(owner).or_insert(role) != role
+        })
+    })
 }
 
 /// One hash's text fallback flag, token count and sites with their context.
@@ -746,6 +775,19 @@ fn names_its_item(site: &DocTest) -> bool {
 mod tests {
     use super::*;
     use alloc::vec;
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn context_blocks_are_off_by_default() {
+        let report = Dejadoc::default().run("tests/fixtures/contextws").unwrap();
+        assert_eq!(report.context_blocks, 0);
+        assert_eq!(report.unique_context_blocks, 0);
+        assert_eq!(report.context_groups.len(), 0);
+        assert_eq!(
+            crate::exit_code(&report, false),
+            std::process::ExitCode::SUCCESS
+        );
+    }
 
     fn dt(file: &str, line: u32, item: &str, code: &str, allow: bool) -> DocTest {
         DocTest {
@@ -945,6 +987,7 @@ mod tests {
             files: vec![SourceFile {
                 path: path.to_string(),
                 segments: segments.iter().map(ToString::to_string).collect(),
+                cfg: Vec::new(),
                 parsed: match syn::parse_str(src) {
                     Ok(parsed) => parsed,
                     Err(err) => panic!("parse fixture: {err}"),
@@ -1358,6 +1401,42 @@ mod tests {
                 ("c::B::run", Some("B")),
                 ("c::T::go", Some("T"))
             ]
+        );
+    }
+
+    #[test]
+    fn methods_naming_their_owner_group_across_self_types() {
+        let src = "struct A<T>(T);\nstruct B<T>(T);\nimpl<T: Default> A<T> { fn make() -> Self { Self(T::default()) } }\nimpl<T: Default> B<T> { fn make() -> Self { Self(T::default()) } }\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            [["c::A<T>::make", "c::B<T>::make"]]
+        );
+    }
+
+    #[test]
+    fn methods_group_across_owner_headers_listing_parameters_differently() {
+        let src = "struct A<T, U>(T, U);\nstruct B<T, U>(T, U);\nimpl<T: Default, U> A<T, U> { fn make() -> T { T::default() } }\nimpl<U, T: Default> B<T, U> { fn make() -> T { T::default() } }\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            [["c::A<T,U>::make", "c::B<T,U>::make"]]
+        );
+    }
+
+    #[test]
+    fn methods_group_across_wrapper_owners() {
+        let src = "trait Table { fn table() -> u8; }\nimpl<T: Table> Table for &T { fn table() -> u8 { T::table() } }\nimpl<T: Table> Table for Box<T> { fn table() -> u8 { T::table() } }\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            [["c::&T::table", "c::Box<T>::table"]]
+        );
+    }
+
+    #[test]
+    fn methods_of_one_owner_using_different_parameters_stay_apart() {
+        let src = "struct A<T, U>(T, U);\nstruct B<T, U>(T, U);\nimpl<T: Default, U: Default> A<T, U> { fn left() -> T { T::default() } fn right() -> U { U::default() } }\nimpl<T: Default, U: Default> B<T, U> { fn left() -> T { T::default() } }\n";
+        assert_eq!(
+            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            [["c::A<T,U>::left", "c::B<T,U>::left"]]
         );
     }
 

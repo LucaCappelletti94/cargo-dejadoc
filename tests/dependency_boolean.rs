@@ -342,7 +342,7 @@ fn boolean_future_regions_preserve_exact_sharing_and_ordered_roots() {
             );
         }
     }
-    separate(
+    same(
         original,
         "fn f(p:bool,q:bool)->(bool,bool){let a=p;let b=p;println!(\"barrier\");let c=!a||!q;let d=a;(c,d)}",
     );

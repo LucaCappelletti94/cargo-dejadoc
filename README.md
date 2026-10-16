@@ -30,11 +30,15 @@ Doctest and function groups identify a copy to keep, preferring one that referen
 
 Functions compare within their module across targets and `cfg` variants, keeping test markers, `should_panic` and `ignore` distinct. Only eligible free functions and inherent methods receive deletion suggestions. Library public API, exported symbols and differing `cfg` or self types require refactoring.
 
-Function comparisons use original module files, import associations and enclosing owners, keeping calls to different inherited helpers distinct.
+Function comparisons use original module files, import associations and enclosing owners, keeping calls to different inherited helpers distinct. Copies in different `impl` blocks compare equal up to their owner and its parameters, while methods of one owner using different parameters stay apart.
 
 Passing doctests and functions compare checked fixed-width literal arithmetic by its typed result before dependency scheduling. Overflowing intermediates, unresolved inference, pointer-sized arithmetic and syntax observers retain their expressions, and `compile_fail` comparisons apply no arithmetic evaluation.
 
 Passing comparisons normalize proven primitive bitwise algebra, comparison orientation and boolean rewrites, preserving exact dependency identities and short-circuit order. Negated conditions swap complete branch blocks, and literal conditions require independently identical scalar branch types. Storage observations, destruction scopes, active attributes and unresolved inference restrict normalization, and `compile_fail` inputs retain their expressions.
+
+Passing comparisons order named-field initializers with total primitive proofs and unguarded literal-only pattern alternatives, preserving field labels, update bases, literal suffixes and alternative multiplicity.
+
+Passing comparisons order proven closed item groups and combine compatible inherent `impl` blocks using original binding and owner identities. Imports and trait implementations retain their boundaries, and unknown macros, observers, conditional members and exhausted proofs preserve complete groups and partitions.
 
 ### Contexts
 

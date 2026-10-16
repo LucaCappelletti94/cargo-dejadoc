@@ -1,0 +1,352 @@
+[
+  {
+    "id": "I01_item_order_effect",
+    "a": "fn alpha()->u32{println!(\"alpha\");3u32}fn beta()->u32{println!(\"beta\");5u32}fn main(){println!(\"{:?}\",alpha());println!(\"{:?}\",beta());}",
+    "b": "fn beta()->u32{println!(\"beta\");5u32}fn alpha()->u32{println!(\"alpha\");3u32}fn main(){println!(\"{:?}\",alpha());println!(\"{:?}\",beta());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "alpha\n3\nbeta\n5\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "alpha\n3\nbeta\n5\n"
+      }
+    }
+  },
+  {
+    "id": "I02_recursive_closed_references",
+    "a": "fn even(n:u32)->bool{if n==0u32{true}else{odd(n-1u32)}}fn odd(n:u32)->bool{if n==0u32{false}else{even(n-1u32)}}fn main(){for n in 0u32..=5u32{println!(\"{}\",even(n));}}",
+    "b": "fn odd(n:u32)->bool{if n==0u32{false}else{even(n-1u32)}}fn even(n:u32)->bool{if n==0u32{true}else{odd(n-1u32)}}fn main(){for n in 0u32..=5u32{println!(\"{}\",even(n));}}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "true\nfalse\ntrue\nfalse\ntrue\nfalse\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "true\nfalse\ntrue\nfalse\ntrue\nfalse\n"
+      }
+    }
+  },
+  {
+    "id": "I03_split_generic_inherent",
+    "a": "struct P<T>(T);impl<T> P<T>{fn first(&self)->&T{&self.0}}impl<T> P<T>{fn tag()->&'static str{\"tag\"}}fn main(){let p:P<u32>=P(7u32);println!(\"{:?}\",p.first());println!(\"{}\",P::<u32>::tag());}",
+    "b": "struct P<T>(T);impl<T> P<T>{fn tag()->&'static str{\"tag\"}fn first(&self)->&T{&self.0}}fn main(){let p:P<u32>=P(7u32);println!(\"{:?}\",p.first());println!(\"{}\",P::<u32>::tag());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "7\ntag\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "7\ntag\n"
+      }
+    }
+  },
+  {
+    "id": "I04_distinct_generic_environments",
+    "a": "struct P<T>(T);impl<T> P<T>{fn first(&self)->&T{&self.0}}impl P<u64>{fn wide(self)->u64{self.0}}fn main(){let p:P<u64>=P(9u64);println!(\"{:?}\",p.first());println!(\"{:?}\",p.wide());}",
+    "b": "struct P<T>(T);impl P<u64>{fn wide(self)->u64{self.0}}impl<T> P<T>{fn first(&self)->&T{&self.0}}fn main(){let p:P<u64>=P(9u64);println!(\"{:?}\",p.first());println!(\"{:?}\",p.wide());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "9\n9\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "9\n9\n"
+      }
+    }
+  },
+  {
+    "id": "I05_member_name_visibility_owner",
+    "a": "mod left{pub fn deep()->u32{11u32}fn hidden()->u32{12u32}pub fn local()->u32{deep()+hidden()}}mod right{pub fn deep()->u32{21u32}pub fn local()->u32{self::deep()+30u32}}fn main(){println!(\"{:?}\",(left::local(),right::deep(),right::local()));}",
+    "b": "mod right{pub fn deep()->u32{21u32}pub fn local()->u32{self::deep()+30u32}}mod left{pub fn deep()->u32{11u32}fn hidden()->u32{12u32}pub fn local()->u32{deep()+hidden()}}fn main(){println!(\"{:?}\",(left::local(),right::deep(),right::local()));}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(23, 21, 51)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(23, 21, 51)\n"
+      }
+    }
+  },
+  {
+    "id": "I06_trait_exclusion",
+    "a": "struct S(u32);trait Marker{fn mark(&self)->u32{41u32}}impl Marker for S{}impl S{fn mark(&self)->u32{self.0}}fn main(){let s:S=S(4u32);println!(\"{:?}\",(s.mark(),<S as Marker>::mark(&s)));}",
+    "b": "struct S(u32);impl S{fn mark(&self)->u32{self.0}}trait Marker{fn mark(&self)->u32{41u32}}impl Marker for S{}fn main(){let s:S=S(4u32);println!(\"{:?}\",(s.mark(),<S as Marker>::mark(&s)));}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(4, 41)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(4, 41)\n"
+      }
+    }
+  },
+  {
+    "id": "I07_imports_explicit",
+    "a": "mod inner{pub fn one()->u32{1u32}pub fn two()->u32{2u32}}use inner::{one,two};fn wrap(v:u32)->u32{v+100u32}fn main(){println!(\"{:?}\",(one(),two(),wrap(one()+two())));}",
+    "b": "use inner::{one,two};mod inner{pub fn one()->u32{1u32}pub fn two()->u32{2u32}}fn wrap(v:u32)->u32{v+100u32}fn main(){println!(\"{:?}\",(one(),two(),wrap(one()+two())));}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(1, 2, 103)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(1, 2, 103)\n"
+      }
+    }
+  },
+  {
+    "id": "I08_imports_glob",
+    "a": "mod inner{pub fn one()->u32{1u32}pub fn two()->u32{2u32}pub(crate) fn three()->u32{3u32}}use inner::*;fn main(){println!(\"{:?}\",(one(),two(),three()));}",
+    "b": "mod inner{pub fn two()->u32{2u32}pub(crate) fn three()->u32{3u32}pub fn one()->u32{1u32}}use inner::*;fn main(){println!(\"{:?}\",(one(),two(),three()));}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "(1, 2, 3)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "(1, 2, 3)\n"
+      }
+    }
+  },
+  {
+    "id": "I09_config_on",
+    "a": "#[cfg(itemcfg)]fn gated()->u32{6u32}fn free()->u32{7u32}fn main(){println!(\"{:?}\",gated());println!(\"{:?}\",free());}",
+    "b": "fn free()->u32{7u32}#[cfg(itemcfg)]fn gated()->u32{6u32}fn main(){println!(\"{:?}\",gated());println!(\"{:?}\",free());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "6\n7\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "6\n7\n"
+      }
+    },
+    "cfg": [
+      "itemcfg"
+    ]
+  },
+  {
+    "id": "I10_config_off",
+    "a": "#[cfg(itemcfg)]fn gated()->u32{6u32}fn free()->u32{7u32}fn main(){println!(\"{:?}\",free());}",
+    "b": "fn free()->u32{7u32}#[cfg(itemcfg)]fn gated()->u32{6u32}fn main(){println!(\"{:?}\",free());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "7\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "7\n"
+      }
+    }
+  },
+  {
+    "id": "I11_sequential_macro",
+    "a": "fn alpha()->u32{4u32}macro_rules! beta{()=>{5u32}}fn gamma()->u32{alpha()+beta!()}fn main(){println!(\"{:?}\",gamma());}",
+    "b": "macro_rules! beta{()=>{5u32}}fn alpha()->u32{4u32}fn gamma()->u32{alpha()+beta!()}fn main(){println!(\"{:?}\",gamma());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "9\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "9\n"
+      }
+    }
+  },
+  {
+    "id": "I12_observer_item_order",
+    "a": "use itemobs::itemobs;#[itemobs]fn one()->u32{1u32}#[itemobs]fn two()->u32{2u32}fn main(){println!(\"{:?}\",one());println!(\"{:?}\",two());}",
+    "b": "use itemobs::itemobs;#[itemobs]fn two()->u32{2u32}#[itemobs]fn one()->u32{1u32}fn main(){println!(\"{:?}\",one());println!(\"{:?}\",two());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1u32\n1\n2u32\n2\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "1u32\n1\n2u32\n2\n"
+      }
+    },
+    "externs": [
+      "itemobs"
+    ]
+  },
+  {
+    "id": "I13_observer_split_impl",
+    "a": "use itemobs::itemobs;struct S;impl S{#[itemobs]fn one()->u32{1u32}}impl S{#[itemobs]fn two()->u32{2u32}}fn main(){println!(\"{:?}\",S::one());println!(\"{:?}\",S::two());}",
+    "b": "use itemobs::itemobs;struct S;impl S{#[itemobs]fn one()->u32{1u32}#[itemobs]fn two()->u32{2u32}}fn main(){println!(\"{:?}\",S::one());println!(\"{:?}\",S::two());}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1u32\n1\n2u32\n2\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "1u32\n1\n2u32\n2\n"
+      }
+    },
+    "externs": [
+      "itemobs"
+    ]
+  },
+  {
+    "id": "I14_observer_mod_payload",
+    "a": "use itemobs::itemobs;#[itemobs]mod bax{pub const DEEP:u32=1u32;}#[itemobs]mod dex{pub const DEEP:u32=2u32;}fn main(){println!(\"{}\",bax::SPELLING);println!(\"{}\",dex::SPELLING);println!(\"{:?}\",(bax::DEEP,dex::DEEP));}",
+    "b": "use itemobs::itemobs;#[itemobs]mod dex{pub const DEEP:u32=2u32;}#[itemobs]mod bax{pub const DEEP:u32=1u32;}fn main(){println!(\"{}\",bax::SPELLING);println!(\"{}\",dex::SPELLING);println!(\"{:?}\",(bax::DEEP,dex::DEEP));}",
+    "expected": "same",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "pub const DEEP:u32=1u32;\npub const DEEP:u32=2u32;\n(1, 2)\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "pub const DEEP:u32=1u32;\npub const DEEP:u32=2u32;\n(1, 2)\n"
+      }
+    },
+    "externs": [
+      "itemobs"
+    ]
+  },
+  {
+    "id": "I15_call_order_control",
+    "a": "fn one()->u32{1u32}fn two()->u32{2u32}fn main(){println!(\"{:?}\",one());println!(\"{:?}\",two());}",
+    "b": "fn two()->u32{2u32}fn one()->u32{1u32}fn main(){println!(\"{:?}\",two());println!(\"{:?}\",one());}",
+    "expected": "different",
+    "expect": {
+      "a": {
+        "exit": 0,
+        "stdout": "1\n2\n"
+      },
+      "b": {
+        "exit": 0,
+        "stdout": "2\n1\n"
+      }
+    }
+  },
+  {
+    "id": "C01_duplicate_item",
+    "a": "fn one()->u32{1u32}fn one()->u32{2u32}fn main(){}",
+    "b": "fn two()->u32{2u32}fn two()->u32{3u32}fn main(){}",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0428]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0428]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C02_duplicate_inherent_member",
+    "a": "struct S;impl S{fn m()->u32{1u32}}impl S{fn m()->u32{2u32}}fn main(){}",
+    "b": "struct S;impl S{fn n()->u32{1u32}}impl S{fn n()->u32{2u32}}fn main(){}",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0592]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0592]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C03_missing_generics",
+    "a": "struct P<T>(T);impl P{fn first(&self)->u32{0u32}}fn main(){}",
+    "b": "struct Q<T>(T);impl Q{fn first(&self)->u32{0u32}}fn main(){}",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0107]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0107]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "C04_missing_trait_member",
+    "a": "struct S;trait Marker{fn mark(&self)->u32}impl Marker for S{}fn main(){}",
+    "b": "struct S;trait Witness{fn show(&self)->u32}impl Witness for S{}fn main(){}",
+    "expect": {
+      "a": {
+        "compile": [
+          "error[E0046]"
+        ],
+        "run": "absent"
+      },
+      "b": {
+        "compile": [
+          "error[E0046]"
+        ],
+        "run": "absent"
+      }
+    }
+  },
+  {
+    "id": "I20_unproven_observation_macro_root",
+    "a": "fn one() -> u32 { 1 } fn two() -> u32 { 2 } fn main() { observer::println!(\"{:?}\", (one(), two())); }",
+    "b": "fn two() -> u32 { 2 } fn one() -> u32 { 1 } fn main() { observer::println!(\"{:?}\", (one(), two())); }",
+    "expected": "different",
+    "externs": ["observer"],
+    "expect": {
+      "a": {"exit": 0, "stdout": "true\n"},
+      "b": {"exit": 0, "stdout": "false\n"}
+    }
+  },
+  {
+    "id": "I21_nested_unknown_observation_macro",
+    "a": "fn one() -> u32 { 1 } fn two() -> u32 { 2 } fn main() { println!(\"{:?}\", observer::order!((one(), two()))); }",
+    "b": "fn two() -> u32 { 2 } fn one() -> u32 { 1 } fn main() { println!(\"{:?}\", observer::order!((one(), two()))); }",
+    "expected": "different",
+    "externs": ["observer"],
+    "expect": {
+      "a": {"exit": 0, "stdout": "true\n"},
+      "b": {"exit": 0, "stdout": "false\n"}
+    }
+  }
+]

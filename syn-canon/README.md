@@ -22,13 +22,32 @@ println!("{forms:?}");
 
 `canonicalize` and `canonicalize_failing` return `CanonicalForm`. Its key is opaque and cannot be parsed as Rust, with `Eq`, `Hash` and `Display` sharing that key. `leaf_tokens()` counts canonical leaves, while `body_units()` counts body paths, lifetimes and operators as one and excludes commas and delimiters.
 
-`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves namespace-specific inherited references, opaque macro scope identities and owner generics while alpha-renaming its declarations. Literal payload bytes remain part of the owner identity.
+`SourceContext` indexes borrowed module files and selects only their original signature/body pairs. `FunctionView` preserves namespace-specific inherited references and opaque macro scope identities while alpha-renaming its declarations. Its key prints the method's own owner and owner parameters as owner-local labels, numbering the parameters by first use, and `owner_role_key()` labels them by their role in the owner type instead. Value-position `Self::` members keep the qualified owner, whose literal payload bytes remain part of its identity.
 
-Indexed imports bind only their declared namespaces. Ambiguous unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
+Indexed imports bind only their declared namespaces. Ambiguous or cyclic unindexed imports retain a module-scoped alias. Unambiguous opaque inherited references use their qualified identity.
 
 Comparison keys retain proven `bool` and `8`-, `16`-, `32`-, `64`- or `128`-bit integer types through resolved type aliases. Unknown macros, syntax observers and storage observations restrict dependency proofs. Proof metadata contributes no size units.
 
 Passing-mode comparison schedules proven scalar declarations by exact dependency structure and ordered uses, preserving lexical value identities and distinct nested closure captures. Analysis uses a unique dependency order directly and retains complete regions above bounds of 16,384 nodes, 64 expression or block levels, or 4,096 labeling states. Failing-mode and independent lexical comparisons keep declaration order.
+
+Passing-mode comparison schedules calls to originally resolved acyclic helpers with total primitive signatures, bodies and arguments. Scoped primitive locals, total `if` branches and nested accepted calls qualify, while recursion, resources, observations, conditional definitions and unresolved or external calls retain their order. Helper origins, argument positions and call multiplicity stay distinct.
+
+Immutable summaries are built once per original context and borrowed by function views, with original declaration, lexical and module identities carried through normalization. Their 16,384-node transitive budget counts each called helper's owned original syntax once, including every checked branch, while uncalled nested bodies contribute only their declaration statements. Incomplete observer indexing or exhausted proofs retain complete caller regions.
+
+```rust
+let helpers = "fn low(x:u32)->u32{x&15u32}fn high(x:u32)->u32{x>>4}";
+let form = |body: &str| syn_canon::canonicalize(
+    syn::parse_str(&format!("{helpers}fn f(x:u32)->(u32,u32){{{body}(a,b)}}")).unwrap(),
+);
+assert_eq!(
+    form("let a=low(x);let b=high(x);"),
+    form("let b=high(x);let a=low(x);"),
+);
+assert_ne!(
+    form("let a=low(x);let b=high(x);"),
+    form("let a=high(x);let b=low(x);"),
+);
+```
 
 Passing-mode comparison evaluates closed fixed-width integer literal operations before dependency scheduling, checking every intermediate result and retaining the result's type. Compatible suffixes or a resolved immediate declaration establish the type, with signed minima and Rust's truncating left shifts preserved. Overflow, zero divisors, signed minimum division or remainder by `-1`, unresolved inference, pointer-sized arithmetic and syntax-observed regions retain their operations.
 
@@ -44,7 +63,7 @@ assert_ne!(
 );
 ```
 
-Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, declarations retain their distinct origins, and general `==` and `!=` comparisons keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
+Passing-mode comparison commutes and associates proven primitive `&`, `|` and `^`, removes exact repeated stable operands of `&` and `|`, and orients `>` and `>=` by reversing their operands. Literal subsets preserve types, `^` retains multiplicity, retained declarations keep distinct origins, and general `==` and `!=` comparisons keep operand order. Overloads, floating-point and pointer-sized types, unresolved inference and observations restrict normalization, with incomplete analysis retaining complete regions.
 
 ```rust
 let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
@@ -80,11 +99,66 @@ assert_ne!(
 );
 ```
 
+Passing-mode comparison substitutes unobserved stable primitive aliases and total primitive temporaries, expands primitive tuple literals under simple by-value bindings, and removes unused total primitive bindings. Tuple elements resolve before their bindings and qualify together. Storage, mutable versions, opaque uses, inference constraints and destruction boundaries prevent erasure, while source, substitution, labeling or final-syntax exhaustion preserves the complete affected region.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+let original = "fn f(input: u32) -> (u32, u32) {
+    let mask = input & 15u32;
+    let copied = mask;
+    let temp = copied ^ 3u32;
+    let (x, y) = (mask | 7u32, mask >> 1);
+    let dead = 17u32;
+    (temp, y)
+}";
+let expanded = "fn g(input: u32) -> (u32, u32) {
+    ((input & 15u32) ^ 3u32, (input & 15u32) >> 1)
+}";
+assert_eq!(form(original), form(expanded));
+assert_ne!(
+    syn_canon::canonicalize_failing(syn::parse_str(original).unwrap()),
+    syn_canon::canonicalize_failing(syn::parse_str(expanded).unwrap()),
+);
+```
+
+Passing-mode comparison orders named-field initializers only with original total primitive proofs and orders unguarded literal-only pattern alternatives. Field labels, update bases, literal kinds, signs, suffixes and alternative multiplicity stay distinct. Attributes, observers, pattern bindings, unsupported alternatives, exhausted source bounds and failing-mode inputs retain their order.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+let fields = |members: &str| form(&format!(
+    "struct S{{x:u32,y:u32}} fn f()->S{{S{{{members}}}}}"
+));
+assert_eq!(fields("x:1u32,y:2u32"), fields("y:2u32,x:1u32"));
+let arms = |alternatives: &str| form(&format!(
+    "fn f(input:u32)->bool{{match input{{{alternatives}=>true,_=>false}}}}"
+));
+assert_eq!(arms("1|2"), arms("2|1"));
+```
+
+Passing-mode comparison orders closed item groups and combines inherent `impl` blocks with the same original owner, ordered generic environment and conflict-free members. Borrowed function and method views normalize local groups while keeping inherited origins fixed. Unknown macros, observers, unresolved namespaces, conditional members, exhausted bounds and failing-mode inputs retain complete groups and partitions.
+
+`crate::` owner paths use the original whole-file root. Borrowed views retain unproved root spellings.
+
+```rust
+let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+let first = "fn one()->u32{1}fn two()->u32{2}fn main(){println!(\"{:?}\",(one(),two()));}";
+let reordered = "fn two()->u32{2}fn one()->u32{1}fn main(){println!(\"{:?}\",(one(),two()));}";
+assert_eq!(form(first), form(reordered));
+assert_ne!(
+    syn_canon::canonicalize_failing(syn::parse_str(first).unwrap()),
+    syn_canon::canonicalize_failing(syn::parse_str(reordered).unwrap()),
+);
+assert_eq!(
+    form("struct S;impl S{fn one()->u32{1}}impl S{fn two()->u32{2}}"),
+    form("struct S;impl S{fn two()->u32{2}fn one()->u32{1}}"),
+);
+```
+
 ## Folds
 
 Every binder becomes a positional name in visit order: `let` and closure patterns, function names and parameters, generics, lifetimes, labels, local items, `use` aliases and `macro_rules!` names. Item names of a file, block or inline module are bound before the list is visited, so a use may precede its definition. Free names, fields, methods and attribute paths stay, and so do string literals. `Self` in type position expands to the impl self type. Macro arguments that parse as an expression list or `elem; count` are renamed as expressions, otherwise token by token.
 
-Value, type and macro bindings treat `r#name` and `name` as the same identifier, including shadowing and module members. Lifetimes and labels retain their spelling. Macro references involving a raw binding or reference retain their spelling because macros can inspect tokens.
+Value, type and macro bindings treat `r#name` and `name` as the same identifier, including shadowing and module members. Lifetimes and labels retain their spelling. Opaque macro references involving a raw binding or reference retain their spelling.
 
 Style folds, each applied only where it keeps the meaning:
 

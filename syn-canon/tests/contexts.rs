@@ -822,6 +822,43 @@ fn inline_module_imports_and_item_kinds_discover_const_blocks() {
 }
 
 #[test]
+fn cfg_exclusive_module_declarations_resolve_their_own_nested_modules() {
+    let (duplicated, _) = sites(
+        "#[cfg(test)]
+         mod compat {
+             mod inner { pub fn f() -> i32 { 1 } }
+             pub fn first() -> i32 { inner::f() + 1 }
+         }
+         #[cfg(not(test))]
+         mod compat {
+             mod other { pub fn f() -> i32 { 1 } }
+             pub fn second() -> i32 { other::f() + 1 }
+         }",
+    );
+    let (single, _) = sites(
+        "mod compat {
+             mod inner { pub fn f() -> i32 { 1 } }
+             pub fn first() -> i32 { inner::f() + 1 }
+             mod other { pub fn f() -> i32 { 1 } }
+             pub fn second() -> i32 { other::f() + 1 }
+         }",
+    );
+    let (unresolved, _) = sites("mod compat { pub fn first() -> i32 { inner::f() + 1 } }");
+    assert_eq!(
+        body_of(&duplicated, "compat::first"),
+        body_of(&single, "compat::first")
+    );
+    assert_eq!(
+        body_of(&duplicated, "compat::second"),
+        body_of(&single, "compat::second")
+    );
+    assert_ne!(
+        body_of(&single, "compat::first"),
+        body_of(&unresolved, "compat::first")
+    );
+}
+
+#[test]
 fn impl_and_trait_associated_items_discover_their_blocks() {
     let (a, _) = sites(
         "struct S;
@@ -1499,4 +1536,46 @@ fn crate_imports_preserve_qualified_type_identity() {
     .unwrap();
     assert_eq!(view_of(&first, "first"), view_of(&renamed, "renamed"));
     assert_ne!(view_of(&first, "first"), view_of(&different, "different"));
+}
+
+#[test]
+fn cyclic_imports_preserve_unresolved_target_identity() {
+    for imports in [
+        "use missing; use missing;",
+        "use second as missing; use missing as second; use second as missing;",
+        "mod inner { pub use super::missing; } use inner::missing; use inner::missing;",
+    ] {
+        let file: syn::File = syn::parse_str(&format!(
+            "{imports} fn first() {{ missing() }} fn same() {{ missing() }} fn different() {{ other() }}"
+        ))
+        .unwrap();
+        assert_eq!(view_of(&file, "first"), view_of(&file, "same"));
+        assert_ne!(view_of(&file, "first"), view_of(&file, "different"));
+    }
+}
+
+#[test]
+fn converging_import_routes_preserve_sibling_module_origins() {
+    let file: syn::File = syn::parse_str(
+        "mod definitions {
+            pub fn first() -> u32 { 1u32 }
+            pub fn second() -> u32 { 2u32 }
+        }
+        mod left {
+            pub use super::definitions::first as original;
+            pub use original as next;
+            pub use next as final_name;
+        }
+        mod right {
+            pub use super::definitions::second as original;
+            pub use original as next;
+            pub use next as final_name;
+        }
+        fn first() -> u32 { left::original() }
+        fn same() -> u32 { left::final_name() }
+        fn different() -> u32 { right::final_name() }",
+    )
+    .unwrap();
+    assert_eq!(view_of(&file, "first"), view_of(&file, "same"));
+    assert_ne!(view_of(&file, "first"), view_of(&file, "different"));
 }

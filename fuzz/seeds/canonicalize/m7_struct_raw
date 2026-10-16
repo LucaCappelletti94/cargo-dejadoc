@@ -1,0 +1,1 @@
+struct P{r#type:u32,r#const:u32}fn f(input:u32)->u32{let s=P{r#const:input>>4,r#type:input&15u32};s.r#type}

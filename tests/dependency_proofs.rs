@@ -365,6 +365,34 @@ fn nested_let_else_preserves_binding_identity() {
 }
 
 #[test]
+fn nested_pattern_shadows_preserve_binding_identity() {
+    for (shadowed, fresh) in [
+        (
+            "let (low, _) = (other, 0); low",
+            "let (fresh, _) = (other, 0); fresh",
+        ),
+        (
+            "let P(low) = P(other); low",
+            "let P(fresh) = P(other); fresh",
+        ),
+        (
+            "let low @ 0..=255 = other; low",
+            "let fresh @ 0..=255 = other; fresh",
+        ),
+    ] {
+        let source = |inner: &str| {
+            format!(
+                "struct P(u8);
+                 fn f(input: u32, other: u8) -> (u32, u8) {{
+                     let low = input & 15; let keep = low ^ 1; (keep, {{ {inner} }})
+                 }}"
+            )
+        };
+        renamed_pair_equal(&source(shadowed), &source(fresh));
+    }
+}
+
+#[test]
 fn captured_macro_patterns_preserve_outer_binding_identity() {
     renamed_pair_equal(
         "fn f(input: u32) -> bool { matches!(input, captured @ 0..=7) }",
