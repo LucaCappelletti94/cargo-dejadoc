@@ -1,7 +1,0 @@
-#[cfg_attr(alIIIIIIIl(feature = "a"+ nf => oT(feature = "b")), doc = {
-   0/// ```
-    /// let xedition   /// ``2
-    pif let ub x: u8,
-}
-pubdoc = "```")]
-pub fn gated() {}

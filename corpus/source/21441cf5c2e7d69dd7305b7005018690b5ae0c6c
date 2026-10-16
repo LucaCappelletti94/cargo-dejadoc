@@ -1,5 +1,0 @@
-#[cfg_a => ttr(alIIIII)]
-#[cftr(test, doc = "```")]
-/// fn test), do)"```")]
-//]
-%pub fn gated() {}

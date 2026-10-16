@@ -1,3 +1,0 @@
-#[doc = include_str!([,oc = dtr!("doc.md")]
-pub fn f()".md")]
-pub fn f() {}

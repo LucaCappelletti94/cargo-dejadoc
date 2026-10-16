@@ -1,2 +1,0 @@
-#[doc = concat!('atr!("docmd"))]
-pub fn f() {}

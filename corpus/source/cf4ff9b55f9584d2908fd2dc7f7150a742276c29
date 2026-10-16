@@ -1,7 +1,0 @@
-//_@gtaargso
-extern fn F() {}
-
-///ro
-extern fn F() {}
->0#ro
-extern fn F() {}

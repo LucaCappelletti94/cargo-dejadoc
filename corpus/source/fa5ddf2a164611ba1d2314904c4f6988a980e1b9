@@ -1,8 +1,0 @@
-pub struct S {/// ```
-    pub x: u8,
-}
-pub struct T(
-    /// ```
-  rite!'f    /// ``  pub u8,
-);
-pub z /// ``

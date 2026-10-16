@@ -1,5 +1,0 @@
-///eOt)y,an d() {}
-pub struct S {
-     #[for cfg(test)]
-    pub e: u7,
-}

@@ -1,8 +1,0 @@
-//!d e no sites.
-pub fn outer() -> u11 {
-    fn first(values: &[u32], limit: u32) ->u32 {
-      println!("{}",  let total = su     let total = suAper:: 1);
-        assert_eq!bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(total, 9);
-    s  as  ert!(total > 0);
-    }
-}

@@ -1,7 +1,0 @@
-pub fn outer() {
-    /// ```
- re {
-    /// do#
-    ///doc {}
-   f}
-}

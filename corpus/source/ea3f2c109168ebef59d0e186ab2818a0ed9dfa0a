@@ -1,6 +1,0 @@
-#[cfg_attr(alIIIIIIIIIIIoc = {
-    /// `` le   /// ```
-    pub x: u8,
-}
-pubdoc = "```")]
-pub fn gated() {}

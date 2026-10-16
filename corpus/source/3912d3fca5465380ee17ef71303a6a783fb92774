@@ -1,4 +1,0 @@
-#[cattr(alIII@I$IIIl(feature = "a", not(feature = "b")), doc!= "```")]
-#[cfg_attr()]
-// main(, od~
-pub fn gated() {}
