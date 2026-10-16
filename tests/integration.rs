@@ -335,9 +335,9 @@ fn binary_prints_annotations_beside_the_report() {
 
 #[test]
 #[cfg(feature = "cli")]
-fn package_named_dejadoc_is_not_filtered() {
-    // Only the cargo subcommand token at position 1 is stripped; a flag
-    // value that happens to be "dejadoc" must survive to clap.
+fn unknown_package_fails_with_its_name() {
+    // Only the cargo subcommand token at position 1 is stripped, so a flag value spelled
+    // "dejadoc" reaches workspace discovery, which names no such member.
     let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
     let out = Command::new(bin)
         .current_dir(FIXTURE)
@@ -347,14 +347,13 @@ fn package_named_dejadoc_is_not_filtered() {
         .arg("dejadoc")
         .output()
         .expect("run dejadoc binary");
-    assert_eq!(
-        out.status.code(),
-        Some(0),
-        "stderr: {:?}",
-        String::from_utf8_lossy(&out.stderr)
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(String::from_utf8_lossy(&out.stdout), "");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stderr.contains("no workspace member named `dejadoc`"),
+        "{stderr}"
     );
-    let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
-    assert_eq!(value["total"], 0);
 }
 
 #[test]

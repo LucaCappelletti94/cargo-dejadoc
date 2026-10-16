@@ -210,3 +210,51 @@ jobs:
           grep -q "so it can't simply be deleted" "$body" || { echo "the trait method comment is missing"; exit 1; }
           grep -q 'under another `cfg`' "$body" || { echo "the cfg comment is missing"; exit 1; }
           grep -q 'times in this module' "$body" || { echo "the function copy wording is missing"; exit 1; }
+
+  member:
+    name: Dogfood the action from a workspace member and on procedural macros
+    runs-on: ubuntu-latest
+    permissions: {}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      # The released binary predates the code under review, so this job scans with the branch build.
+      - run: cargo install --path . --locked
+      - uses: ./
+        with:
+          cwd: tests/fixtures/dupws/alpha
+          install: false
+          dry-run: true
+          annotations: false
+      - name: Check the member paths
+        run: |
+          set -euo pipefail
+          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
+          body="$RUNNER_TEMP/dejadoc-review.md"
+          for file in alpha/src/util.rs beta/src/util.rs; do
+            grep -q "tests/fixtures/dupws/$file" "$body" || { echo "the $file sites are missing"; exit 1; }
+          done
+          if grep -qE 'dupws/alpha/(alpha|beta)/' "$body" "$GITHUB_STEP_SUMMARY"; then
+            echo "a site path repeats the member directory"
+            exit 1
+          fi
+      - uses: ./
+        with:
+          cwd: tests/fixtures/procws
+          install: false
+          dry-run: true
+          functions: true
+          fn-min-tokens: '0'
+          annotations: false
+      - name: Check the procedural macro findings
+        run: |
+          set -euo pipefail
+          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
+          body="$RUNNER_TEMP/dejadoc-review.md"
+          grep -q 'It is public API, so deleting it breaks its callers' "$body" || { echo "the public API comment is missing"; exit 1; }
+          if grep -q '^```suggestion' "$body"; then
+            echo "an exported procedural macro must not get a delete suggestion"
+            exit 1
+          fi

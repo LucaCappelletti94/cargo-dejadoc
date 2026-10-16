@@ -2223,6 +2223,8 @@ pub(crate) fn normalize(
             self_owner: options.self_owner.clone(),
             prim_fallback: options.prim_fallback,
             observed: options.observed,
+            enclosing_observed: options.enclosing_observed,
+            std_derives: options.std_derives,
             helper_table: Some(table),
             helper_module: options.helper_module,
             helper_blocked: options.helper_blocked,

@@ -517,6 +517,17 @@ fn body_of<'a>(found: &'a [Site], item: &str) -> &'a str {
 }
 
 #[test]
+fn an_attribute_macro_item_inside_a_context_keeps_its_input() {
+    let outer = |body: &str| {
+        let (found, _) = sites(&format!(
+            "fn outer() -> u8 {{ #[observe] fn inner() -> u8 {{ {body} }} inner() }}"
+        ));
+        body_of(&found, "outer").to_string()
+    };
+    assert_ne!(outer("return 1;"), outer("1"));
+}
+
+#[test]
 fn imported_absolute_roots_preserve_file_scope_shadowing() {
     for imports in [
         "use ::std::mem::drop as external; use std::mem::drop as local;",

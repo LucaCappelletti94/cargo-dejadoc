@@ -219,6 +219,8 @@ pub(crate) fn item_payload(
             self_owner: None,
             prim_fallback: true,
             observed: false,
+            enclosing_observed: false,
+            std_derives: false,
             helper_table: proof.table,
             helper_module: &[],
             helper_blocked: false,
@@ -261,7 +263,13 @@ fn canonical_file(
             helper_table.expect("items normalization has a helper table"),
         );
     }
-    crate::drift::normalize_file(&mut file, compiles, &mut helper_syntax);
+    crate::drift::normalize_file(
+        &mut file,
+        compiles,
+        &mut helper_syntax,
+        options.enclosing_observed,
+        options.std_derives,
+    );
     let options = crate::alpha::Options {
         helper_table,
         helper_syntax: Some(helper_syntax),

@@ -139,8 +139,19 @@ runs:
         FUNCTIONS: ${{ inputs.functions }}
         FN_MIN_TOKENS: ${{ inputs.fn-min-tokens }}
         ANNOTATIONS: ${{ inputs.annotations }}
-        CWD: ${{ inputs.cwd }}
       run: |
+        # Report paths are relative to the workspace root cargo resolves, the cwd or one of
+        # its ancestors. GitHub reads, matches and links paths from the repository root, so
+        # one prefix from that root projects every report path for the later steps.
+        root="$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.workspace_root')" || root=''
+        prefix=''
+        if [ -n "$root" ] && [ -n "${GITHUB_WORKSPACE:-}" ]; then
+          prefix="$(realpath --relative-to="$GITHUB_WORKSPACE" "$root" 2>/dev/null)" || prefix=''
+          [ "$prefix" = "." ] && prefix=''
+        fi
+        printf '%s' "$prefix" > "$RUNNER_TEMP/dejadoc-prefix"
+        printf '%s\n' 'if $prefix == "" then . else (.groups[]?.sites[]?, .context_groups[]?.sites[]?) |= (.file = "\($prefix)/\(.file)") end' \
+          > "$RUNNER_TEMP/dejadoc-root.jq"
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
@@ -151,16 +162,17 @@ runs:
           cargo dejadoc \
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
-            --no-fail --json "$@" > "$report"
+            --no-fail --json "$@" > "$report.raw"
+          jq --arg prefix "$prefix" -f "$RUNNER_TEMP/dejadoc-root.jq" "$report.raw" > "$report"
+          rm -f "$report.raw"
           jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.functions // 0) functions, \($r.unique_functions // 0) unique functions, \($r.groups | length) duplicated groups"' "$report"
           # The whole scan in the run summary, which needs no token, so a
           # fork pull request has it whatever the review can do.
           {
             jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.functions // 0) functions, \(.unique_functions // 0) unique functions, \(.groups | length) duplicated groups"' "$report"
-            jq -r --arg cwd "$CWD" '
-              def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+            jq -r '
               .groups[] | "\n- group `\(.id)`, \(.kind // "doctest"), \(.sites | length) copies\n"
-                + (.sites | map("  - `" + sp + ":" + (.line | tostring) + "`  " + .item)
+                + (.sites | map("  - `" + .file + ":" + (.line | tostring) + "`  " + .item)
                    | join("\n"))' "$report"
           } >> "$GITHUB_STEP_SUMMARY"
           if [ "$(jq '.groups | length' "$report")" -gt 0 ]; then
@@ -175,15 +187,7 @@ runs:
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
             "${gate[@]}" "$@" > "$out" || status=$?
-          # The scan reports paths relative to the workspace root cargo
-          # resolved, GitHub resolves an annotation path from the repository
-          # root.
-          root="$(cargo metadata --no-deps --format-version 1 2>/dev/null | jq -r '.workspace_root')" || root=''
-          prefix=''
-          if [ -n "$root" ] && [ -n "${GITHUB_WORKSPACE:-}" ]; then
-            prefix="$(realpath --relative-to="$GITHUB_WORKSPACE" "$root" 2>/dev/null)" || prefix=''
-            [ "$prefix" = "." ] && prefix=''
-          fi
+          # GitHub resolves an annotation path from the repository root.
           if [ -n "$prefix" ]; then
             while IFS= read -r line; do
               case "$line" in
@@ -240,13 +244,18 @@ runs:
         [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
         # Threshold 1 inventories every base site, a group the pull request
         # completes from a single existing copy must still be reported.
+        # The base tree has the head's layout, so the head's prefix roots its paths.
+        base_report="$RUNNER_TEMP/dejadoc-base-report.json"
         if ! (cd "$dir" && cargo dejadoc \
           --threshold 1 \
           --min-tokens "$MIN_TOKENS" \
-          --no-fail --json "$@") > "$RUNNER_TEMP/dejadoc-base-report.json"; then
-          rm -f "$RUNNER_TEMP/dejadoc-base-report.json"
+          --no-fail --json "$@") > "$base_report.raw" \
+          || ! jq --rawfile prefix "$RUNNER_TEMP/dejadoc-prefix" -f "$RUNNER_TEMP/dejadoc-root.jq" \
+            "$base_report.raw" > "$base_report"; then
+          rm -f "$base_report"
           echo "dejadoc: the base scan failed, the full report is reviewed"
         fi
+        rm -f "$base_report.raw"
 
     - name: Review the findings on the pull request
       if: ${{ inputs.mode == 'post' || (steps.scan.outputs.found == 'true' && (inputs.pr-number != '' || inputs.dry-run == 'true')) }}
@@ -255,7 +264,6 @@ runs:
         GH_TOKEN: ${{ github.token }}
         PR_NUMBER: ${{ inputs.pr-number }}
         DRY_RUN: ${{ inputs.dry-run }}
-        CWD: ${{ inputs.cwd }}
         ANNOTATIONS: ${{ inputs.annotations }}
         MODE: ${{ inputs.mode }}
         PAYLOAD: ${{ inputs.payload }}
@@ -264,7 +272,6 @@ runs:
         # failed api call degrades to a skipped review instead of aborting the run.
         pr="$PR_NUMBER"
         dry="$DRY_RUN"
-        cwd="$CWD"
         repo="$GITHUB_REPOSITORY"
         report="$RUNNER_TEMP/dejadoc-report.json"
         base_report="$RUNNER_TEMP/dejadoc-base-report.json"
@@ -313,9 +320,7 @@ runs:
         if [ "$dry" = "true" ]; then
           # A dry run renders the review as if every scanned site were in
           # the diff, so the step summary shows each comment in full.
-          changed_json="$(jq -r --arg cwd "$cwd" '
-            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-            [.groups[].sites[] | sp] | unique' "$report")"
+          changed_json="$(jq -r '[.groups[].sites[].file] | unique' "$report")"
         elif [ -n "$pr" ] && [ -n "$head_sha" ] && [ -n "$changed_files" ]; then
           changed_json="$(printf '%s\n' "$changed_files" | jq -R . | jq -s .)"
         else
@@ -325,11 +330,10 @@ runs:
         # Base site identity, a site exists on the base when the same hash, item and
         # path were already there, and the first base copy is the kept original.
         if [ "$onlynew" = "1" ]; then
-          base_json="$(jq --arg cwd "$cwd" '
-            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
-            { keys: [.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(sp)"],
+          base_json="$(jq '
+            { keys: [.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(.file)"],
               keep: (reduce .groups[] as $gr ({};
-                .[$gr.hash] = (($gr.sites[0] | sp) + ":" + ($gr.sites[0].line | tostring)))),
+                .[$gr.hash] = ($gr.sites[0].file + ":" + ($gr.sites[0].line | tostring)))),
               keep_end: (reduce .groups[] as $gr ({}; .[$gr.hash] = ($gr.sites[0].end // null))),
               keep_item: (reduce .groups[] as $gr ({}; .[$gr.hash] = $gr.sites[0].item)) }' "$base_report")"
         else
@@ -347,9 +351,8 @@ runs:
         base_file="$RUNNER_TEMP/dejadoc-base-keys.json"
         printf '%s' "$changed_json" > "$changed_file"
         printf '%s' "$base_json" > "$base_file"
-        jq -r --arg cwd "$cwd" --slurpfile changed "$changed_file" --slurpfile base "$base_file" \
+        jq -r --slurpfile changed "$changed_file" --slurpfile base "$base_file" \
           --argjson onlynew_mode "$onlynew_mode" '
-          def spath: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
           $changed[0] as $changed
           | $base[0] as $base
           | . as $r
@@ -358,7 +361,7 @@ runs:
               | ($gi + 1) as $g
               | (.sites | length) as $n
               | .hash as $h
-              | ((.sites[0] | spath) + ":" + (.sites[0].line | tostring)) as $first
+              | (.sites[0].file + ":" + (.sites[0].line | tostring)) as $first
               | (.sites[0].end // null) as $fend
               | (.kind // "doctest") as $kind
               | ([.sites[].self_type] as $t | ($t[0]) as $f | ($t[1:] | map(. != $f) | any)) as $spans
@@ -368,13 +371,13 @@ runs:
               | (.sites[0].item) as $firstitem
               | ($base.keep[$h] // "") as $basekeep
               | ($base.keep_item[$h] // "") as $baseitem
-              | ([ .sites[] | ([$h, .item, (spath)] | join("\t")) ]) as $ks
+              | ([ .sites[] | ([$h, .item, .file] | join("\t")) ]) as $ks
               | [ .sites | to_entries[]
-                  | (([$h, .value.item, (.value | spath)] | join("\t")) as $k
+                  | (([$h, .value.item, .value.file] | join("\t")) as $k
                      | (([ $ks[: .key ][] | select(. == $k) ] | length) + 1) as $idx
                      | ([ $base.keys[] | select(. == $k) ] | length) as $bcount
                      | { g: $g, c: (.key + 1), n: $n, first: $first, fend: $fend, s: .value,
-                         p: (.value | spath),
+                         p: .value.file,
                          isNew: ($idx > $bcount),
                          basekeep: $basekeep, bend: ($base.keep_end[$h] // null),
                          kind: $kind, remedy: $remedy, selftypes: $selftypes, firstitem: $firstitem,
@@ -401,10 +404,9 @@ runs:
         version="$(cargo dejadoc --version | awk '{ print $NF }')"
         report_link() {
           local sites
-          sites="$(jq -r --arg cwd "$cwd" --argjson g "$1" '
-            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+          sites="$(jq -r --argjson g "$1" '
             .groups[$g - 1].sites as $s
-            | [$s[:12][] | "\(sp):\(.line)  \(.item)"]
+            | [$s[:12][] | "\(.file):\(.line)  \(.item)"]
               + (if ($s | length) > 12 then ["and \(($s | length) - 12) more"] else [] end)
             | join("\n")' "$report")"
           printf '[👎 Report a wrong review](https://github.com/LucaCappelletti94/cargo-dejadoc/issues/new?template=wrong-review.yml&title=%s&version=%s&review=%s&group=%s)' \
@@ -647,14 +649,13 @@ runs:
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then
           stats="$(jq -r '"\(.total) doctests, \(.unique) unique, \(.functions // 0) functions, \(.unique_functions // 0) unique functions, \(.groups | length) duplicated groups"' "$report")"
-          groups_block="$(jq -r --arg cwd "$cwd" '
-            def sp: if $cwd == "" then .file else "\($cwd)/\(.file)" end;
+          groups_block="$(jq -r '
             .groups | to_entries | map(
                 "Group \(.key + 1), \(.value.kind // "doctest"), \(.value.sites | length) copies\n\n"
                 + "```\n\(.value.sites[0].code)\n```\n\n"
                 + (.value.sites | to_entries | map(
                     (if .key == 0 then "first  " else "copy   " end)
-                    + (.value | sp) + ":" + (.value.line | tostring) + "  " + .value.item
+                    + .value.file + ":" + (.value.line | tostring) + "  " + .value.item
                     + (if (.value.info | length) > 0 then "   (" + (.value.info | join(", ")) + ")" else "" end)
                   ) | join("\n")) + "\n\n"
             ) | join("")' "$report")"
