@@ -41,6 +41,16 @@ tempfile = "3.27.0"
 [profile.release]
 strip = true
 
+# The test profile with optimized code, for the exhaustive search witnesses that run for minutes
+# unoptimized. Debug assertions and overflow checks stay on.
+[profile.fast-test]
+inherits = "test"
+opt-level = 1
+debug = "line-tables-only"
+
+[profile.fast-test.package."*"]
+opt-level = 2
+
 [lints]
 workspace = true
 

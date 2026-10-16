@@ -52,13 +52,17 @@ jobs:
             --profile minimal \
             --component llvm-tools-preview
 
-      - name: Install cargo-llvm-cov
-        run: cargo install cargo-llvm-cov --locked
+      - name: Install cargo-llvm-cov and cargo-nextest
+        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+        with:
+          tool: cargo-llvm-cov,cargo-nextest
 
       - name: Test coverage
+        env:
+          NEXTEST_PROFILE: coverage
         run: |
-          cargo +nightly llvm-cov --workspace --all-targets --no-report
-          cargo +nightly llvm-cov --workspace --doc --no-clean --lcov --output-path lcov.info
+          cargo +nightly llvm-cov nextest --workspace --all-targets --locked --no-report
+          cargo +nightly llvm-cov --workspace --doc --locked --no-clean --lcov --output-path lcov.info
 
       - name: Upload to Codecov
         uses: codecov/codecov-action@v7

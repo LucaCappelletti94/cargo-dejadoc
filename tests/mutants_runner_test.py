@@ -16,8 +16,8 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / ".github" / "mutants.py"
 REQUEST_ID = "MUTANTS-TEST-1-1"
 REVISION = "test-revision"
-BUILD_ARGV = ["cargo", "test", "--no-run", "--profile=test", "--verbose", "--workspace"]
-TEST_ARGV = ["cargo", "test", "--profile=test", "--verbose", "--workspace"]
+BUILD_ARGV = ["cargo", "nextest", "run", "--no-run", "--cargo-profile=test", "--verbose", "--workspace"]
+TEST_ARGV = ["cargo", "nextest", "run", "--cargo-profile=test", "--verbose", "--workspace"]
 
 
 def load_runner():
@@ -55,7 +55,7 @@ def list_command():
 
 
 def baseline_command():
-    return [*RUNNER_MODULE.CARGO, "test", "--workspace", "--profile", "test"]
+    return [*RUNNER_MODULE.CARGO, "nextest", "run", "--workspace", "--cargo-profile", "test"]
 
 
 def mutation_command(index, count):
@@ -88,7 +88,7 @@ def make_outcomes(mutants):
         else:
             rows.append({"scenario": scenario, "summary": "CaughtMutant",
                          "log_path": "log/mutant.log", "diff_path": "diff/mutant.diff",
-                         "phase_results": [phase("Build", "Success"), phase("Test", {"Failure": 101})]})
+                         "phase_results": [phase("Build", "Success"), phase("Test", {"Failure": 100})]})
             caught += 1
     return {"outcomes": rows, "total_mutants": len(mutants), "missed": 0,
             "caught": caught, "timeout": 0, "unviable": unviable, "success": 0,
@@ -348,11 +348,24 @@ class AggregateContractTests(unittest.TestCase):
             build_fixture(directory)
 
             def transform(value):
-                value["outcomes"][0]["phase_results"][1]["process_status"] = {"Failure": 101}
+                value["outcomes"][0]["phase_results"][1]["process_status"] = {"Failure": 100}
 
             self.mutate_outcomes(directory, 0, transform)
             process = self.run_aggregate(directory)
             self.assert_rejected(process, "Mutation baseline phases differ", directory)
+
+    def test_cargo_test_outcome_fails_the_aggregate(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = pathlib.Path(raw)
+            build_fixture(directory)
+
+            def transform(value):
+                value["outcomes"][-1]["phase_results"][-1]["argv"] = [
+                    "cargo", "test", "--profile=test", "--verbose", "--workspace"]
+
+            self.mutate_outcomes(directory, 0, transform)
+            process = self.run_aggregate(directory)
+            self.assert_rejected(process, "Mutation test scope or profile differs", directory)
 
     def test_timed_out_outcome_fails_the_aggregate(self):
         with tempfile.TemporaryDirectory() as raw:

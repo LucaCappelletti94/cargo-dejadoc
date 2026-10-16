@@ -19,8 +19,9 @@ CLEANUP_SECONDS = 5
 CARGO = [
     "taskset", "-c", "0,1", "nice", "-n", "10", "env",
     "RUSTC_WRAPPER=sccache", "CARGO_BUILD_JOBS=2",
-    "CARGO_PROFILE_TEST_DEBUG=0", "cargo",
+    "CARGO_PROFILE_TEST_DEBUG=0", "NEXTEST_PROFILE=mutants", "cargo",
 ]
+BASELINE = [*CARGO, "nextest", "run", "--workspace", "--cargo-profile", "test"]
 EXCLUSIONS = (
     r'delete match arm (syn::)?(ImplItem|TraitItem|ForeignItem)::Macro\(m\) in (impl_member|trait_member|foreign_member)',
     r'replace match guard mac\.path\.is_ident\("concat"\) with true',
@@ -41,7 +42,7 @@ EXCLUSIONS = (
 SELECTOR = [
     "--workspace", "--cap-lints", "true", "--timeout", "180",
     "--test-workspace", "true", "--jobs", "2", "--jobserver-tasks", "2",
-    "--profile", "test", "--no-shuffle",
+    "--test-tool", "nextest", "--profile", "test", "--no-shuffle",
     *(arg for expression in EXCLUSIONS for arg in ("-E", expression)),
 ]
 
@@ -169,7 +170,7 @@ def validate_outcomes(folder, expected):
                 (["Build", "Test"] if summary == "CaughtMutant" else ["Build"]),
                 "Mutation terminal phases differ")
         for phase in phases:
-            require("--workspace" in phase["argv"] and "--profile=test" in phase["argv"],
+            require("--workspace" in phase["argv"] and "--cargo-profile=test" in phase["argv"],
                     "Mutation test scope or profile differs")
         if summary == "CaughtMutant":
             require(phases[0]["process_status"] == "Success", "Caught mutation build failed")
@@ -198,11 +199,10 @@ def run_shard(args, value, deadline):
     try:
         mutants = enumerate_mutants(shard_id, deadline, output)
         require(mutants == value["mutants"], "Workspace enumeration differs from inventory")
-        baseline_command = [*CARGO, "test", "--workspace", "--profile", "test"]
-        receipt["baseline"] = run(baseline_command, request_id=f"{shard_id}/baseline",
+        receipt["baseline"] = run(BASELINE, request_id=f"{shard_id}/baseline",
                                   deadline=deadline, output=output / "workspace-baseline.log")
         save(output / "receipt.json", receipt)
-        successful(receipt["baseline"], f"{shard_id}/baseline", baseline_command)
+        successful(receipt["baseline"], f"{shard_id}/baseline", BASELINE)
         mutation_command = [*CARGO, "mutants", *SELECTOR, "--shard",
                             f"{args.index}/{len(slices)}", "--sharding", "slice"]
         receipt["mutation"] = run(mutation_command, request_id=f"{shard_id}/mutants",
@@ -240,8 +240,7 @@ def aggregate(args, value, deadline):
                    f"{shard_id}/list", [*CARGO, "mutants", *SELECTOR, "--list", "--json"])
         require(load(folder / "mutation-results" / "list.json") == value["mutants"],
                 "Shard workspace inventory differs")
-        successful(receipt["baseline"], f"{shard_id}/baseline",
-                   [*CARGO, "test", "--workspace", "--profile", "test"])
+        successful(receipt["baseline"], f"{shard_id}/baseline", BASELINE)
         successful(receipt["mutation"], f"{shard_id}/mutants",
                    [*CARGO, "mutants", *SELECTOR, "--shard", f"{index}/{len(slices)}",
                     "--sharding", "slice"])
