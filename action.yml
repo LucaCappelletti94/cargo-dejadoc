@@ -60,7 +60,7 @@ inputs:
     required: false
     default: 'true'
   mode:
-    description: "review posts the findings in one job, prepare writes the payload for a later job, post consumes it"
+    description: "review posts the findings in one job, while prepare and post split it so a workflow_run job can review a fork's pull request"
     required: false
     default: 'review'
   payload:

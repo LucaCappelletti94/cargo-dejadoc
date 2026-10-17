@@ -79,7 +79,8 @@ impl Dejadoc {
         self
     }
 
-    /// Run the duplicate function check, off by default.
+    /// Run the duplicate function check within each module across targets and `cfg` variants,
+    /// off by default.
     #[must_use]
     pub fn functions(mut self) -> Self {
         self.functions = true;
@@ -94,7 +95,8 @@ impl Dejadoc {
         self
     }
 
-    /// Run approximate lexical context-block detection, off by default.
+    /// Run approximate lexical context-block detection, whose groups name no copy to keep, off
+    /// by default.
     #[must_use]
     pub fn context_blocks(mut self) -> Self {
         self.context_blocks = true;
@@ -108,7 +110,8 @@ impl Dejadoc {
         self
     }
 
-    /// Scan files marked generated, which are skipped otherwise.
+    /// Scan files whose first five lines contain `@generated` or
+    /// `// Code generated … DO NOT EDIT.`, skipped otherwise.
     #[must_use]
     pub fn scan_generated(mut self) -> Self {
         self.scan_generated = true;
@@ -494,7 +497,7 @@ pub struct ContextSite {
     pub file: String,
     /// First source line, 1-based.
     pub line: u32,
-    /// First source byte column, 1-based.
+    /// First source byte column, 1-based, in the original file bytes including any BOM or shebang.
     pub column: usize,
     /// Last source line, 1-based.
     pub end: u32,

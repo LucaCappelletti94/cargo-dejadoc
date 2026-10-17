@@ -51,6 +51,15 @@ pub struct ContextWork {
 }
 
 /// Emit each original lexical context once, normalized against its visible declarations.
+///
+/// ```
+/// let forms = |source: &str| {
+///     let mut forms = Vec::new();
+///     syn_canon::contexts(&syn::parse_str(source).unwrap(), &mut |_, form| forms.push(form));
+///     forms
+/// };
+/// assert_eq!(forms("fn f(x: u32) -> u32 { x + x }"), forms("fn g(y: u32) -> u32 { y + y }"));
+/// ```
 pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, CanonicalForm)) -> ContextWork {
     let mut walker = Walker {
         frames: vec![Frame::default()],

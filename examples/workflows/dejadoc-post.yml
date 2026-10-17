@@ -1,0 +1,23 @@
+name: dejadoc-post
+on:
+  workflow_run:
+    workflows: [dejadoc]
+    types: [completed]
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      pull-requests: write
+    # This job holds a write token, so it must never check out or run pull-request code.
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ github.token }}
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          mode: post
+          payload: dejadoc-payload

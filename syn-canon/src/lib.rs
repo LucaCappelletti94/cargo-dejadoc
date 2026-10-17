@@ -27,13 +27,50 @@ pub use blocks::{Context, ContextKind, ContextWork, contexts};
 pub use context::{FunctionView, SourceContext};
 pub use form::CanonicalForm;
 
-/// The canonical form of compiling syntax.
+/// The canonical form of compiling syntax, equal across style folds, binder names and proven
+/// rewrites.
+///
+/// ```
+/// let form = |source: &str| syn_canon::canonicalize(syn::parse_str(source).unwrap());
+/// for (written, folded) in [
+///     ("use std::{io, fmt}; fn f() {}", "use std::fmt; use std::io; fn f() {}"),
+///     ("fn f(x: u8) -> u8 { match x { 0 => { 1 }, _ => 2, } }", "fn f(x: u8) -> u8 { match x { 0 => 1, _ => 2 } }"),
+///     ("fn f(p: bool) -> u8 { if p { 1 } else { if !p { 2 } else { 3 } } }", "fn f(p: bool) -> u8 { if p { 1 } else if !p { 2 } else { 3 } }"),
+///     ("fn f() -> u8 { return 1; }", "fn f() -> u8 { 1 }"),
+///     ("fn f() -> () { g((1)); }", "fn f() { g(1); }"),
+///     ("fn f(mut x: u8) -> u8 { x }", "fn f(x: u8) -> u8 { x }"),
+///     ("fn f<T: Clone>(t: T) -> T { t }", "fn f<T>(t: T) -> T where T: Clone { t }"),
+///     ("fn f(x: u8) { println!(\"{}\", x); }", "fn f(x: u8) { println!(\"{x}\"); }"),
+///     ("fn f() { g(0x10, vec![1, 2,]); }", "fn f() { g(16, vec![1, 2]); }"),
+///     ("#[derive(Debug)] #[derive(Clone)] struct S;", "#[derive(Clone, Debug)] struct S;"),
+///     ("/// Docs.\nfn f() {}", "fn f() {}"),
+///     ("pub(in crate) fn f() {}", "pub(crate) fn f() {}"),
+///     ("fn f() -> u8 { (2u8 + 3u8) * 4u8 }", "fn f() -> u8 { 20u8 }"),
+///     ("fn f(a: u32, b: u32) -> u32 { (a ^ 1u32) ^ b }", "fn g(x: u32, y: u32) -> u32 { y ^ (1u32 ^ x) }"),
+///     ("fn f(a: u32, b: u32) -> bool { a >= b }", "fn g(x: u32, y: u32) -> bool { y <= x }"),
+///     ("fn f(p: bool, q: bool) -> bool { !(!!p && (q == true)) }", "fn g(x: bool, y: bool) -> bool { !x || !y }"),
+///     ("fn f(i: u32) -> u32 { let m = i & 15u32; let c = m; c ^ 3u32 }", "fn g(i: u32) -> u32 { (i & 15u32) ^ 3u32 }"),
+///     ("struct S { x: u32, y: u32 } fn f() -> S { S { x: 1u32, y: 2u32 } }", "struct S { x: u32, y: u32 } fn f() -> S { S { y: 2u32, x: 1u32 } }"),
+///     ("fn f(i: u32) -> bool { match i { 1 | 2 => true, _ => false } }", "fn f(i: u32) -> bool { match i { 2 | 1 => true, _ => false } }"),
+///     ("struct S; impl S { fn one() -> u32 { 1 } } impl S { fn two() -> u32 { 2 } }", "struct S; impl S { fn two() -> u32 { 2 } fn one() -> u32 { 1 } }"),
+/// ] {
+///     assert_eq!(form(written), form(folded), "{written}");
+/// }
+/// assert_ne!(form("fn f() -> u8 { (255u8 + 1u8) - 1u8 }"), form("fn f() -> u8 { 255u8 }"));
+/// ```
 #[must_use]
 pub fn canonicalize(file: syn::File) -> CanonicalForm {
     canonical(file, true)
 }
 
-/// The canonical form preserving compilation-failure distinctions.
+/// The canonical form preserving compilation-failure distinctions, for code meant to fail to
+/// compile.
+///
+/// ```
+/// let form = |source: &str| syn_canon::canonicalize_failing(syn::parse_str(source).unwrap());
+/// assert_ne!(form("fn f(mut x: u8) -> u8 { x }"), form("fn f(x: u8) -> u8 { x }"));
+/// assert_ne!(form("fn f() -> u8 { (2u8 + 3u8) * 4u8 }"), form("fn f() -> u8 { 20u8 }"));
+/// ```
 #[must_use]
 pub fn canonicalize_failing(file: syn::File) -> CanonicalForm {
     canonical(file, false)
