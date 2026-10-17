@@ -123,4 +123,13 @@ fn a_super_glob_reads_the_formatting_macros_of_the_parent_module() {
         capture("use count::Other;", "x"),
         capture("use count::Other;", "y")
     );
+    let past_root = |name: &str| {
+        module_view(
+            "",
+            &format!(
+                "use super::super::*;\nfn f({name}: u8) -> String {{ format!(\"{{{name}}}\") }}"
+            ),
+        )
+    };
+    assert_ne!(past_root("x"), past_root("y"));
 }

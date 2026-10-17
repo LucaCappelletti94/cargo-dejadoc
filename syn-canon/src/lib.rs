@@ -4191,6 +4191,14 @@ mod tests {
                 "{root} {inner}"
             );
         }
+        let nested = |format: &str| {
+            source(
+                "use count::format;",
+                "",
+                &format!("println!(\"{{}}\", {{ use super::*; format!({format}) }})"),
+            )
+        };
+        assert_ne!(nested("\"{}\", x"), nested("\"{x}\""));
     }
 
     #[test]
