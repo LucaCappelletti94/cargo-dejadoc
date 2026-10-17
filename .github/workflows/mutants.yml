@@ -12,7 +12,8 @@ permissions:
 
 concurrency:
   group: mutants-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
+  # A push to `main` runs to the end, and only the newest waiting push follows it.
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 env:
   CARGO_TERM_COLOR: always
