@@ -4097,6 +4097,11 @@ mod tests {
                 "outer!(println!(\"{x}\"))",
             ),
             (
+                "",
+                "outer::fmt::println!(\"{}\", x)",
+                "outer::fmt::println!(\"{x}\")",
+            ),
+            (
                 local,
                 "format!(\"{}\", println!(\"{}\", x))",
                 "format!(\"{}\", println!(\"{x}\"))",

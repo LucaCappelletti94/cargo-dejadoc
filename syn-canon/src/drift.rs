@@ -817,17 +817,17 @@ impl Drift<'_> {
         }
     }
 
-    /// The std names the scopes around the current node may bind to something else, all of
-    /// them past the innermost module scope when none is known.
+    /// The std names the scopes from the innermost module scope inward may bind to something
+    /// else.
     fn rebound_names(&self) -> u32 {
-        let mut rebound = self.file_rebound;
-        for scope in self.std_scopes.iter().rev() {
-            rebound |= scope.rebound;
-            if scope.module {
-                return rebound;
-            }
-        }
-        StdScope::ALL
+        let module = self
+            .std_scopes
+            .iter()
+            .rposition(|scope| scope.module)
+            .expect("a drift pass starts at a module scope");
+        self.std_scopes[module..]
+            .iter()
+            .fold(self.file_rebound, |rebound, scope| rebound | scope.rebound)
     }
 
     /// Fold a function body's tail `return`, and its tail semicolon when the
