@@ -126,6 +126,8 @@ pub(crate) fn canonical_file_with_options(
 /// The original proof backing of one item's comparison projection.
 pub(crate) struct PayloadProof<'a> {
     pub(crate) table: Option<&'a crate::helpers::HelperTable>,
+    /// The scopes around the item leave every std formatting macro name bound to the std macro.
+    pub(crate) std_names: bool,
     pub(crate) frame: &'a crate::scope::Frame,
     pub(crate) syntax: crate::helpers::HelperSyntax,
     pub(crate) edges: MarkerEdges,
@@ -220,7 +222,7 @@ pub(crate) fn item_payload(
             prim_fallback: true,
             observed: false,
             enclosing_observed: false,
-            std_derives: false,
+            std_names: proof.std_names,
             helper_table: proof.table,
             helper_module: &[],
             helper_blocked: false,
@@ -268,7 +270,7 @@ fn canonical_file(
         compiles,
         &mut helper_syntax,
         options.enclosing_observed,
-        options.std_derives,
+        options.std_names,
     );
     let options = crate::alpha::Options {
         helper_table,

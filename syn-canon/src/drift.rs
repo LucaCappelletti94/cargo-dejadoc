@@ -79,14 +79,14 @@ fn canon_float_str(s: &str) -> String {
 
 /// Fold arm braces, doc attributes, and `use` shapes in place. When `compiles`, also fold the
 /// spellings only a compiling program makes equivalent. An `observed` file is the input of an
-/// enclosing attribute macro and keeps its spelling. With `std_derives`, the scopes around the
-/// file leave every std derive name bound to the std derive.
+/// enclosing attribute macro and keeps its spelling. With `std_names`, the scopes around the
+/// file leave every std derive, formatting macro and crate root bound to the std item.
 pub(crate) fn normalize_file(
     file: &mut syn::File,
     compiles: bool,
     helpers: &mut crate::helpers::HelperSyntax,
     observed: bool,
-    std_derives: bool,
+    std_names: bool,
 ) {
     if compiles {
         if !observed {
@@ -104,7 +104,7 @@ pub(crate) fn normalize_file(
     }
     Drift {
         compiles,
-        std_derives,
+        std_names,
         helpers: Some(&mut *helpers),
         ..Drift::default()
     }
@@ -112,19 +112,38 @@ pub(crate) fn normalize_file(
     helpers.retain_file(file);
 }
 
-/// The parse-only drift of one block, for an independent context normalization.
-pub(crate) fn normalize_block(block: &mut syn::Block) {
-    Drift::default().visit_block_mut(block);
+/// The parse-only drift of one block, for an independent context normalization inside the
+/// scopes `frames` record.
+pub(crate) fn normalize_block(block: &mut syn::Block, frames: &[crate::scope::Frame]) {
+    Drift::within(frames).visit_block_mut(block);
 }
 
-/// The parse-only drift of one match arm, for an independent context normalization.
-pub(crate) fn normalize_arm(arm: &mut syn::Arm) {
-    Drift::default().visit_arm_mut(arm);
+/// The parse-only drift of one match arm, for an independent context normalization inside the
+/// scopes `frames` record.
+pub(crate) fn normalize_arm(arm: &mut syn::Arm, frames: &[crate::scope::Frame]) {
+    Drift::within(frames).visit_arm_mut(arm);
 }
 
-/// The parse-only drift of one expression, for an independent context normalization.
-pub(crate) fn normalize_expr(expr: &mut syn::Expr) {
-    Drift::default().visit_expr_mut(expr);
+/// The parse-only drift of one expression, for an independent context normalization inside
+/// the scopes `frames` record.
+pub(crate) fn normalize_expr(expr: &mut syn::Expr, frames: &[crate::scope::Frame]) {
+    Drift::within(frames).visit_expr_mut(expr);
+}
+
+/// The std names the scopes `frames` record bind to something else.
+fn frames_rebound(frames: &[crate::scope::Frame]) -> u32 {
+    use crate::scope::Ns;
+
+    let imported = frames
+        .iter()
+        .fold(0, |rebound, frame| rebound | frame.std_rebound);
+    STD_DERIVES
+        .into_iter()
+        .chain(FORMAT_MACROS.map(|(name, _, _)| name))
+        .map(|name| (Ns::Macro, name))
+        .chain(CRATE_ROOTS.map(|name| (Ns::Type, name)))
+        .filter(|&(ns, name)| frames.iter().any(|frame| frame.lookup(ns, name).is_some()))
+        .fold(imported, |rebound, (_, name)| rebound | std_name_bit(name))
 }
 
 /// The parse-only tail-return fold of a function body.
@@ -136,22 +155,18 @@ pub(crate) fn fold_fn_body(block: &mut syn::Block) {
 /// procedural derive reads keeps its spelling, apart from the block `use` hoisting name
 /// resolution relies on.
 #[derive(Default)]
-#[expect(
-    clippy::struct_excessive_bools,
-    reason = "compilation, impl header position and derive scope knowledge are independent"
-)]
 struct Drift<'a> {
     /// The code compiles, so an unneeded `mut` and the semicolon of a `()` block fold.
     compiles: bool,
     /// Inside an impl header's trait path or self type, where a path may not
     /// elide its lifetime (E0726).
     in_impl_header: bool,
-    /// The scopes around the file leave every std derive name bound to the std derive.
-    std_derives: bool,
-    /// The crate root holds a `#[macro_use] extern crate`, which may bind any std derive name.
-    macro_use: bool,
-    /// The derive bindings of the scopes around the current node, innermost last.
-    derive_scopes: Vec<DeriveScope>,
+    /// The scopes around the file leave every std name bound to the std item.
+    std_names: bool,
+    /// The std names the file rebinds wherever it sits.
+    file_rebound: u32,
+    /// The std name bindings of the scopes around the current node, innermost last.
+    std_scopes: Vec<StdScope>,
     helpers: Option<&'a mut crate::helpers::HelperSyntax>,
 }
 
@@ -165,10 +180,10 @@ impl VisitMut for Drift<'_> {
             self.observed().visit_file_mut(file);
             return;
         }
-        self.macro_use = file.items.iter().any(macro_use_crate);
-        let mut root = DeriveScope::of(file.items.iter(), true);
-        if !self.std_derives {
-            root.rebound = DeriveScope::ALL;
+        self.file_rebound = file_rebound(file);
+        let mut root = StdScope::of(file.items.iter(), true);
+        if !self.std_names {
+            root.rebound = StdScope::ALL;
         }
         hoist_uses(
             &mut file.items,
@@ -178,9 +193,9 @@ impl VisitMut for Drift<'_> {
             },
             syn::Item::Use,
         );
-        self.derive_scopes.push(root);
+        self.std_scopes.push(root);
         syn::visit_mut::visit_file_mut(self, file);
-        self.derive_scopes.pop();
+        self.std_scopes.pop();
     }
 
     #[expect(
@@ -212,7 +227,7 @@ impl VisitMut for Drift<'_> {
                 .expect("tracked helper syntax")
                 .put_block(block, handles);
         }
-        self.derive_scopes.push(DeriveScope::of(
+        self.std_scopes.push(StdScope::of(
             block.stmts.iter().filter_map(|stmt| match stmt {
                 syn::Stmt::Item(item) => Some(item),
                 _ => None,
@@ -220,16 +235,16 @@ impl VisitMut for Drift<'_> {
             false,
         ));
         syn::visit_mut::visit_block_mut(self, block);
-        self.derive_scopes.pop();
+        self.std_scopes.pop();
     }
 
     fn visit_item_mod_mut(&mut self, node: &mut syn::ItemMod) {
         let Some((_, items)) = &node.content else {
             return;
         };
-        self.derive_scopes.push(DeriveScope::of(items.iter(), true));
+        self.std_scopes.push(StdScope::of(items.iter(), true));
         syn::visit_mut::visit_item_mod_mut(self, node);
-        self.derive_scopes.pop();
+        self.std_scopes.pop();
     }
 
     fn visit_item_fn_mut(&mut self, node: &mut syn::ItemFn) {
@@ -677,13 +692,13 @@ impl VisitMut for Drift<'_> {
 
     fn visit_expr_macro_mut(&mut self, node: &mut syn::ExprMacro) {
         normalize_macro_delim(&mut node.mac);
-        inline_format_args(&mut node.mac);
+        inline_format_args(&mut node.mac, self.rebound_names());
         syn::visit_mut::visit_expr_macro_mut(self, node);
     }
 
     fn visit_stmt_macro_mut(&mut self, node: &mut syn::StmtMacro) {
         normalize_macro_delim(&mut node.mac);
-        inline_format_args(&mut node.mac);
+        inline_format_args(&mut node.mac, self.rebound_names());
         syn::visit_mut::visit_stmt_macro_mut(self, node);
     }
 
@@ -750,6 +765,17 @@ impl VisitMut for ObservedUses<'_> {
 }
 
 impl Drift<'_> {
+    /// The parse-only drift of a context inside the scopes `frames` record.
+    fn within(frames: &[crate::scope::Frame]) -> Self {
+        Drift {
+            std_scopes: Vec::from([StdScope {
+                module: true,
+                rebound: frames_rebound(frames),
+            }]),
+            ..Drift::default()
+        }
+    }
+
     /// The visitor of a node a macro reads.
     fn observed(&mut self) -> ObservedUses<'_> {
         ObservedUses {
@@ -762,7 +788,7 @@ impl Drift<'_> {
     fn mark_rebound_derives(&self, attrs: &mut [syn::Attribute]) {
         use syn::parse::Parser;
 
-        let rebound = self.rebound_derives();
+        let rebound = self.rebound_names();
         if rebound == 0 {
             return;
         }
@@ -791,20 +817,17 @@ impl Drift<'_> {
         }
     }
 
-    /// The std derive names the scopes around the current node may bind to another
-    /// macro, all of them past the innermost module scope when none is known.
-    fn rebound_derives(&self) -> u16 {
-        if self.macro_use {
-            return DeriveScope::ALL;
-        }
-        let mut rebound = 0;
-        for scope in self.derive_scopes.iter().rev() {
+    /// The std names the scopes around the current node may bind to something else, all of
+    /// them past the innermost module scope when none is known.
+    fn rebound_names(&self) -> u32 {
+        let mut rebound = self.file_rebound;
+        for scope in self.std_scopes.iter().rev() {
             rebound |= scope.rebound;
             if scope.module {
                 return rebound;
             }
         }
-        DeriveScope::ALL
+        StdScope::ALL
     }
 
     /// Fold a function body's tail `return`, and its tail semicolon when the
@@ -1395,68 +1418,177 @@ pub(crate) const STD_DERIVES: [&str; 9] = [
     "PartialOrd",
 ];
 
-/// The std derive names one scope's items may rebind to another macro, a bit per
-/// [`STD_DERIVES`] entry, every bit set by a glob that can bring any of them in.
-#[derive(Clone, Copy)]
-struct DeriveScope {
-    /// A module scope, whose bindings hide nothing from the scopes outside it.
-    module: bool,
-    rebound: u16,
+/// The std formatting macros, each with its format string's index among the arguments and
+/// whether it is a panic, whose lone literal before edition 2021 is no format string.
+const FORMAT_MACROS: [(&str, usize, bool); 18] = [
+    ("print", 0, false),
+    ("println", 0, false),
+    ("eprint", 0, false),
+    ("eprintln", 0, false),
+    ("format", 0, false),
+    ("format_args", 0, false),
+    ("write", 1, false),
+    ("writeln", 1, false),
+    ("panic", 0, true),
+    ("unreachable", 0, true),
+    ("todo", 0, true),
+    ("unimplemented", 0, true),
+    ("assert", 1, true),
+    ("debug_assert", 1, true),
+    ("assert_eq", 2, true),
+    ("assert_ne", 2, true),
+    ("debug_assert_eq", 2, true),
+    ("debug_assert_ne", 2, true),
+];
+
+/// The crate roots the paths of std macros start from.
+const CRATE_ROOTS: [&str; 3] = ["std", "core", "alloc"];
+
+/// The bit of a std name a local binding can change, a std derive, a std formatting macro or a
+/// crate root, zero for any other name.
+pub(crate) fn std_name_bit(name: &str) -> u32 {
+    STD_DERIVES
+        .into_iter()
+        .chain(FORMAT_MACROS.map(|(name, _, _)| name))
+        .chain(CRATE_ROOTS)
+        .position(|std| std == name)
+        .map_or(0, |index| 1 << index)
 }
 
-impl DeriveScope {
-    const ALL: u16 = (1 << STD_DERIVES.len()) - 1;
+/// The std names one scope's items may rebind, a bit per name, every bit set by a glob whose
+/// module may hold a macro or a derive under a std name.
+#[derive(Clone, Copy)]
+struct StdScope {
+    /// A module scope, whose bindings hide nothing from the scopes outside it.
+    module: bool,
+    rebound: u32,
+}
+
+impl StdScope {
+    const ALL: u32 = ALL_STD_NAMES;
 
     fn of<'a>(items: impl Iterator<Item = &'a syn::Item>, module: bool) -> Self {
-        Self {
-            module,
-            rebound: items.fold(0, |rebound, item| match item {
-                syn::Item::Use(item) => rebound | rebound_derives(&item.tree, false),
-                _ => rebound,
-            }),
+        let mut scope = Self { module, rebound: 0 };
+        for item in items {
+            scope.bind(item);
+        }
+        scope
+    }
+
+    /// Add the std names `item` binds to something else. A type-namespace item can only hide
+    /// a crate root, a derive or a macro lives in the macro namespace.
+    fn bind(&mut self, item: &syn::Item) {
+        let bit = |ident: &syn::Ident| std_name_bit(&crate::scope::ident_name(ident));
+        let root = |ident: &syn::Ident| {
+            let name = crate::scope::ident_name(ident);
+            if CRATE_ROOTS.contains(&name.as_str()) {
+                std_name_bit(&name)
+            } else {
+                0
+            }
+        };
+        let bits = match item {
+            syn::Item::Use(item) => {
+                self.bind_tree(&item.tree, &mut Vec::new());
+                0
+            }
+            syn::Item::ExternCrate(krate) => krate
+                .rename
+                .as_ref()
+                .filter(|(_, rename)| *rename != krate.ident)
+                .map_or(0, |(_, rename)| root(rename)),
+            syn::Item::Macro(syn::ItemMacro {
+                ident: Some(ident), ..
+            }) => bit(ident),
+            _ => crate::alpha::type_item_ident(item).map_or(0, root),
+        };
+        self.rebound |= bits;
+    }
+
+    /// Add the std names `tree` binds to anything but the std item of that name. A path through
+    /// a crate root re-exports the std derive or macro under its own name, and every other
+    /// binding of the name may be another macro.
+    fn bind_tree<'a>(&mut self, tree: &'a syn::UseTree, prefix: &mut Vec<&'a syn::Ident>) {
+        let bit = |ident: &syn::Ident| std_name_bit(&crate::scope::ident_name(ident));
+        let from_std = std_rooted(prefix);
+        match tree {
+            syn::UseTree::Path(path) => {
+                prefix.push(&path.ident);
+                self.bind_tree(&path.tree, prefix);
+                prefix.pop();
+            }
+            syn::UseTree::Name(_) | syn::UseTree::Glob(_) if from_std => {}
+            syn::UseTree::Name(name) => self.rebound |= bit(&name.ident),
+            syn::UseTree::Rename(rename) if from_std && rename.ident == rename.rename => {}
+            syn::UseTree::Rename(rename) => self.rebound |= bit(&rename.rename),
+            syn::UseTree::Glob(_) => self.rebound = Self::ALL,
+            syn::UseTree::Group(group) => {
+                for tree in &group.items {
+                    self.bind_tree(tree, prefix);
+                }
+            }
         }
     }
 }
 
-/// The std derive names `tree` binds to anything but the std derive of that name. A
-/// path through `std` or `core` re-exports the derive under its own name, and every
-/// other binding of the name may be a procedural macro.
-fn rebound_derives(tree: &syn::UseTree, from_std: bool) -> u16 {
-    let bit = |ident: &syn::Ident| {
-        let name = crate::scope::ident_name(ident);
-        STD_DERIVES
-            .iter()
-            .position(|std| *std == name)
-            .map_or(0, |index| 1 << index)
-    };
-    match tree {
-        syn::UseTree::Path(path) => rebound_derives(
-            &path.tree,
-            from_std || ["std", "core"].iter().any(|root| path.ident == root),
-        ),
-        syn::UseTree::Name(_) | syn::UseTree::Glob(_) if from_std => 0,
-        syn::UseTree::Name(name) => bit(&name.ident),
-        syn::UseTree::Rename(rename) if from_std && rename.ident == rename.rename => 0,
-        syn::UseTree::Rename(rename) => bit(&rename.rename),
-        syn::UseTree::Glob(_) => DeriveScope::ALL,
-        syn::UseTree::Group(group) => group
-            .items
-            .iter()
-            .fold(0, |rebound, tree| rebound | rebound_derives(tree, from_std)),
+/// Whether the `use` path `prefix` starts at a std crate root, whose names are the std items
+/// themselves. An ambiguity with a local module of that name is an error.
+pub(crate) fn std_rooted<S: ?Sized + PartialEq<str>>(prefix: &[&S]) -> bool {
+    prefix
+        .first()
+        .is_some_and(|first| CRATE_ROOTS.iter().any(|root| **first == **root))
+}
+
+/// Every std name bit of [`std_name_bit`].
+pub(crate) const ALL_STD_NAMES: u32 =
+    (1 << (STD_DERIVES.len() + FORMAT_MACROS.len() + CRATE_ROOTS.len())) - 1;
+
+/// The std name bit an import of `prefix` under `alias` rebinds, zero for a path through a std
+/// crate root that keeps the std item under its own name.
+pub(crate) fn import_rebound<S: ?Sized + PartialEq<str>>(
+    prefix: &[&S],
+    name: &str,
+    alias: &str,
+) -> u32 {
+    if std_rooted(prefix) && name == alias {
+        0
+    } else {
+        std_name_bit(alias)
     }
 }
 
-/// Whether `item` is a `#[macro_use] extern crate`, whose derives the whole crate sees
-/// ahead of the std ones.
-pub(crate) fn macro_use_crate(item: &syn::Item) -> bool {
-    matches!(item, syn::Item::ExternCrate(krate)
-        if krate.attrs.iter().any(|attr| attr.path().is_ident("macro_use")))
+/// The std names a file rebinds wherever it sits, by a `macro_rules!` definition of the name,
+/// whose textual scope reaches past its module, or by a `#[macro_use] extern crate`, whose
+/// macros the whole crate sees ahead of the std ones.
+pub(crate) fn file_rebound(file: &syn::File) -> u32 {
+    struct Definitions(u32);
+
+    impl<'ast> syn::visit::Visit<'ast> for Definitions {
+        fn visit_item_macro(&mut self, item: &'ast syn::ItemMacro) {
+            if let Some(ident) = &item.ident {
+                self.0 |= std_name_bit(&crate::scope::ident_name(ident));
+            }
+        }
+
+        fn visit_item_extern_crate(&mut self, krate: &'ast syn::ItemExternCrate) {
+            if krate
+                .attrs
+                .iter()
+                .any(|attr| attr.path().is_ident("macro_use"))
+            {
+                self.0 = StdScope::ALL;
+            }
+        }
+    }
+
+    let mut definitions = Definitions(0);
+    syn::visit::visit_file(&mut definitions, file);
+    definitions.0
 }
 
-/// Whether a module whose crate root holds no `#[macro_use] extern crate` keeps every
-/// std derive name its `items` can see bound to the std derive.
-pub(crate) fn std_derives_visible(items: &[syn::Item]) -> bool {
-    DeriveScope::of(items.iter(), true).rebound == 0
+/// Whether a module's `items` leave every std name bound to the std item.
+pub(crate) fn std_names_visible(items: &[syn::Item]) -> bool {
+    StdScope::of(items.iter(), true).rebound == 0
 }
 
 /// Whether `attrs` derive anything outside the std derives, a proc macro that reads the item.
@@ -1873,61 +2005,103 @@ fn normalize_macro_delim(mac: &mut syn::Macro) {
     mac.delimiter = syn::MacroDelimiter::Paren(syn::token::Paren { span });
 }
 
-/// The format string's index among a std formatting macro's arguments, and
-/// whether the macro is a panic, whose lone literal before edition 2021 is
-/// no format string.
+/// The format string's index among a formatting macro's arguments and whether the macro is a
+/// panic, whose lone literal before edition 2021 is no format string, for a call whose last
+/// path segment spells a std formatting macro.
 pub(crate) fn format_operand(path: &syn::Path) -> Option<(usize, bool)> {
     let name = path.segments.last()?.ident.to_string();
-    Some(match name.as_str() {
-        "print" | "println" | "eprint" | "eprintln" | "format" | "format_args" => (0, false),
-        "write" | "writeln" => (1, false),
-        "panic" | "unreachable" | "todo" | "unimplemented" => (0, true),
-        "assert" | "debug_assert" => (1, true),
-        "assert_eq" | "assert_ne" | "debug_assert_eq" | "debug_assert_ne" => (2, true),
-        _ => return None,
-    })
+    FORMAT_MACROS
+        .iter()
+        .find(|(std, _, _)| *std == name)
+        .map(|&(_, at, panic)| (at, panic))
 }
 
-/// Move identifier arguments of a formatting macro into its format string,
-/// `println!("{}", x)` becoming `println!("{x}")`, in `mac` and in every
-/// formatting call among its arguments. Returns whether `mac` changed.
-fn inline_format_args(mac: &mut syn::Macro) -> bool {
+/// The [`format_operand`] of a call `path` proves to name a std formatting macro, with
+/// `rebound` the std names the scopes around the call bind to something else. A bare name
+/// needs its own name free, a `std::`, `alloc::format` or `core::format_args` path its root.
+fn std_format_operand(path: &syn::Path, rebound: u32) -> Option<(usize, bool)> {
+    let operand = format_operand(path)?;
+    let free = |ident: &syn::Ident| rebound & std_name_bit(&crate::scope::ident_name(ident)) == 0;
+    let leaf = &path.segments.last()?.ident;
+    let plain = path
+        .segments
+        .iter()
+        .all(|segment| segment.arguments.is_none());
+    let proven = match path.segments.len() {
+        1 => path.leading_colon.is_none() && free(leaf),
+        2 => {
+            let root = &path.segments[0].ident;
+            (root == "std"
+                || (root == "alloc" && leaf == "format")
+                || (root == "core" && leaf == "format_args"))
+                && (path.leading_colon.is_some() || free(root))
+        }
+        _ => false,
+    };
+    (plain && proven).then_some(operand)
+}
+
+/// Move identifier arguments of a std formatting macro into its format string,
+/// `println!("{}", x)` becoming `println!("{x}")`, in `mac` and in every proven formatting
+/// call among its arguments, with `rebound` the std names the scopes around `mac` bind to
+/// something else. Any other macro keeps its tokens as written. Returns whether `mac` changed.
+fn inline_format_args(mac: &mut syn::Macro, rebound: u32) -> bool {
     use syn::parse::Parser;
 
+    let Some((at, panic)) = std_format_operand(&mac.path, rebound) else {
+        return false;
+    };
     let parser = syn::punctuated::Punctuated::<syn::Expr, syn::Token![,]>::parse_terminated;
     let Ok(mut args) = parser.parse2(mac.tokens.clone()) else {
         return false;
     };
-    let mut nested = NestedFormat(false);
+    let mut nested = NestedFormat {
+        rebound,
+        changed: false,
+    };
     for arg in &mut args {
         nested.visit_expr_mut(arg);
     }
-    let inlined = inline_positional(&mac.path, &mut args);
-    if nested.0 || inlined {
+    let inlined = !panic && inline_positional(at, &mut args);
+    if nested.changed || inlined {
         mac.tokens = args.to_token_stream();
     }
-    nested.0 || inlined
+    nested.changed || inlined
 }
 
-/// Inlines the formatting calls inside a macro's arguments, which the
-/// drift visit never enters.
-struct NestedFormat(bool);
+/// Inlines the proven formatting calls inside a macro's arguments, which the drift visit never
+/// enters.
+struct NestedFormat {
+    rebound: u32,
+    changed: bool,
+}
 
 impl VisitMut for NestedFormat {
+    fn visit_block_mut(&mut self, block: &mut syn::Block) {
+        let outer = self.rebound;
+        self.rebound |= StdScope::of(
+            block.stmts.iter().filter_map(|stmt| match stmt {
+                syn::Stmt::Item(item) => Some(item),
+                _ => None,
+            }),
+            false,
+        )
+        .rebound;
+        syn::visit_mut::visit_block_mut(self, block);
+        self.rebound = outer;
+    }
+
     fn visit_macro_mut(&mut self, mac: &mut syn::Macro) {
-        self.0 |= inline_format_args(mac);
+        self.changed |= inline_format_args(mac, self.rebound);
     }
 }
 
-/// Inline the identifier arguments of `args` when `path` names a non-panic
-/// formatting macro. Returns whether anything moved.
+/// Inline the identifier arguments after the format string at `at` among `args`. Returns
+/// whether anything moved.
 fn inline_positional(
-    path: &syn::Path,
+    at: usize,
     args: &mut syn::punctuated::Punctuated<syn::Expr, syn::Token![,]>,
 ) -> bool {
-    let Some((at, false)) = format_operand(path) else {
-        return false;
-    };
     let positional: Vec<&syn::Expr> = args.iter().skip(at + 1).collect();
     if positional
         .iter()

@@ -318,6 +318,9 @@ impl Walker<'_> {
             syn::UseTree::Name(name) if name.ident == "self" => {
                 // `a::{self}` imports the module itself under its own name.
                 if let Some(alias) = prefix.last() {
+                    let segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
+                    self.frames.last_mut().expect("a scope frame").std_rebound |=
+                        crate::drift::import_rebound(&segments, alias, alias);
                     let (rooted, segments) =
                         resolve_target_path(&|name| self.resolve_first_seg(name), rooted, prefix);
                     self.bind_alias_target(rooted, segments, alias);
@@ -329,7 +332,14 @@ impl Walker<'_> {
             syn::UseTree::Rename(rename) => {
                 self.bind_alias_leaf(rooted, prefix, &rename.ident, &rename.rename);
             }
-            syn::UseTree::Glob(_) => {}
+            // A glob outside `std` can bring in a macro under any std name.
+            syn::UseTree::Glob(_) => {
+                let segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
+                if !crate::drift::std_rooted(&segments) {
+                    self.frames.last_mut().expect("a scope frame").std_rebound =
+                        crate::drift::ALL_STD_NAMES;
+                }
+            }
             syn::UseTree::Group(group) => {
                 for tree in &group.items {
                     self.bind_use_tree(rooted, prefix, tree);
@@ -347,6 +357,12 @@ impl Walker<'_> {
 
     /// Bind one `use` leaf that imports `ident` under `alias`.
     fn bind_alias_leaf(&mut self, rooted: bool, prefix: &[String], ident: &Ident, alias: &Ident) {
+        let segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
+        self.frames.last_mut().expect("a scope frame").std_rebound |= crate::drift::import_rebound(
+            &segments,
+            &crate::scope::ident_name(ident),
+            &crate::scope::ident_name(alias),
+        );
         let mut path = prefix.to_vec();
         path.push(ident.to_string());
         let (rooted, segments) =
@@ -501,6 +517,9 @@ impl Visit<'_> for Walker<'_> {
             &mut self.id,
             file.items.iter(),
         );
+        // A `macro_rules!` of a std name or a `#[macro_use] extern crate` can reach any call.
+        self.frames.last_mut().expect("a scope frame").std_rebound |=
+            crate::drift::file_rebound(file);
         self.bind_scope_uses(file.items.iter().filter_map(|item| match item {
             syn::Item::Use(u) => Some(u),
             _ => None,
@@ -917,7 +936,7 @@ impl Visit<'_> for Walker<'_> {
 /// Normalize one cloned function body against the inherited environment.
 fn build_function_body_form(inherited: Inherited<'_>, body: &syn::Block) -> CanonicalForm {
     let mut block = body.clone();
-    crate::drift::normalize_block(&mut block);
+    crate::drift::normalize_block(&mut block, inherited.frames);
     crate::drift::fold_fn_body(&mut block);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_block_mut(&mut block);
@@ -928,7 +947,7 @@ fn build_function_body_form(inherited: Inherited<'_>, body: &syn::Block) -> Cano
 /// Normalize one cloned block slot, a loop body or an `if` branch.
 fn build_block_slot_form(inherited: Inherited<'_>, block: &syn::Block) -> CanonicalForm {
     let mut block = block.clone();
-    crate::drift::normalize_block(&mut block);
+    crate::drift::normalize_block(&mut block, inherited.frames);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_block_mut(&mut block);
     let facts = renamer.into_reference_facts();
@@ -938,7 +957,7 @@ fn build_block_slot_form(inherited: Inherited<'_>, block: &syn::Block) -> Canoni
 /// Normalize one cloned block expression, the label and block included.
 fn build_block_expr_form(inherited: Inherited<'_>, expr: syn::Expr) -> CanonicalForm {
     let mut expr = expr;
-    crate::drift::normalize_expr(&mut expr);
+    crate::drift::normalize_expr(&mut expr, inherited.frames);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_expr_mut(&mut expr);
     let facts = renamer.into_reference_facts();
@@ -948,7 +967,7 @@ fn build_block_expr_form(inherited: Inherited<'_>, expr: syn::Expr) -> Canonical
 /// Normalize one cloned match arm.
 fn build_arm_form(inherited: Inherited<'_>, arm: &syn::Arm) -> CanonicalForm {
     let mut arm = arm.clone();
-    crate::drift::normalize_arm(&mut arm);
+    crate::drift::normalize_arm(&mut arm, inherited.frames);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_arm_mut(&mut arm);
     let facts = renamer.into_reference_facts();
@@ -958,7 +977,7 @@ fn build_arm_form(inherited: Inherited<'_>, arm: &syn::Arm) -> CanonicalForm {
 /// Normalize one cloned closure, inputs and body included.
 fn build_closure_form(inherited: Inherited<'_>, closure: &syn::ExprClosure) -> CanonicalForm {
     let mut expr = syn::Expr::Closure(closure.clone());
-    crate::drift::normalize_expr(&mut expr);
+    crate::drift::normalize_expr(&mut expr, inherited.frames);
     let mut renamer = Renamer::contextual(inherited);
     renamer.visit_expr_mut(&mut expr);
     let facts = renamer.into_reference_facts();

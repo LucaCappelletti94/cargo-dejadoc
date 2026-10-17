@@ -198,6 +198,9 @@ pub(crate) struct Frame {
     names: [BTreeMap<String, Binding>; 5],
     /// A glob import marked this scope uncertain.
     pub(crate) glob: bool,
+    /// The std derive, formatting macro and crate root names an import of this scope may bind
+    /// to something else, every one of them under a glob of an unknown module.
+    pub(crate) std_rebound: u32,
 }
 
 impl Frame {

@@ -44,8 +44,9 @@ pub(crate) struct Options<'a> {
     pub(crate) observed: bool,
     /// An attribute macro on an enclosing item reads the declaration as written.
     pub(crate) enclosing_observed: bool,
-    /// The scopes around the file leave every std derive name bound to the std derive.
-    pub(crate) std_derives: bool,
+    /// The scopes around the file leave every std derive, formatting macro and crate root bound
+    /// to the std item.
+    pub(crate) std_names: bool,
     /// The source context's helper summary table, when one is indexed.
     pub(crate) helper_table: Option<&'a crate::helpers::HelperTable>,
     pub(crate) helper_module: &'a [String],
@@ -243,6 +244,8 @@ pub(crate) struct Renamer<'env> {
     /// Unresolved type names may still spell a primitive, when no glob
     /// import can shadow them.
     prim_fallback: bool,
+    /// The scopes around the pass leave every std formatting macro name bound to the std macro.
+    std_names: bool,
     /// A live observer attribute froze the declarations being visited.
     observed: bool,
     constants_observed: bool,
@@ -294,6 +297,7 @@ impl<'env> Renamer<'env> {
             macro_supported: true,
             compiles: false,
             prim_fallback: false,
+            std_names: false,
             observed: false,
             constants_observed: false,
             constants_prepared: false,
@@ -335,6 +339,7 @@ impl<'env> Renamer<'env> {
         let mut renamer = Self::new();
         renamer.compiles = compiles;
         renamer.prim_fallback = options.prim_fallback;
+        renamer.std_names = options.std_names;
         renamer.observed = options.observed;
         renamer.seed = options.seed;
         renamer.generics = options.generics;
@@ -1155,6 +1160,48 @@ impl<'env> Renamer<'env> {
             || self.lookup(&[Ns::Macro], name).is_some()
     }
 
+    /// Whether a binding other than the std one may claim a formatting macro `name` in a file
+    /// pass. The scopes around the file must leave the std names in place, and no frame of the
+    /// pass may bind the name or import it from an unknown module.
+    fn format_shadowed(&self, name: &str) -> bool {
+        let bit = crate::drift::std_name_bit(name);
+        !self.std_names
+            || self.frames.iter().any(|frame| frame.std_rebound & bit != 0)
+            || self.lookup(&[Ns::Macro], name).is_some()
+    }
+
+    /// [`Self::format_shadowed`] for a context pass, which reads the imports its inherited
+    /// scopes record.
+    fn context_macro_shadowed(&self, name: &str) -> bool {
+        let bit = crate::drift::std_name_bit(name);
+        self.frames
+            .iter()
+            .chain(self.inherited.frames.iter())
+            .any(|frame| frame.std_rebound & bit != 0)
+            || self.lookup(&[Ns::Macro], name).is_some()
+    }
+
+    /// Whether `path` names a std formatting macro, `shadowed` telling a name some binding
+    /// claims. A bare name needs its own name free, a `std::`, `alloc::format` or
+    /// `core::format_args` path its root.
+    fn std_format_path(&self, path: &syn::Path, shadowed: fn(&Self, &str) -> bool) -> bool {
+        path.segments.first().is_some_and(|first| {
+            let head = crate::scope::ident_name(&first.ident);
+            if crate::drift::format_operand(path).is_none() || shadowed(self, &head) {
+                return false;
+            }
+            if path.segments.len() == 1 {
+                return true;
+            }
+            let leaf = crate::scope::ident_name(&path.segments.last().expect("a macro path").ident);
+            path.segments.len() == 2
+                && self.portable_first(&[Ns::Type], first)
+                && (head == "std"
+                    || (head == "alloc" && leaf == "format")
+                    || (head == "core" && leaf == "format_args"))
+        })
+    }
+
     /// The block nesting level of the traversal.
     pub(crate) fn depth(&self) -> usize {
         self.depth
@@ -1226,9 +1273,13 @@ impl<'env> Renamer<'env> {
 
     /// Bind the local names a block use tree imports into the current
     /// frame, a glob marking the frame uncertain.
-    fn prebind_use_tree(&mut self, tree: &syn::UseTree) {
+    fn prebind_use_tree<'t>(&mut self, tree: &'t syn::UseTree, prefix: &mut Vec<&'t Ident>) {
         match tree {
-            syn::UseTree::Path(path) => self.prebind_use_tree(&path.tree),
+            syn::UseTree::Path(path) => {
+                prefix.push(&path.ident);
+                self.prebind_use_tree(&path.tree, prefix);
+                prefix.pop();
+            }
             syn::UseTree::Name(name) => {
                 self.prebind_macro_name(crate::scope::unraw(&name.ident.to_string()));
             }
@@ -1237,10 +1288,12 @@ impl<'env> Renamer<'env> {
             }
             syn::UseTree::Group(group) => {
                 for inner in &group.items {
-                    self.prebind_use_tree(inner);
+                    self.prebind_use_tree(inner, prefix);
                 }
             }
-            syn::UseTree::Glob(_) => self.top_glob(),
+            syn::UseTree::Glob(_) => {
+                self.top_glob(!crate::drift::std_rooted(prefix));
+            }
         }
     }
 
@@ -1264,9 +1317,14 @@ impl<'env> Renamer<'env> {
         );
     }
 
-    /// Mark the current frame as glob-scoped.
-    fn top_glob(&mut self) {
-        self.frames.last_mut().expect("a scope frame").glob = true;
+    /// Mark the current frame as glob-scoped, `macro_glob` when the glob may bring in a macro
+    /// under a std name.
+    fn top_glob(&mut self, macro_glob: bool) {
+        let frame = self.frames.last_mut().expect("a scope frame");
+        frame.glob = true;
+        if macro_glob {
+            frame.std_rebound = crate::drift::ALL_STD_NAMES;
+        }
     }
 
     /// Bind block imports into the caller's temporary pre-scan frame.
@@ -1908,7 +1966,8 @@ impl<'env> Renamer<'env> {
                 syn::UseTree::Group(group)
             }
             glob @ syn::UseTree::Glob(_) => {
-                self.top_glob();
+                let segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
+                self.top_glob(!crate::drift::std_rooted(&segments));
                 glob
             }
         }
@@ -2335,7 +2394,8 @@ struct BlockUseBinder<'a, 'e> {
 impl Visit<'_> for BlockUseBinder<'_, '_> {
     fn visit_stmt(&mut self, stmt: &syn::Stmt) {
         if let syn::Stmt::Item(syn::Item::Use(use_item)) = stmt {
-            self.renamer.prebind_use_tree(&use_item.tree);
+            self.renamer
+                .prebind_use_tree(&use_item.tree, &mut Vec::new());
         } else {
             syn::visit::visit_stmt(self, stmt);
         }
@@ -2711,6 +2771,7 @@ impl VisitMut for Renamer<'_> {
         self.observed |= crate::context::live_attr(&file.attrs);
         self.constants_observed |= crate::context::live_attr(&file.attrs);
         self.prim_fallback &= crate::context::scope_primitives_known(&file.items);
+        self.std_names &= crate::drift::file_rebound(file) == 0;
         self.helper_blocked |= crate::context::blocking_attr(&file.attrs);
         let items: Vec<&syn::Item> = file.items.iter().collect();
         prebind(self, &items);
@@ -2760,7 +2821,7 @@ impl VisitMut for Renamer<'_> {
         prebind(self, &items);
         for item in &items {
             if let syn::Item::Use(import) = item {
-                self.prebind_use_tree(&import.tree);
+                self.prebind_use_tree(&import.tree, &mut Vec::new());
             }
         }
         self.depth += 1;
@@ -3345,28 +3406,24 @@ impl VisitMut for Renamer<'_> {
             &[Ns::Macro]
         };
         self.record_path(&mac.path, ns, ns);
-        let known = mac.path.segments.first().is_some_and(|first| {
-            let head = crate::scope::ident_name(&first.ident);
-            if crate::drift::format_operand(&mac.path).is_none() || self.macro_shadowed(&head) {
-                return false;
-            }
-            if mac.path.segments.len() == 1 {
-                return true;
-            }
-            let leaf =
-                crate::scope::ident_name(&mac.path.segments.last().expect("a macro path").ident);
-            mac.path.segments.len() == 2
-                && self.portable_first(&[Ns::Type], first)
-                && (head == "std"
-                    || (head == "alloc" && leaf == "format")
-                    || (head == "core" && leaf == "format_args"))
-        });
+        let known = self.std_format_path(&mac.path, Self::macro_shadowed);
+        // Another macro under a formatting name reads its string literal as written.
+        let captures = self.std_format_path(
+            &mac.path,
+            if self.context {
+                Self::context_macro_shadowed
+            } else {
+                Self::format_shadowed
+            },
+        );
         let parent = self.macro_origins.replace(Vec::new());
         let parent_supported = core::mem::replace(&mut self.macro_supported, true);
         if let Some(first) = mac.path.segments.first_mut() {
             self.resolve(ns, &mut first.ident);
         }
-        let format_at = crate::drift::format_operand(&mac.path).map(|(at, _)| at);
+        let format_at = crate::drift::format_operand(&mac.path)
+            .filter(|_| captures)
+            .map(|(at, _)| at);
         let outer = core::mem::replace(&mut self.opaque_tokens, !known);
         if self.analysis {
             let _ = self.rewrite_macro_tokens(mac.tokens.clone(), format_at);
