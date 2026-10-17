@@ -1,0 +1,19 @@
+name: dejadoc
+on: pull_request
+permissions:
+  contents: read
+jobs:
+  dejadoc:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: LucaCappelletti94/cargo-dejadoc@v1
+        with:
+          pr-number: ${{ github.event.pull_request.number }}
+          mode: prepare
+          payload: dejadoc-payload
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dejadoc-payload
+          path: dejadoc-payload
