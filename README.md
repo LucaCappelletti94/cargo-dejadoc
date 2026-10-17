@@ -8,7 +8,7 @@
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
-`cargo dejadoc` finds duplicated Rust doctests, and optionally duplicated functions and code blocks, across a workspace.
+`cargo dejadoc` finds duplicated Rust doctests, and optionally duplicated functions and code blocks, across a workspace. The [wiki](https://github.com/LucaCappelletti94/cargo-dejadoc/wiki) explains each check, the options and the Action in depth.
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
 
@@ -25,7 +25,7 @@ cargo dejadoc --functions --context-blocks
 | Functions | `--functions` | `30` weighted body tokens | `--fn-min-tokens` |
 | Contexts | `--context-blocks` | `30` canonical weighted tokens | `--context-min-tokens` |
 
-Options can also live in `.dejadoc.toml` at the workspace root, and `cargo dejadoc --help` lists them all. Keep an intentional copy with a `rust,dejadoc` fence or a `// dejadoc: allow` line above the function. What counts as the same code is documented in [`syn-canon`](https://docs.rs/syn-canon).
+Options can also live in `.dejadoc.toml` at the workspace root, and `cargo dejadoc --help` lists them all. Keep an intentional copy with a `rust,dejadoc` fence or a `// dejadoc: allow` line above the function. The wiki lists [what counts as the same code](https://github.com/LucaCappelletti94/cargo-dejadoc/wiki/What-counts-as-the-same-code).
 
 ## GitHub Action
 
