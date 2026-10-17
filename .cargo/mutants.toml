@@ -1,0 +1,23 @@
+exclude_re = [
+    'delete match arm (syn::)?(ImplItem|TraitItem|ForeignItem)::Macro\(m\) in (impl_member|trait_member|foreign_member)',
+    'replace match guard mac\.path\.is_ident\("concat"\) with true',
+    'replace \|\| with && in single_segment_type_name',
+    'replace \+ with [-*] in merge_parts',
+    'replace > with >= in block_star_strip',
+    'delete ! in block_star_strip',
+    'replace == with != in block_star_strip',
+    'replace \+ with - in flat_literal',
+    'replace match guard rustdoc with (true|false) in mod_decls',
+    'replace match guard path.exists\(\) with true in mod_decls',
+    '^syn-canon/src/const_items\.rs:\d+:\d+: replace match guard (!self\.hazard with true|mac\.ident\.is_some\(\) with false) in .*Analysis>::visit_item$',
+    '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Type::(Macro|Never)\(ty\) in type_attrs$',
+    '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Expr::(Continue|Lit|Macro)\(expr\) in expr_attrs$',
+    '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::ForeignItem::Macro\(v\) in <impl VisitMut for Drift>::visit_foreign_item_mut$',
+    '^syn-canon/src/form\.rs:\d+:\d+: replace == with != in framed_tree$',
+]
+cap_lints = true
+profile = "test"
+test_tool = "nextest"
+test_workspace = true
+# The baseline only runs the mutated packages' tests, so this floor carries the workspace suite.
+minimum_test_timeout = 180
