@@ -50,7 +50,7 @@ fn canonical(file: syn::File, compiles: bool) -> CanonicalForm {
             prim_fallback: true,
             observed: false,
             enclosing_observed: false,
-            std_derives: true,
+            std_names: true,
             helper_table: None,
             helper_module: &[],
             helper_blocked: false,
@@ -4076,6 +4076,116 @@ mod tests {
     }
 
     #[test]
+    fn a_formatting_macro_name_bound_by_another_macro_keeps_its_arguments() {
+        let local = "macro_rules! println { ($($t:tt)*) => { stringify!($($t)*) } }";
+        for (scope, one, two) in [
+            (local, "println!(\"{}\", x)", "println!(\"{x}\")"),
+            (
+                "use count::println;",
+                "println!(\"{}\", x)",
+                "println!(\"{x}\")",
+            ),
+            ("use count::*;", "println!(\"{}\", x)", "println!(\"{x}\")"),
+            (
+                "#[macro_use]\nextern crate count;",
+                "println!(\"{}\", x)",
+                "println!(\"{x}\")",
+            ),
+            (
+                "",
+                "outer!(println!(\"{}\", x))",
+                "outer!(println!(\"{x}\"))",
+            ),
+            (
+                "",
+                "outer::fmt::println!(\"{}\", x)",
+                "outer::fmt::println!(\"{x}\")",
+            ),
+            (
+                local,
+                "format!(\"{}\", println!(\"{}\", x))",
+                "format!(\"{}\", println!(\"{x}\"))",
+            ),
+        ] {
+            let source = |call: &str| {
+                canonicalize(&format!(
+                    "{scope}\nfn main() {{\n    let x = 1;\n    {call};\n}}"
+                ))
+                .text
+            };
+            assert_ne!(source(one), source(two), "{scope} {one}");
+        }
+        let renamed = |name: &str| {
+            canonicalize(&format!(
+                "{local}\nfn main() {{\n    let {name} = 1;\n    println!(\"{{{name}}}\");\n}}"
+            ))
+            .text
+        };
+        assert_ne!(renamed("x"), renamed("y"));
+    }
+
+    #[test]
+    fn a_std_formatting_macro_keeps_inlining_its_arguments() {
+        for (scope, call) in [
+            ("", "println"),
+            ("", "std::println"),
+            ("macro_rules! other { () => {} }", "println"),
+            ("use std::println;", "println"),
+        ] {
+            let source = |args: &str| {
+                canonicalize(&format!(
+                    "{scope}\nfn main() {{\n    let x = 1;\n    {call}!({args});\n}}"
+                ))
+                .text
+            };
+            assert_eq!(source("\"{}\", x"), source("\"{x}\""), "{scope} {call}");
+        }
+    }
+
+    #[test]
+    fn module_imports_decide_the_std_formatting_macro() {
+        let source = |root: &str, inner: &str, call: &str| {
+            canonicalize(&format!(
+                "{root}\nmod inner {{\n    {inner}\n    pub fn g(x: u8) {{\n        {call};\n    }}\n}}\nfn main() {{}}"
+            ))
+            .text
+        };
+        let renamed = |root: &str, inner: &str, name: &str| {
+            canonicalize(&format!(
+                "{root}\nmod inner {{\n    {inner}\n    pub fn g({name}: u8) {{\n        println!(\"{{{name}}}\");\n    }}\n}}\nfn main() {{}}"
+            ))
+            .text
+        };
+        for (root, inner) in [
+            ("", "use std::fmt::*;"),
+            ("use alloc::fmt::*;", "use core::fmt::*;"),
+        ] {
+            assert_eq!(
+                source(root, inner, "println!(\"{}\", x)"),
+                source(root, inner, "println!(\"{x}\")"),
+                "{root} {inner}"
+            );
+            assert_eq!(
+                renamed(root, inner, "x"),
+                renamed(root, inner, "y"),
+                "{root} {inner}"
+            );
+        }
+        for (root, inner) in [("", "use count::println;"), ("", "use count::*;")] {
+            assert_ne!(
+                source(root, inner, "println!(\"{}\", x)"),
+                source(root, inner, "println!(\"{x}\")"),
+                "{root} {inner}"
+            );
+            assert_ne!(
+                renamed(root, inner, "x"),
+                renamed(root, inner, "y"),
+                "{root} {inner}"
+            );
+        }
+    }
+
+    #[test]
     fn alpha_macro_name_in_fallback_path_renamed() {
         let a = canonicalize("macro_rules! pino { () => { 1 } }\nouter!(pino! if foo);\n");
         let b = canonicalize("macro_rules! abete { () => { 1 } }\nouter!(abete! if foo);\n");
@@ -5121,6 +5231,32 @@ mod tests {
         assert_eq!(body(local_a)[0], body(local_b)[0]);
         let free = "fn f(x: i32) { println!(\"{y}\"); }";
         assert_ne!(body(local_a)[0], body(free)[0]);
+    }
+
+    #[test]
+    fn contextual_format_calls_of_another_macro_keep_their_spelling() {
+        let body = |code: &str| context_forms(code, super::ContextKind::FunctionBody);
+        let pair = |scope: &str, one: &str, two: &str, second: &str| {
+            (
+                body(&format!("{scope}\nfn f(x: i32) {{ {one}; }}"))[0].clone(),
+                body(&format!("{scope}\nfn g({second}: i32) {{ {two}; }}"))[0].clone(),
+            )
+        };
+        for scope in [
+            "use count::*;",
+            "use count::println;",
+            "macro_rules! println { ($($t:tt)*) => { stringify!($($t)*) } }",
+            "#[macro_use]\nextern crate count;",
+        ] {
+            let (one, two) = pair(scope, "println!(\"{x}\")", "println!(\"{y}\")", "y");
+            assert_ne!(one, two, "{scope}");
+            let (one, two) = pair(scope, "println!(\"{}\", x)", "println!(\"{x}\")", "x");
+            assert_ne!(one, two, "{scope}");
+        }
+        for scope in ["", "use std::fmt::*;"] {
+            let (one, two) = pair(scope, "println!(\"{}\", x)", "println!(\"{y}\")", "y");
+            assert_eq!(one, two, "{scope}");
+        }
     }
 
     #[test]

@@ -67,8 +67,8 @@ struct ModuleId(usize);
 struct Module {
     seed: Frame,
     prim_fallback: bool,
-    /// Every std derive name the module sees names the std derive.
-    std_derives: bool,
+    /// Every std derive, formatting macro and crate root the module sees names the std item.
+    std_names: bool,
     observed: bool,
     helper_blocked: bool,
 }
@@ -151,7 +151,7 @@ impl FunctionView<'_> {
                 prim_fallback: self.entry.prim_fallback,
                 observed: self.entry.observed,
                 enclosing_observed: self.entry.enclosing_observed,
-                std_derives: self.ctx.modules[self.entry.module.0].std_derives,
+                std_names: self.ctx.modules[self.entry.module.0].std_names,
                 self_owner,
                 helper_table: Some(&self.ctx.helpers),
                 helper_module: &self.entry.helper_module,
@@ -197,10 +197,11 @@ impl<'a> SourceContext<'a> {
             register_inline(&mut scopes, path, &file.items);
         }
         let ancestry = module_ancestry(&scopes);
-        // A `#[macro_use] extern crate` sits at a crate root and reaches every module.
-        let macro_use = files.iter().any(|(path, file)| {
-            path.is_empty() && file.items.iter().any(crate::drift::macro_use_crate)
-        });
+        // A `macro_rules!` definition reaches past its module, and a `#[macro_use] extern crate`
+        // reaches every module.
+        let crate_rebound = files
+            .iter()
+            .any(|(_, file)| crate::drift::file_rebound(file) != 0);
         let blocked: BTreeSet<Vec<String>> = ancestry
             .iter()
             .filter(|(_, (_, blocked))| *blocked)
@@ -219,7 +220,7 @@ impl<'a> SourceContext<'a> {
                     modules.push(Module {
                         seed: seed_frame(&scopes, path, &scope, prim_fallback),
                         prim_fallback,
-                        std_derives: !macro_use && crate::drift::std_derives_visible(scope.items()),
+                        std_names: !crate_rebound && crate::drift::std_names_visible(scope.items()),
                         observed,
                         helper_blocked,
                     });

@@ -889,8 +889,15 @@ fn label(
     facts: &ReferenceFacts,
     group: &BTreeMap<(bool, BindingId), usize>,
     table: Option<&crate::helpers::HelperTable>,
+    std_names: bool,
 ) -> Lbl {
-    label_snapshot(item.clone(), Snapshot::collect(item, facts), group, table)
+    label_snapshot(
+        item.clone(),
+        Snapshot::collect(item, facts),
+        group,
+        table,
+        std_names,
+    )
 }
 
 fn declaration(item: &syn::Item, facts: &ReferenceFacts) -> Option<ResolvedOrigin> {
@@ -992,6 +999,7 @@ fn partitions(
     facts: &ReferenceFacts,
     group: &BTreeMap<(bool, BindingId), usize>,
     table: Option<&crate::helpers::HelperTable>,
+    std_names: bool,
 ) -> Option<Vec<Partition>> {
     let mut output: Vec<Partition> = Vec::new();
     let mut headers: BTreeMap<((bool, BindingId), Lbl), usize> = BTreeMap::new();
@@ -1001,7 +1009,8 @@ fn partitions(
         if let syn::Item::Impl(implementation) = item {
             let resolved_owner = owner(implementation, facts)?;
             let (header, proof) = normalized_header(implementation, facts);
-            let header_label = label_snapshot(syn::Item::Impl(header), proof, group, table);
+            let header_label =
+                label_snapshot(syn::Item::Impl(header), proof, group, table, std_names);
             let key = (identity(resolved_owner), header_label.clone());
             let partition = if let Some(&partition) = headers.get(&key) {
                 partition
@@ -1026,7 +1035,8 @@ fn partitions(
                 let (mut single, mut records) = normalized_header(implementation, facts);
                 single.items.push(member.clone());
                 records.append(Snapshot::member(member, facts));
-                let member_label = label_snapshot(syn::Item::Impl(single), records, group, table);
+                let member_label =
+                    label_snapshot(syn::Item::Impl(single), records, group, table, std_names);
                 member_labels[partition].push(MemberLabel {
                     name,
                     label: member_label,
@@ -1038,7 +1048,7 @@ fn partitions(
             output.push(Partition {
                 indices: vec![index],
                 members: Vec::new(),
-                label: label(item, facts, group, table),
+                label: label(item, facts, group, table, std_names),
             });
             member_sets.push(BTreeSet::new());
             member_labels.push(Vec::new());
@@ -1158,6 +1168,7 @@ fn label_snapshot(
     snapshot: Snapshot,
     group: &BTreeMap<(bool, BindingId), usize>,
     table: Option<&crate::helpers::HelperTable>,
+    std_names: bool,
 ) -> Lbl {
     struct Nested(bool);
     impl Visit<'_> for Nested {
@@ -1182,6 +1193,7 @@ fn label_snapshot(
             facts,
             helpers: &mut helpers,
             table,
+            std_names,
             blocked: false,
         };
         normalize.visit_item_mut(&mut item);
@@ -1220,6 +1232,7 @@ fn label_snapshot(
         },
         crate::form::PayloadProof {
             table,
+            std_names,
             frame: &frame,
             syntax: proofs,
             edges,
@@ -1706,6 +1719,7 @@ fn group_order(
     facts: &ReferenceFacts,
     roots: &RootContext,
     table: Option<&crate::helpers::HelperTable>,
+    std_names: bool,
 ) -> Option<Vec<Partition>> {
     if items.len() == 1 && !matches!(items[0], syn::Item::Impl(block) if block.items.len() > 1) {
         return Some(vec![Partition {
@@ -1727,7 +1741,7 @@ fn group_order(
             next += 1;
         }
     }
-    let mut partitions = partitions(items, facts, &group, table)?;
+    let mut partitions = partitions(items, facts, &group, table, std_names)?;
     let mut budget = Budget {
         nodes: roots.budget.nodes,
         deepest: roots.budget.deepest,
@@ -1784,6 +1798,9 @@ struct Normalize<'a> {
     facts: ReferenceFacts,
     helpers: &'a mut crate::helpers::HelperSyntax,
     table: Option<&'a crate::helpers::HelperTable>,
+    /// The scopes around the items leave every std formatting macro name bound to the std
+    /// macro.
+    std_names: bool,
     blocked: bool,
 }
 
@@ -1817,7 +1834,7 @@ impl Normalize<'_> {
             source.observe(&mut observations);
         }
         let roots = observations.finish()?;
-        group_order(refs, &self.facts, &roots, self.table)
+        group_order(refs, &self.facts, &roots, self.table, self.std_names)
     }
 
     fn schedule_region<S: RegionSource>(
@@ -2224,7 +2241,7 @@ pub(crate) fn normalize(
             prim_fallback: options.prim_fallback,
             observed: options.observed,
             enclosing_observed: options.enclosing_observed,
-            std_derives: options.std_derives,
+            std_names: options.std_names,
             helper_table: Some(table),
             helper_module: options.helper_module,
             helper_blocked: options.helper_blocked,
@@ -2242,6 +2259,7 @@ pub(crate) fn normalize(
         facts,
         helpers,
         table: Some(table),
+        std_names: options.std_names,
         blocked: false,
     }
     .visit_file_mut(file);
