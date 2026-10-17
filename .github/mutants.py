@@ -1,4 +1,4 @@
-"""Run and audit bounded full-workspace mutation partitions."""
+"""Run and audit bounded mutation partitions of the workspace or of one change."""
 
 import argparse
 import contextlib
@@ -12,9 +12,13 @@ import sys
 import time
 
 VERSION = "27.1.0"
-PARTITION_LIMIT = 16
-MATRIX_LIMIT = 256
-RUN_SECONDS = 42 * 60
+# Below this many mutants a shard spends most of its run on setup and the baselines.
+PARTITION_FLOOR = 16
+# The most mutants a shard tests within RUN_SECONDS at about a minute each.
+PARTITION_LIMIT = 160
+# Two waves of the 20 jobs the account runs at once.
+MATRIX_LIMIT = 40
+RUN_SECONDS = 240 * 60
 CLEANUP_SECONDS = 5
 CARGO = [
     "taskset", "-c", "0,1", "nice", "-n", "10", "env",
@@ -61,20 +65,37 @@ def save(path, value):
 
 
 def names(mutants):
-    require(isinstance(mutants, list) and mutants, "Empty mutant inventory")
+    require(isinstance(mutants, list), "Invalid mutant inventory")
     result = [mutant["name"] for mutant in mutants]
     require(all(isinstance(name, str) and name for name in result), "Invalid mutant identity")
     require(len(set(result)) == len(result), "Duplicate mutant identity")
     return result
 
 
-def partitions(mutants):
+def partitions(mutants, changes=None):
+    """The contiguous shards `cargo mutants --sharding slice` runs, at most `MATRIX_LIMIT`."""
     names(mutants)
-    count = math.ceil(len(mutants) / PARTITION_LIMIT)
-    require(count <= MATRIX_LIMIT, "Mutation inventory exceeds the complete matrix capacity")
-    size = math.ceil(len(mutants) / count)
-    return [mutants[index * size:min((index + 1) * size, len(mutants))]
-            for index in range(count)]
+    require(mutants or changes, "Empty mutant inventory")
+    if not mutants:
+        return []
+    size = max(PARTITION_FLOOR, math.ceil(len(mutants) / MATRIX_LIMIT))
+    count = math.ceil(len(mutants) / size)
+    chunk = math.ceil(len(mutants) / count)
+    require(chunk <= PARTITION_LIMIT, "Mutation inventory exceeds the complete matrix capacity")
+    return [mutants[index * chunk:(index + 1) * chunk] for index in range(count)]
+
+
+def selector(changes):
+    return [*SELECTOR, *(["--in-diff", changes] if changes else [])]
+
+
+def list_command(changes):
+    return [*CARGO, "mutants", *selector(changes), "--list", "--json"]
+
+
+def mutation_command(changes, index, count):
+    return [*CARGO, "mutants", *selector(changes), "--shard", f"{index}/{count}",
+            "--sharding", "slice"]
 
 
 def run(command, *, request_id, deadline, output, timeout=None, stdout=None):
@@ -117,29 +138,41 @@ def successful(record, request_id, command):
     require("error" not in record, "Subprocess cleanup failed")
 
 
-def enumerate_mutants(request_id, deadline, output):
-    command = [*CARGO, "mutants", *SELECTOR, "--list", "--json"]
+def write_changes(request_id, deadline, output, base, revision, path):
+    """Write the diff from `base` to `revision` that scopes the inventory to one change."""
+    command = ["git", "diff", "--no-color", "--no-ext-diff", base, revision]
+    record = run(command, request_id=f"{request_id}/diff", deadline=deadline,
+                 timeout=30, output=output / "diff.log", stdout=path)
+    save(output / "diff-receipt.json", record)
+    successful(record, f"{request_id}/diff", command)
+
+
+def enumerate_mutants(request_id, deadline, output, changes):
+    command = list_command(changes)
     record = run(command, request_id=f"{request_id}/list", deadline=deadline,
                  timeout=120, output=output / "list.log", stdout=output / "list.json")
     save(output / "list-receipt.json", record)
     successful(record, f"{request_id}/list", command)
-    mutants = load(output / "list.json")
+    listing = (output / "list.json").read_text(encoding="utf-8")
+    # A change without Rust sources leaves the listing empty.
+    mutants = json.loads(listing) if listing or not changes else []
     names(mutants)
     return mutants
 
 
-def inventory(request_id, revision, mutants):
-    slices = partitions(mutants)
+def inventory(request_id, revision, mutants, changes=None):
+    slices = partitions(mutants, changes)
     matrix = {"include": [{"index": index, "count": len(slices), "label": index + 1}
                           for index in range(len(slices))]}
     return {"request_id": request_id, "revision": revision, "version": VERSION,
-            "selector": SELECTOR, "mutants": mutants, "matrix": matrix}
+            "selector": selector(changes), "changes": changes, "mutants": mutants,
+            "matrix": matrix}
 
 
 def validate_inventory(value, request_id, revision):
-    expected = inventory(request_id, revision, value["mutants"])
+    expected = inventory(request_id, revision, value["mutants"], value["changes"])
     require(value == expected, "Unexpected mutation inventory or execution selector")
-    return partitions(value["mutants"])
+    return partitions(value["mutants"], value["changes"])
 
 
 def validate_outcomes(folder, expected):
@@ -197,18 +230,17 @@ def run_shard(args, value, deadline):
                "revision": args.revision, "ok": False}
     output = args.output
     try:
-        mutants = enumerate_mutants(shard_id, deadline, output)
+        mutants = enumerate_mutants(shard_id, deadline, output, value["changes"])
         require(mutants == value["mutants"], "Workspace enumeration differs from inventory")
         receipt["baseline"] = run(BASELINE, request_id=f"{shard_id}/baseline",
                                   deadline=deadline, output=output / "workspace-baseline.log")
         save(output / "receipt.json", receipt)
         successful(receipt["baseline"], f"{shard_id}/baseline", BASELINE)
-        mutation_command = [*CARGO, "mutants", *SELECTOR, "--shard",
-                            f"{args.index}/{len(slices)}", "--sharding", "slice"]
-        receipt["mutation"] = run(mutation_command, request_id=f"{shard_id}/mutants",
+        command = mutation_command(value["changes"], args.index, len(slices))
+        receipt["mutation"] = run(command, request_id=f"{shard_id}/mutants",
                                   deadline=deadline, output=output / "mutation.log")
         save(output / "receipt.json", receipt)
-        successful(receipt["mutation"], f"{shard_id}/mutants", mutation_command)
+        successful(receipt["mutation"], f"{shard_id}/mutants", command)
         receipt["counts"] = validate_outcomes(pathlib.Path("mutants.out"), expected)
         require(time.monotonic() < deadline, "Shard validation deadline exceeded")
         receipt["ok"] = True
@@ -237,13 +269,12 @@ def aggregate(args, value, deadline):
                 receipt["revision"] == args.revision and receipt["ok"] is True,
                 "Incomplete or unrelated shard receipt")
         successful(load(folder / "mutation-results" / "list-receipt.json"),
-                   f"{shard_id}/list", [*CARGO, "mutants", *SELECTOR, "--list", "--json"])
+                   f"{shard_id}/list", list_command(value["changes"]))
         require(load(folder / "mutation-results" / "list.json") == value["mutants"],
                 "Shard workspace inventory differs")
         successful(receipt["baseline"], f"{shard_id}/baseline", BASELINE)
         successful(receipt["mutation"], f"{shard_id}/mutants",
-                   [*CARGO, "mutants", *SELECTOR, "--shard", f"{index}/{len(slices)}",
-                    "--sharding", "slice"])
+                   mutation_command(value["changes"], index, len(slices)))
         counts = validate_outcomes(folder / "mutants.out", slices[index])
         require(receipt["counts"] == counts, "Shard receipt counts differ")
         union.extend(names(slices[index]))
@@ -265,19 +296,26 @@ def main():
     parser.add_argument("--output", type=pathlib.Path, default=pathlib.Path("mutation-results"))
     parser.add_argument("--artifacts", type=pathlib.Path, default=pathlib.Path("mutation-artifacts"))
     parser.add_argument("--index", type=int)
+    parser.add_argument("--base", help="scope the inventory to the change from this commit")
     args = parser.parse_args()
     started = time.monotonic()
     deadline = started + (RUN_SECONDS if args.mode == "shard" else 120)
     args.output.mkdir(parents=True, exist_ok=True)
     try:
         if args.mode == "enumerate":
-            mutants = enumerate_mutants(args.request_id, deadline, args.output)
-            value = inventory(args.request_id, args.revision, mutants)
-            require(time.monotonic() < deadline, "Enumeration deadline exceeded")
             args.inventory.parent.mkdir(parents=True, exist_ok=True)
+            changes = None
+            if args.base:
+                changes = str(args.inventory.parent / "changes.diff")
+                write_changes(args.request_id, deadline, args.output, args.base, args.revision,
+                              changes)
+            mutants = enumerate_mutants(args.request_id, deadline, args.output, changes)
+            value = inventory(args.request_id, args.revision, mutants, changes)
+            require(time.monotonic() < deadline, "Enumeration deadline exceeded")
             save(args.inventory, value)
             with pathlib.Path(os.environ["GITHUB_OUTPUT"]).open("a", encoding="utf-8") as output:
                 output.write("matrix=" + json.dumps(value["matrix"], separators=(",", ":")) + "\n")
+                output.write(f"shards={len(value['matrix']['include'])}\n")
         elif args.mode == "shard":
             run_shard(args, load(args.inventory), deadline)
         else:

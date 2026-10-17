@@ -16,6 +16,7 @@ REPO_ROOT = pathlib.Path(__file__).resolve().parent.parent
 RUNNER = REPO_ROOT / ".github" / "mutants.py"
 REQUEST_ID = "MUTANTS-TEST-1-1"
 REVISION = "test-revision"
+CHANGES = "mutation-inventory/changes.diff"
 BUILD_ARGV = ["cargo", "nextest", "run", "--no-run", "--cargo-profile=test", "--verbose", "--workspace"]
 TEST_ARGV = ["cargo", "nextest", "run", "--cargo-profile=test", "--verbose", "--workspace"]
 
@@ -50,16 +51,20 @@ def make_mutants(count):
     return mutants
 
 
-def list_command():
-    return [*RUNNER_MODULE.CARGO, "mutants", *RUNNER_MODULE.SELECTOR, "--list", "--json"]
+def selector(changes):
+    return [*RUNNER_MODULE.SELECTOR, *(["--in-diff", changes] if changes else [])]
+
+
+def list_command(changes=None):
+    return [*RUNNER_MODULE.CARGO, "mutants", *selector(changes), "--list", "--json"]
 
 
 def baseline_command():
     return [*RUNNER_MODULE.CARGO, "nextest", "run", "--workspace", "--cargo-profile", "test"]
 
 
-def mutation_command(index, count):
-    return [*RUNNER_MODULE.CARGO, "mutants", *RUNNER_MODULE.SELECTOR,
+def mutation_command(index, count, changes=None):
+    return [*RUNNER_MODULE.CARGO, "mutants", *selector(changes),
             "--shard", "{0}/{1}".format(index, count), "--sharding", "slice"]
 
 
@@ -97,7 +102,7 @@ def make_outcomes(mutants):
             "cargo_mutants_version": RUNNER_MODULE.VERSION}
 
 
-def make_shard(artifacts, index, count, mutants, slice_mutants):
+def make_shard(artifacts, index, count, mutants, slice_mutants, changes=None):
     shard_id = "{0}/shard/{1}".format(REQUEST_ID, index)
     folder = artifacts / "mutants-shard-{0}-of-{1}".format(index + 1, count)
     results = folder / "mutation-results"
@@ -111,29 +116,29 @@ def make_shard(artifacts, index, count, mutants, slice_mutants):
         "revision": REVISION,
         "ok": True,
         "baseline": subprocess_receipt(shard_id + "/baseline", baseline_command()),
-        "mutation": subprocess_receipt(shard_id + "/mutants", mutation_command(index, count)),
+        "mutation": subprocess_receipt(shard_id + "/mutants", mutation_command(index, count, changes)),
         "counts": {key: outcomes[key]
                    for key in ("total_mutants", "caught", "unviable", "missed", "timeout", "success")},
     }
     (results / "list.json").write_text(json.dumps(mutants), encoding="utf-8")
     (results / "list-receipt.json").write_text(
-        json.dumps(subprocess_receipt(shard_id + "/list", list_command())), encoding="utf-8")
+        json.dumps(subprocess_receipt(shard_id + "/list", list_command(changes))), encoding="utf-8")
     (results / "receipt.json").write_text(json.dumps(receipt, indent=2) + "\n", encoding="utf-8")
     (folder / "mutants.out" / "mutants.json").write_text(json.dumps(slice_mutants), encoding="utf-8")
     (folder / "mutants.out" / "outcomes.json").write_text(json.dumps(outcomes), encoding="utf-8")
     return folder
 
 
-def build_fixture(directory, count=33):
+def build_fixture(directory, count=33, changes=None):
     mutants = make_mutants(count)
-    value = RUNNER_MODULE.inventory(REQUEST_ID, REVISION, mutants)
+    value = RUNNER_MODULE.inventory(REQUEST_ID, REVISION, mutants, changes)
     artifacts = directory / "mutation-artifacts"
     inventory = artifacts / "mutation-inventory" / "inventory.json"
     inventory.parent.mkdir(parents=True)
     inventory.write_text(json.dumps(value), encoding="utf-8")
-    slices = RUNNER_MODULE.partitions(mutants)
+    slices = RUNNER_MODULE.partitions(mutants, changes)
     for index, slice_mutants in enumerate(slices):
-        make_shard(artifacts, index, len(slices), mutants, slice_mutants)
+        make_shard(artifacts, index, len(slices), mutants, slice_mutants, changes)
     return value
 
 
@@ -153,6 +158,49 @@ def run_cli(directory, *arguments):
     return subprocess.CompletedProcess(
         command, result["exit"], stdout=result["stdout"], stderr=result["stderr"]
     )
+
+
+def cargo_mutants_slice(mutants, index, count):
+    """The shard `index/count` that `cargo mutants --sharding slice` runs."""
+    chunk = -(-len(mutants) // count)
+    return mutants[index * chunk:min((index + 1) * chunk, len(mutants))]
+
+
+class PartitionTests(unittest.TestCase):
+    def assert_slices(self, mutants):
+        slices = RUNNER_MODULE.partitions(mutants)
+        self.assertLessEqual(len(slices), RUNNER_MODULE.MATRIX_LIMIT)
+        for index, shard in enumerate(slices):
+            self.assertTrue(shard, "empty shard {0} of {1}".format(index, len(mutants)))
+            self.assertLessEqual(len(shard), RUNNER_MODULE.PARTITION_LIMIT)
+            self.assertEqual(shard, cargo_mutants_slice(mutants, index, len(slices)))
+        self.assertEqual([mutant for shard in slices for mutant in shard], mutants)
+        return slices
+
+    def test_every_inventory_size_up_to_capacity_runs_whole_non_empty_shards(self):
+        mutants = make_mutants(RUNNER_MODULE.MATRIX_LIMIT * RUNNER_MODULE.PARTITION_LIMIT)
+        for count in range(1, len(mutants) + 1):
+            self.assert_slices(mutants[:count])
+
+    def test_the_workspace_inventory_spreads_over_the_whole_matrix(self):
+        slices = self.assert_slices(make_mutants(4585))
+        self.assertEqual(len(slices), RUNNER_MODULE.MATRIX_LIMIT)
+
+    def test_a_small_inventory_keeps_shards_of_the_floor_size(self):
+        floor = RUNNER_MODULE.PARTITION_FLOOR
+        self.assertEqual(len(self.assert_slices(make_mutants(floor))), 1)
+        self.assertEqual(len(self.assert_slices(make_mutants(floor + 1))), 2)
+
+    def test_an_inventory_past_capacity_is_rejected(self):
+        mutants = make_mutants(RUNNER_MODULE.MATRIX_LIMIT * RUNNER_MODULE.PARTITION_LIMIT + 1)
+        with self.assertRaisesRegex(ValueError, "exceeds the complete matrix capacity"):
+            RUNNER_MODULE.partitions(mutants)
+
+    def test_only_a_change_may_have_no_mutants(self):
+        with self.assertRaisesRegex(ValueError, "Empty mutant inventory"):
+            RUNNER_MODULE.partitions([])
+        value = RUNNER_MODULE.inventory(REQUEST_ID, REVISION, [], CHANGES)
+        self.assertEqual(value["matrix"], {"include": []})
 
 
 class ShardCliTests(unittest.TestCase):
@@ -451,6 +499,33 @@ class AggregateContractTests(unittest.TestCase):
             receipt_path.write_text(json.dumps(receipt), encoding="utf-8")
             process = self.run_aggregate(directory)
             self.assert_rejected(process, "Shard receipt counts differ", directory)
+
+    def test_a_change_inventory_passes_with_its_diff_selector(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = pathlib.Path(raw)
+            build_fixture(directory, changes=CHANGES)
+            process = self.run_aggregate(directory)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertIn("complete_mutants=33 shards=3", process.stdout)
+
+    def test_a_change_without_mutants_passes_without_shards(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = pathlib.Path(raw)
+            build_fixture(directory, count=0, changes=CHANGES)
+            process = self.run_aggregate(directory)
+            self.assertEqual(process.returncode, 0, process.stderr)
+            self.assertIn("complete_mutants=0 shards=0", process.stdout)
+
+    def test_a_shard_listing_the_whole_workspace_fails_a_change_aggregate(self):
+        with tempfile.TemporaryDirectory() as raw:
+            directory = pathlib.Path(raw)
+            build_fixture(directory, changes=CHANGES)
+            receipt_path = (directory / "mutation-artifacts" / "mutants-shard-1-of-3"
+                            / "mutation-results" / "list-receipt.json")
+            receipt_path.write_text(json.dumps(subprocess_receipt(
+                "{0}/shard/0/list".format(REQUEST_ID), list_command())), encoding="utf-8")
+            process = self.run_aggregate(directory)
+            self.assert_rejected(process, "Unexpected subprocess command", directory)
 
 
 if __name__ == "__main__":
