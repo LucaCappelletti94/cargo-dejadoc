@@ -4159,6 +4159,8 @@ mod tests {
         for (root, inner) in [
             ("", "use std::fmt::*;"),
             ("use alloc::fmt::*;", "use core::fmt::*;"),
+            ("", "use super::*;"),
+            ("use count::Other;", "use super::*;"),
         ] {
             assert_eq!(
                 source(root, inner, "println!(\"{}\", x)"),
@@ -4171,7 +4173,13 @@ mod tests {
                 "{root} {inner}"
             );
         }
-        for (root, inner) in [("", "use count::println;"), ("", "use count::*;")] {
+        for (root, inner) in [
+            ("", "use count::println;"),
+            ("", "use count::*;"),
+            ("use count::println;", "use super::*;"),
+            ("use count::*;", "use super::*;"),
+            ("", "use super::super::*;"),
+        ] {
             assert_ne!(
                 source(root, inner, "println!(\"{}\", x)"),
                 source(root, inner, "println!(\"{x}\")"),
@@ -4183,6 +4191,14 @@ mod tests {
                 "{root} {inner}"
             );
         }
+        let nested = |format: &str| {
+            source(
+                "use count::format;",
+                "",
+                &format!("println!(\"{{}}\", {{ use super::*; format!({format}) }})"),
+            )
+        };
+        assert_ne!(nested("\"{}\", x"), nested("\"{x}\""));
     }
 
     #[test]
@@ -5256,6 +5272,33 @@ mod tests {
         for scope in ["", "use std::fmt::*;"] {
             let (one, two) = pair(scope, "println!(\"{}\", x)", "println!(\"{y}\")", "y");
             assert_eq!(one, two, "{scope}");
+        }
+        let nested = |root: &str, inner: &str, name: &str| {
+            body(&format!(
+                "{root}\nmod tests {{ {inner} fn f({name}: i32) {{ println!(\"{{{name}}}\"); }} }}"
+            ))[0]
+                .clone()
+        };
+        for (root, inner) in [
+            ("", "use super::*;"),
+            ("use count::Other;", "use super::*;"),
+        ] {
+            assert_eq!(
+                nested(root, inner, "x"),
+                nested(root, inner, "y"),
+                "{root} {inner}"
+            );
+        }
+        for (root, inner) in [
+            ("use count::println;", "use super::*;"),
+            ("use count::*;", "use super::*;"),
+            ("", "use super::super::*;"),
+        ] {
+            assert_ne!(
+                nested(root, inner, "x"),
+                nested(root, inner, "y"),
+                "{root} {inner}"
+            );
         }
     }
 

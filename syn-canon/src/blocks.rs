@@ -58,6 +58,7 @@ pub fn contexts(file: &syn::File, emit: &mut dyn FnMut(Context<'_>, CanonicalFor
         mod_origins: BTreeMap::new(),
         targets: Vec::new(),
         item_path: Vec::new(),
+        inline_depth: 0,
         id: 0,
         work: ContextWork::default(),
         emit,
@@ -210,6 +211,8 @@ struct Walker<'w> {
     targets: Vec<Target>,
     /// The item path segments, outermost first.
     item_path: Vec<String>,
+    /// The inline modules around the walk, whose frames stay on the stack.
+    inline_depth: usize,
     /// The next binding id.
     id: usize,
     /// The measured work.
@@ -332,10 +335,11 @@ impl Walker<'_> {
             syn::UseTree::Rename(rename) => {
                 self.bind_alias_leaf(rooted, prefix, &rename.ident, &rename.rename);
             }
-            // A glob outside `std` can bring in a macro under any std name.
+            // A glob outside `std` and the inline modules in view can bring in a macro under
+            // any std name.
             syn::UseTree::Glob(_) => {
                 let segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
-                if !crate::drift::std_rooted(&segments) {
+                if crate::drift::macro_glob(&segments, self.inline_depth) {
                     self.frames.last_mut().expect("a scope frame").std_rebound =
                         crate::drift::ALL_STD_NAMES;
                 }
@@ -581,6 +585,7 @@ impl Visit<'_> for Walker<'_> {
                 .expect("a module is prebound");
             let frame = self.mod_frames.remove(&id).unwrap_or_default();
             self.frames.push(frame);
+            self.inline_depth += 1;
             self.bind_scope_uses(items.iter().filter_map(|item| match item {
                 syn::Item::Use(u) => Some(u),
                 _ => None,
@@ -588,6 +593,7 @@ impl Visit<'_> for Walker<'_> {
             for item in items {
                 syn::visit::visit_item(self, item);
             }
+            self.inline_depth -= 1;
             let frame = self.frames.pop().expect("a scope frame");
             self.mod_frames.insert(id, frame);
         }

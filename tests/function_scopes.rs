@@ -99,10 +99,37 @@ fn format_captures_rename_when_the_module_proves_the_std_macro() {
     for module in [
         "#[derive(Debug)]\nstruct S;\n#[cfg(test)]\nmod tests {}",
         "use std::fmt::*;",
+        "use super::*;",
     ] {
         assert_eq!(capture(module, "x"), capture(module, "y"), "{module}");
     }
     for module in ["use count::format;", "use count::*;"] {
         assert_ne!(capture(module, "x"), capture(module, "y"), "{module}");
     }
+}
+
+#[test]
+fn a_super_glob_reads_the_formatting_macros_of_the_parent_module() {
+    let capture = |root: &str, name: &str| {
+        module_view(
+            root,
+            &format!("use super::*;\nfn f({name}: u8) -> String {{ format!(\"{{{name}}}\") }}"),
+        )
+    };
+    for root in ["use count::format;", "use count::*;"] {
+        assert_ne!(capture(root, "x"), capture(root, "y"), "{root}");
+    }
+    assert_eq!(
+        capture("use count::Other;", "x"),
+        capture("use count::Other;", "y")
+    );
+    let past_root = |name: &str| {
+        module_view(
+            "",
+            &format!(
+                "use super::super::*;\nfn f({name}: u8) -> String {{ format!(\"{{{name}}}\") }}"
+            ),
+        )
+    };
+    assert_ne!(past_root("x"), past_root("y"));
 }
