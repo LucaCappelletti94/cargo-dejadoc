@@ -771,6 +771,7 @@ impl Drift<'_> {
             std_scopes: Vec::from([StdScope {
                 module: true,
                 rebound: frames_rebound(frames),
+                supers: 0,
             }]),
             ..Drift::default()
         }
@@ -818,16 +819,23 @@ impl Drift<'_> {
     }
 
     /// The std names the scopes from the innermost module scope inward may bind to something
-    /// else.
+    /// else, with every module a `use super::*` reaches, all of them when one reaches past the
+    /// outermost scope.
     fn rebound_names(&self) -> u32 {
-        let module = self
-            .std_scopes
-            .iter()
-            .rposition(|scope| scope.module)
-            .expect("a drift pass starts at a module scope");
-        self.std_scopes[module..]
-            .iter()
-            .fold(self.file_rebound, |rebound, scope| rebound | scope.rebound)
+        let mut rebound = self.file_rebound;
+        // The module levels past the innermost one a `use super::*` brings into view.
+        let mut levels = 0;
+        for scope in self.std_scopes.iter().rev() {
+            rebound |= scope.rebound;
+            levels = levels.max(scope.supers);
+            if scope.module {
+                if levels == 0 {
+                    return rebound;
+                }
+                levels -= 1;
+            }
+        }
+        StdScope::ALL
     }
 
     /// Fold a function body's tail `return`, and its tail semicolon when the
@@ -1462,13 +1470,20 @@ struct StdScope {
     /// A module scope, whose bindings hide nothing from the scopes outside it.
     module: bool,
     rebound: u32,
+    /// The most enclosing module levels a `use super::*` of the scope reaches, whose bindings
+    /// the scope sees too.
+    supers: usize,
 }
 
 impl StdScope {
     const ALL: u32 = ALL_STD_NAMES;
 
     fn of<'a>(items: impl Iterator<Item = &'a syn::Item>, module: bool) -> Self {
-        let mut scope = Self { module, rebound: 0 };
+        let mut scope = Self {
+            module,
+            rebound: 0,
+            supers: 0,
+        };
         for item in items {
             scope.bind(item);
         }
@@ -1510,18 +1525,22 @@ impl StdScope {
     /// binding of the name may be another macro.
     fn bind_tree<'a>(&mut self, tree: &'a syn::UseTree, prefix: &mut Vec<&'a syn::Ident>) {
         let bit = |ident: &syn::Ident| std_name_bit(&crate::scope::ident_name(ident));
-        let from_std = std_rooted(prefix);
+        let from_std = matches!(glob_target(prefix), GlobTarget::Std);
         match tree {
             syn::UseTree::Path(path) => {
                 prefix.push(&path.ident);
                 self.bind_tree(&path.tree, prefix);
                 prefix.pop();
             }
-            syn::UseTree::Name(_) | syn::UseTree::Glob(_) if from_std => {}
+            syn::UseTree::Name(_) if from_std => {}
             syn::UseTree::Name(name) => self.rebound |= bit(&name.ident),
             syn::UseTree::Rename(rename) if from_std && rename.ident == rename.rename => {}
             syn::UseTree::Rename(rename) => self.rebound |= bit(&rename.rename),
-            syn::UseTree::Glob(_) => self.rebound = Self::ALL,
+            syn::UseTree::Glob(_) => match glob_target(prefix) {
+                GlobTarget::Std => {}
+                GlobTarget::Ancestor(levels) => self.supers = self.supers.max(levels),
+                GlobTarget::Unknown => self.rebound = Self::ALL,
+            },
             syn::UseTree::Group(group) => {
                 for tree in &group.items {
                     self.bind_tree(tree, prefix);
@@ -1531,12 +1550,40 @@ impl StdScope {
     }
 }
 
-/// Whether the `use` path `prefix` starts at a std crate root, whose names are the std items
-/// themselves. An ambiguity with a local module of that name is an error.
-pub(crate) fn std_rooted<S: ?Sized + PartialEq<str>>(prefix: &[&S]) -> bool {
-    prefix
-        .first()
-        .is_some_and(|first| CRATE_ROOTS.iter().any(|root| **first == **root))
+/// The module a glob import reads, as far as the std names it may bring in.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum GlobTarget {
+    /// A module of `std`, `core` or `alloc`, whose names are the std items themselves.
+    Std,
+    /// The module that many levels above the importing one, zero for the importing module.
+    Ancestor(usize),
+    /// Any other module, which may hold a macro or a derive under any std name.
+    Unknown,
+}
+
+/// The module a glob of the `use` path `prefix` reads. A crate root names the std crate, an
+/// ambiguity with a local module of that name being an error.
+pub(crate) fn glob_target<S: ?Sized + PartialEq<str>>(prefix: &[&S]) -> GlobTarget {
+    let is = |segment: &&S, name: &str| **segment == *name;
+    match prefix {
+        [first, ..] if CRATE_ROOTS.iter().any(|root| is(first, root)) => GlobTarget::Std,
+        [only] if is(only, "self") => GlobTarget::Ancestor(0),
+        [_, ..] if prefix.iter().all(|segment| is(segment, "super")) => {
+            GlobTarget::Ancestor(prefix.len())
+        }
+        _ => GlobTarget::Unknown,
+    }
+}
+
+/// Whether a glob of the `use` path `prefix` may bring in a macro under a std name the scopes
+/// visible to it do not already show, `depth` counting the inline modules around the import
+/// whose bindings stay in view.
+pub(crate) fn macro_glob<S: ?Sized + PartialEq<str>>(prefix: &[&S], depth: usize) -> bool {
+    match glob_target(prefix) {
+        GlobTarget::Std => false,
+        GlobTarget::Ancestor(levels) => levels > depth,
+        GlobTarget::Unknown => true,
+    }
 }
 
 /// Every std name bit of [`std_name_bit`].
@@ -1550,7 +1597,7 @@ pub(crate) fn import_rebound<S: ?Sized + PartialEq<str>>(
     name: &str,
     alias: &str,
 ) -> u32 {
-    if std_rooted(prefix) && name == alias {
+    if matches!(glob_target(prefix), GlobTarget::Std) && name == alias {
         0
     } else {
         std_name_bit(alias)
@@ -1586,9 +1633,11 @@ pub(crate) fn file_rebound(file: &syn::File) -> u32 {
     definitions.0
 }
 
-/// Whether a module's `items` leave every std name bound to the std item.
-pub(crate) fn std_names_visible(items: &[syn::Item]) -> bool {
-    StdScope::of(items.iter(), true).rebound == 0
+/// Whether a module's `items` leave every std name bound to the std item, and how many module
+/// levels above it a `use super::*` reaches, whose bindings it sees too.
+pub(crate) fn module_std_names(items: &[syn::Item]) -> (bool, usize) {
+    let scope = StdScope::of(items.iter(), true);
+    (scope.rebound == 0, scope.supers)
 }
 
 /// Whether `attrs` derive anything outside the std derives, a proc macro that reads the item.
@@ -2079,14 +2128,19 @@ struct NestedFormat {
 impl VisitMut for NestedFormat {
     fn visit_block_mut(&mut self, block: &mut syn::Block) {
         let outer = self.rebound;
-        self.rebound |= StdScope::of(
+        let scope = StdScope::of(
             block.stmts.iter().filter_map(|stmt| match stmt {
                 syn::Stmt::Item(item) => Some(item),
                 _ => None,
             }),
             false,
-        )
-        .rebound;
+        );
+        // A `use super::*` here reaches past the scopes the call's rebound covers.
+        self.rebound |= if scope.supers > 0 {
+            StdScope::ALL
+        } else {
+            scope.rebound
+        };
         syn::visit_mut::visit_block_mut(self, block);
         self.rebound = outer;
     }

@@ -246,6 +246,8 @@ pub(crate) struct Renamer<'env> {
     prim_fallback: bool,
     /// The scopes around the pass leave every std formatting macro name bound to the std macro.
     std_names: bool,
+    /// The inline modules around the traversal, whose frames stay on the stack.
+    inline_depth: usize,
     /// A live observer attribute froze the declarations being visited.
     observed: bool,
     constants_observed: bool,
@@ -298,6 +300,7 @@ impl<'env> Renamer<'env> {
             compiles: false,
             prim_fallback: false,
             std_names: false,
+            inline_depth: 0,
             observed: false,
             constants_observed: false,
             constants_prepared: false,
@@ -1292,7 +1295,7 @@ impl<'env> Renamer<'env> {
                 }
             }
             syn::UseTree::Glob(_) => {
-                self.top_glob(!crate::drift::std_rooted(prefix));
+                self.top_glob(crate::drift::macro_glob(prefix, self.inline_depth));
             }
         }
     }
@@ -1967,7 +1970,7 @@ impl<'env> Renamer<'env> {
             }
             glob @ syn::UseTree::Glob(_) => {
                 let segments: Vec<&str> = prefix.iter().map(String::as_str).collect();
-                self.top_glob(!crate::drift::std_rooted(&segments));
+                self.top_glob(crate::drift::macro_glob(&segments, self.inline_depth));
                 glob
             }
         }
@@ -3187,9 +3190,11 @@ impl VisitMut for Renamer<'_> {
             let observed = self.observed;
             self.observed |= crate::context::live_attr(&item.attrs);
             self.frames.push(frame);
+            self.inline_depth += 1;
             for sub_item in items.iter_mut() {
                 self.visit_item_mut(sub_item);
             }
+            self.inline_depth -= 1;
             let frame = self.frames.pop().expect("a scope frame");
             self.prim_fallback = primitive;
             self.observed = observed;

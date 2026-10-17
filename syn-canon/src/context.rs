@@ -220,7 +220,7 @@ impl<'a> SourceContext<'a> {
                     modules.push(Module {
                         seed: seed_frame(&scopes, path, &scope, prim_fallback),
                         prim_fallback,
-                        std_names: !crate_rebound && crate::drift::std_names_visible(scope.items()),
+                        std_names: !crate_rebound && std_names_kept(&scopes, path, &scope),
                         observed,
                         helper_blocked,
                     });
@@ -396,6 +396,22 @@ impl<'a> Declarations<'a> {
 
 /// Module declarations by module path.
 pub(crate) type ModuleMap<'a> = BTreeMap<Vec<String>, Declarations<'a>>;
+
+/// Whether the module declaration `scope` at `path` leaves every std name bound to the std
+/// item, following each `use super::*` to every declaration of the module it reads.
+fn std_names_kept(scopes: &ModuleMap<'_>, path: &[String], scope: &ModuleScope<'_>) -> bool {
+    let (kept, supers) = crate::drift::module_std_names(scope.items());
+    kept && (1..=supers).all(|levels| {
+        let Some(end) = path.len().checked_sub(levels) else {
+            return false;
+        };
+        scopes.get(&path[..end]).is_some_and(|declarations| {
+            declarations
+                .iter()
+                .all(|ancestor| std_names_kept(scopes, &path[..end], &ancestor))
+        })
+    })
+}
 
 /// Module ids by module path and original declaration address.
 type ModuleIds = BTreeMap<Vec<String>, Vec<(*const (), ModuleId)>>;
