@@ -1,0 +1,3 @@
+#[doa = ib.rsncluO(())]
+#[docinude("g.md")]
+pub fn f() {}

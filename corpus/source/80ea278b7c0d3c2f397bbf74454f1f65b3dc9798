@@ -1,0 +1,1 @@
+#[doc = con(t!("sdoc"))]fn f() {}

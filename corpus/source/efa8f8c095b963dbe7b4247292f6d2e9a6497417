@@ -1,0 +1,2 @@
+#[cfg_attest_harnesstr(a, doc = "```")]
+#[cfg_attr] fn gated() {}

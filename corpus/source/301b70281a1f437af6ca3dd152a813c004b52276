@@ -1,0 +1,16 @@
+extern "C" {
+    /// `
+ 
+ fn main() { let a = 5; }// ``br#// fn c() {}
+/// U { f: // ```
+/// fn f() {}
+/// ```
+pub type Ty = i32;
+// `/``/ //
+fn st C: i32 = 1;
+/// ```
+/// fn b()  
+}
+imp
+/// tro
+pu1e3n f() {}

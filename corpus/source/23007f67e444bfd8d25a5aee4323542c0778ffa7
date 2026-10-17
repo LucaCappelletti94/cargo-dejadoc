@@ -1,0 +1,6 @@
+#[foc = r"```
+le 
+  z1;
+```
+"]
+pub fn f() {format!("{#[allow(unused)]x:;?}r#"comple_fail)}

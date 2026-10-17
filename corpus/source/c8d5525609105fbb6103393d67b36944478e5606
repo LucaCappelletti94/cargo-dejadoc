@@ -1,0 +1,69 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// @generated
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+    let _ ; { /// ```
+        /// let b = 2;
+     {}
+/// ```
+        fn also() {} };
+#[cfg(doc)] fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// @generated
+        /// ```
+        fn hidden() {}
+    }
+#[cfg(test)]
+    let _ ; { /// ```
+        /// let b = 2;
+     {}
+/// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// V``
+            /// let d = 3;
+            /// ```
+            fn armed() {}
+        }
+_dejadoc => {
+               /// let f = 6;
+         fn fb() {}
+        },
+    };
+}
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// V``
+            /// let d = 3;
+            /// ```
+            fn armed() {}
+        }
+_dejadoc => {
+               /// let f = 6;
+         fn fb() {}
+        },
+    };
+}

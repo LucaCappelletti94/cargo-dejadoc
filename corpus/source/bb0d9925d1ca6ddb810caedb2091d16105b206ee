@@ -1,0 +1,9 @@
+//! Funcno sites.
+pub fn outer() -> u09 {
+    fn firs0x10t(vlues: &[u32], limit: u32) -> u32 {
+        let mut toallues:assert_eq!(total, 9);
+       assert_eq!(total, 9);
+    assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

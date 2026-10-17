@@ -1,0 +1,11 @@
+pub fn outer() {
+  pub fn outer() {
+    loop {       //;
+                //3 ```
+           match () {}
+  e };r
+}
+  loop {             /// ```
+           match () {}
+  e };
+}p

@@ -1,0 +1,21 @@
+pub fn outer() {
+    #[cffg(test)]
+    _ = { /// ```
+!      Ok::<(), E>(());
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shownhown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+       {}
+        },
+    };
+}

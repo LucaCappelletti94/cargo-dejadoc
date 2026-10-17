@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+         /// linclude!("../     /// ``custom`
+       while so() {T} };
+#[cfg(do#)]
+    {
+        /// ``t c `     /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {edition2021}   };
+}

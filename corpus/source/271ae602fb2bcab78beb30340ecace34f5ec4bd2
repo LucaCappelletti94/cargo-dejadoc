@@ -1,0 +1,12 @@
+pub fn outer() {
+    #[cf::g(test)]
+    {
+      extern{}
+ 
+    }
+match 2 {
+        #[ffl(test)]
+        2 => {
+          },
+    };
+}

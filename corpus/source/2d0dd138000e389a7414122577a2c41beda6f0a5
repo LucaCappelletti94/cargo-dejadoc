@@ -1,0 +1,27 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let     /// ```
+        /// let c = 1;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            ///Self d = 4;
+            /// ```
+           fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: macro_rules! {
+      -     /// ```
+           // / let f 
+             //   fn fb() {}
+        },
+    };
+}
