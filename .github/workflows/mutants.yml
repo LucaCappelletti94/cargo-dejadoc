@@ -16,70 +16,29 @@ concurrency:
 
 env:
   CARGO_TERM_COLOR: always
+  CARGO_PROFILE_TEST_DEBUG: "0"
+  NEXTEST_PROFILE: mutants
+  RUSTC_WRAPPER: sccache
 
 jobs:
-  enumerate:
-    name: Enumerate mutations
+  mutants:
+    name: Mutation testing ${{ strategy.job-index }}
     runs-on: ubuntu-latest
-    timeout-minutes: 70
+    timeout-minutes: 330
     if: >-
       github.event_name == 'push' ||
       (github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.user.login != 'dependabot[bot]')
-    outputs:
-      matrix: ${{ steps.inventory.outputs.matrix }}
-    steps:
-      - uses: actions/checkout@v4
-        timeout-minutes: 3
-      - name: Cache cargo downloads
-        uses: actions/cache@v6
-        timeout-minutes: 3
-        with:
-          path: |
-            ~/.cargo/registry/index
-            ~/.cargo/registry/cache
-            ~/.cargo/git/db
-          key: dl-${{ runner.os }}-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            dl-${{ runner.os }}-
-      - uses: dtolnay/rust-toolchain@6bed0761d98439e5a578e2877258200ad565ba87 # stable
-        with:
-          toolchain: stable
-        timeout-minutes: 5
-      - uses: mozilla-actions/sccache-action@7d986dd989559c6ecdb630a3fd2557667be217ad # v0.0.9
-        timeout-minutes: 5
-      - name: Install cargo-mutants
-        uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
-        timeout-minutes: 5
-        with:
-          tool: cargo-mutants@27.1.0
-      - name: Enumerate complete inventory
-        id: inventory
-        timeout-minutes: 2
-        run: >-
-          python3 -B .github/mutants.py enumerate
-          --request-id "MUTANTS-${{ github.run_id }}-${{ github.run_attempt }}"
-          --revision "${{ github.sha }}"
-      - name: Upload mutation inventory
-        uses: actions/upload-artifact@v4
-        timeout-minutes: 3
-        with:
-          name: mutation-inventory
-          path: mutation-inventory
-          if-no-files-found: error
-
-  shard:
-    name: Mutation testing ${{ matrix.label }}/${{ matrix.count }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 70
-    needs: enumerate
-    if: needs.enumerate.result == 'success'
     strategy:
       fail-fast: false
-      matrix: ${{ fromJSON(needs.enumerate.outputs.matrix) }}
+      matrix:
+        # A pull request mutates only its own change, `main` the whole workspace.
+        shard: ${{ fromJSON(github.event_name == 'pull_request' && '[0,1,2,3,4,5,6,7]' || '[0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31]') }}
     steps:
       - uses: actions/checkout@v4
         timeout-minutes: 3
+        with:
+          fetch-depth: 2
       - name: Cache cargo downloads
         uses: actions/cache@v6
         timeout-minutes: 3
@@ -102,61 +61,19 @@ jobs:
         timeout-minutes: 5
         with:
           tool: cargo-mutants@27.1.0,cargo-nextest
-      - name: Download mutation inventory
-        uses: actions/download-artifact@v4
-        timeout-minutes: 3
-        with:
-          name: mutation-inventory
-          path: mutation-inventory
+      - name: Diff the pull request
+        if: github.event_name == 'pull_request'
+        run: git diff HEAD^1 HEAD > git.diff
       - name: Run mutants
-        timeout-minutes: 42
+        timeout-minutes: 300
         run: >-
-          python3 -B .github/mutants.py shard
-          --request-id "MUTANTS-${{ github.run_id }}-${{ github.run_attempt }}"
-          --revision "${{ github.sha }}"
-          --index "${{ matrix.index }}"
+          cargo mutants --workspace --jobs 2
+          --shard ${{ strategy.job-index }}/${{ strategy.job-total }}
+          ${{ github.event_name == 'pull_request' && '--in-diff git.diff' || '' }}
       - name: Upload mutation outcome
         if: always()
         uses: actions/upload-artifact@v4
         timeout-minutes: 3
         with:
-          name: mutants-shard-${{ matrix.label }}-of-${{ matrix.count }}
-          path: |
-            mutation-results
-            mutants.out
-          if-no-files-found: error
-
-  aggregate:
-    name: Mutation testing
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs: [enumerate, shard]
-    if: >-
-      always() &&
-      (github.event_name == 'push' ||
-      (github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.user.login != 'dependabot[bot]'))
-    steps:
-      - name: Check job results
-        env:
-          ENUMERATION_RESULT: ${{ needs.enumerate.result }}
-          SHARD_RESULT: ${{ needs.shard.result }}
-        run: |
-          if [ "$ENUMERATION_RESULT" != "success" ] || [ "$SHARD_RESULT" != "success" ]; then
-            echo "Mutation enumeration finished as $ENUMERATION_RESULT and shards as $SHARD_RESULT"
-            exit 1
-          fi
-      - uses: actions/checkout@v4
-        timeout-minutes: 3
-      - name: Download mutation artifacts
-        uses: actions/download-artifact@v4
-        timeout-minutes: 3
-        with:
-          path: mutation-artifacts
-      - name: Audit complete mutation outcomes
-        timeout-minutes: 2
-        run: >-
-          python3 -B .github/mutants.py aggregate
-          --request-id "MUTANTS-${{ github.run_id }}-${{ github.run_attempt }}"
-          --revision "${{ github.sha }}"
-          --inventory mutation-artifacts/mutation-inventory/inventory.json
+          name: mutants-shard-${{ strategy.job-index }}
+          path: mutants.out
