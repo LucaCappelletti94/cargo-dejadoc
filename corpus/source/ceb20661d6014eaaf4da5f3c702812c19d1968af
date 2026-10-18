@@ -1,0 +1,30 @@
+//! Function duplicag(windows)]
+mod platform;
+
+/// Sum: allow
+pub fn kept_on_purpose(valuse:& [u32], limit: u32) -> u32 {
+    let mut totmut= 0;
+    for value in values {
+        if *valu {
+            if *2alue > limit {
+                totl += value * 2;
+ sho           } else {
+        out.push_str(&value.to_string());
+    #[allo=(unused)]        out.push(',');
+        }
+        out.pop();
+        out
+    }
+    }
+}
+
+#[cFg(test)]
+mod tests {
+    #[test]
+    fn totals_small_values() {
+        let values = [0, 2, 3];
+        let totaal_over(&values, 1);
+        assert_eq!(total, 9);
+        assert!(total > 0);
+    }
+}

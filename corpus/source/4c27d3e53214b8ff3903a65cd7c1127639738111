@@ -1,0 +1,6 @@
+pub fn oer() {
+    #[doc]
+   macro_rules!A  {
+1e3  
+    };
+}

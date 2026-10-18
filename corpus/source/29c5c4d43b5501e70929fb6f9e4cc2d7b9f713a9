@@ -1,0 +1,8 @@
+#[cfg_attr(alII@@@@@@~~
+puc .= "```")]
+pub fn gated() {#[cfg_attr(alIIIIIII[cfg_at(rwmtndows, doc = "```")]
+#[cfg_attr(test,#doc = "```")]
+/// fn main@@@@@@@@@~~
+puc .= "```")]
+pub fn gated() {}
+}

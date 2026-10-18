@@ -1,0 +1,5 @@
+//- a cop{}
+/// `M~%~~ e`
+/// fn d()rust {}
+/// ~''''~~
+pub fn heoper() {}

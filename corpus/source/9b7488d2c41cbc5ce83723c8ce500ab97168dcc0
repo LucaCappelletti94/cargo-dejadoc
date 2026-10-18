@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIIII7=*un******6=666666666**********6=6666**y******compile_fail2*******66**66666****no_run***6**6=*666666666666&2*o*n_ru6666IIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc = "d``")]
+#[cfgttr(windo "```")]
+pub fn gated() {}

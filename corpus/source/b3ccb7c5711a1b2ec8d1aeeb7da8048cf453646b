@@ -1,0 +1,5 @@
+#[doc = cundile_str!([doc = include_str!("doc.md");]
+p[doc = cundile_str!([doc = include_str!("doc.md");]
+pub fn f(|)".md")]
+pub ub fn f(|)".md")]
+pub fn f() {}

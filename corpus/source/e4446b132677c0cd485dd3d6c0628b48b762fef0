@@ -1,0 +1,11 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+      {}
+ 
+    }
+match 1 {
+        #[cfl(test)]
+        0 => {return      },
+    };
+}

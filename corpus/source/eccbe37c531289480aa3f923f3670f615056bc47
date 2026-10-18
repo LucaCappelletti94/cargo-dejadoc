@@ -1,0 +1,10 @@
+/// ```
+/// fn c() {}
+/// `
+/// let d =/ ```
+#[cf=l(|l(not(test), any(doctest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```
+    /// let eu8,
+}

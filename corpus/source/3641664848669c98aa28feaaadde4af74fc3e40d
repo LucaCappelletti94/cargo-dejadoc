@@ -1,0 +1,4 @@
+#[derive(den)]
+#[cfg_attr(feature ="stgnore")]
+/// fn ``
+pub struct Gated;

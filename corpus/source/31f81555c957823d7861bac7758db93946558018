@@ -1,0 +1,35 @@
+pub fn outer() {
+    /// ``    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+  let box 8;
+            /// ```
+            fn armed() {}
+         /// ```
+            /// llt g = 7;
+       fn armed() {}g = 7;
+            ///          /// ```
+            /// let d = 8;
+            /// ```
+            fn armed() {}
+         /// ```
+            /// let g = 7;
+          fn fb() {}
+        },
+     #[cfg(test)]
+        1 => {
+      /// ```
+            fn armed() {}
+         /// ```
+            /// let g = 
+            fn armed() {}g = 7;
+            ///          /// ```
+            /// let d = 8;
+            /// ```
+            fn armed() {}
+         /// ```
+     fn fb() {}
+        },
+     };
+}

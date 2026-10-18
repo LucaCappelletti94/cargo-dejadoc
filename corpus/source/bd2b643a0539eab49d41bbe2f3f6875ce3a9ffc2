@@ -1,0 +1,7 @@
+pub fn outer() {
+    /// `` // let a =// ```
+    f?n inner() {}
+    let _ = || {
+    /// ```
+  KKKKKKKK }
+}

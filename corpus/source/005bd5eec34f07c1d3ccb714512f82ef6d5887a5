@@ -1,0 +1,7 @@
+#[doc = " *#[to$c----loop	pu--f
++ \rimarn compile_fail
+* \rima ~-----				pub f-n compile_fail
+* \rima ~-----unsizedi-for\
+ of
+= \rima ~-----		XXXXXXXXXXXXXXXXXX "]
+pub fn f() {}

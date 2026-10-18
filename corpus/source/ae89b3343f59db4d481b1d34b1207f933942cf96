@@ -1,0 +1,2 @@
+#[doc = include_str!(o[dc =in compile_failclude_str!("doc.md")]
+".md")] fn f() {}

@@ -1,0 +1,3 @@
+///     timpl  ><!c"x"[CDAT0A[o
+pub fn f() {}///`>>>><!c fn f() {A[o
+pub fn f() {}

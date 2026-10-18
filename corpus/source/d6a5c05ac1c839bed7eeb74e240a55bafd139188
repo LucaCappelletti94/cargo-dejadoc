@@ -1,0 +1,7 @@
+//!<`used]
+#[cfg_attr(not(feature~= "tnsrig"), cd [cfg_attr(not(feature~= "tnsrig"), cd =do "```ignore")]
+/// fn main() {_ }
+=do "```ignore")]
+/// fn main() {_ }
+/// ```
+pub struct Gatedtest_harness;

@@ -1,0 +1,11 @@
+//!<p
+//!C
+//!		 =>//!C
+//!#[cfg_attr(alIIIIIIIIIII "```"		p
+//!C
+//!	)]
+#[cfg_attr(any(not(doa), festrure = impl "b"), doc = "```")]
+#[cfg!_attr(windows, doc = "```")]
+#[cfg_attr(test,self doc = "```")]
+/// fn main]
+pub fn gated() {}

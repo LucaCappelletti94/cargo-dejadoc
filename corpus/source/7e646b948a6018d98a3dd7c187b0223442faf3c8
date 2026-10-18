@@ -1,0 +1,3 @@
+ fn ffor<'amacRo>(){}
+//|
+pub fn ffor<'amacRo>(){}

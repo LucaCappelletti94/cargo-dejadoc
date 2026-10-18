@@ -1,0 +1,3 @@
+extern {//! `
+type T;T;
+}

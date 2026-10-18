@@ -1,0 +1,4 @@
+#[doc = r"```
+ x``
+"]
+pub fn f() {format!(while while "{{x;?}")}
