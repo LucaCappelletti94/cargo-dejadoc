@@ -1,5 +1,6 @@
 //! `.dejadoc.toml` parameters. A missing file is a no-op.
 
+use crate::{ContextScope, DependencySearch};
 use std::path::Path;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
@@ -22,6 +23,15 @@ pub(crate) struct Config {
     /// Skip context blocks whose canonical form counts fewer tokens than this.
     #[serde(rename = "context-min-tokens")]
     pub(crate) context_min_tokens: Option<usize>,
+    /// Local context source selection.
+    #[serde(rename = "context-select")]
+    pub(crate) context_select: Option<ContextScope>,
+    /// Workspace context comparison corpus.
+    #[serde(rename = "context-search")]
+    pub(crate) context_search: Option<ContextScope>,
+    /// Dependency context discovery parameters.
+    #[serde(default, rename = "context-dependencies")]
+    pub(crate) context_dependencies: DependencySearch,
     /// Scan files marked generated as well.
     #[serde(rename = "scan-generated")]
     pub(crate) scan_generated: Option<bool>,

@@ -1,0 +1,99 @@
+#!/usr/bin/env bash
+# Fixture gh for the action smoke harness, replaying scenario API responses.
+# Every call is logged to $FAKE_LOG/gh.jsonl with its parameters, and a
+# body=@- stdin body is stored under $FAKE_LOG for inspection.
+set -uo pipefail
+log_dir="${FAKE_LOG:?}"
+case "${1:-}" in
+  api)
+    shift
+    path=''; method=GET; jqexpr=''; args=()
+    while [ $# -gt 0 ]; do
+      case "$1" in
+        -X) method="$2"; shift 2 ;;
+        -f|-F) args+=("$2"); shift 2 ;;
+        --jq) jqexpr="$2"; shift 2 ;;
+        --paginate) shift ;;
+        *) path="$1"; shift ;;
+      esac
+    done
+    # A real gh api treats field arguments as a post, the fake mirrors it.
+    [ "${#args[@]}" -gt 0 ] && [ "$method" = "GET" ] && method=POST
+    has_stdin=0; stdin_body=''
+    for a in "${args[@]:-}"; do
+      [ "$a" = "body=@-" ] && { stdin_body="$(cat)"; has_stdin=1; }
+    done
+    filter=()
+    for a in "${args[@]:-}"; do [ "$a" != "body=@-" ] && filter+=("$a"); done
+    params_json='{}'
+    if [ ${#filter[@]} -gt 0 ]; then
+      params_json="$(printf '%s\n' "${filter[@]}" | jq -R -s '
+        split("\n") | map(select(length > 0))
+        | map(capture("^(?<key>[^=]+)=(?<value>.*)$"))
+        | from_entries')"
+    fi
+    body_file=''
+    if [ "$has_stdin" = "1" ]; then
+      n="$(ls "$log_dir"/gh-call-*.md 2>/dev/null | wc -l | tr -d ' ')"
+      body_file="gh-call-$n.md"
+      printf '%s' "$stdin_body" > "$log_dir/$body_file"
+      params_json="$(jq -c --arg f "body=$body_file" '. + {body: $f}' <<< "$params_json")"
+    fi
+    jq -cn --arg m "$method" --arg p "$path" --argjson params "$params_json" --arg j "$jqexpr" \
+      '{m: $m, p: $p, params: $params, j: $j}' >> "$log_dir/gh.jsonl"
+    resp='{}'
+    case "$path" in
+      "repos/$GITHUB_REPOSITORY/pulls/"*"/files")
+        if [ -n "${SCEN_CHANGED_FILES:-}" ] && [ -f "${SCEN_CHANGED_FILES:-}" ]; then
+          resp="$(jq -Rcs 'split("\n") | map(select(length > 0)) | map({filename: .})' < "$SCEN_CHANGED_FILES")"
+        else
+          resp='[]'
+        fi
+        ;;
+      "repos/$GITHUB_REPOSITORY/pulls/"*)
+        case "$method" in
+          POST)
+            if [ "${SCEN_GH_403:-0}" = "1" ]; then
+              echo '{"message":"Resource not accessible by integration","documentation_url":"https://docs.github.com/rest"}'
+              echo "gh: Resource not accessible by integration (HTTP 403)" >&2
+              exit 1
+            fi
+            case "$path" in
+              */comments) resp='{"id": 4242}' ;;
+              */reviews)
+                ev=CHANGES_REQUESTED
+                for a in "${args[@]:-}"; do case "$a" in event=*) ev="${a#event=}";; esac; done
+                resp="$(jq -cn --arg s "$ev" '{state: $s}')"
+                ;;
+              *) resp='{}' ;;
+            esac
+            ;;
+          *)
+            resp="$(jq -cn --arg b "${SCEN_BASE_SHA:-0000000000000000000000000000000000000000}" \
+              --arg h "${SCEN_HEAD_SHA:-0000000000000000000000000000000000000000}" \
+              '{base: {sha: $b}, head: {sha: $h}}')"
+            ;;
+        esac
+        ;;
+      "repos/"*"releases"*)
+        resp='[]'
+        ;;
+      *)
+        resp='{}'
+        ;;
+    esac
+    if [ -n "$jqexpr" ]; then
+      printf '%s' "$resp" | jq -r "$jqexpr"
+    else
+      printf '%s\n' "$resp"
+    fi
+    ;;
+  release)
+    echo "fake gh: no release assets" >&2
+    exit 1
+    ;;
+  *)
+    echo "fake gh: unhandled command ${1:-<none>}" >&2
+    exit 3
+    ;;
+esac

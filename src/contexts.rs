@@ -1,136 +1,107 @@
-//! Qualifying lexical context forms and their source locations.
+//! Grouping indexed context records into duplicate groups.
 
-use crate::{ContextGroup, ContextKind, ContextSite, SourceFile};
+use crate::context_index::IndexedContext;
+use crate::{ContextGroup, ContextKind, ContextSite};
 use alloc::collections::{BTreeMap, BTreeSet};
-use alloc::format;
 use alloc::string::{String, ToString};
 use alloc::vec::Vec;
+use serde::Deserialize;
 
-type Position = (usize, usize);
-type Range = (Position, Position);
-
-pub(crate) struct Forms<'a> {
+/// The grouped context blocks of `local` and `corpus` records, with the
+/// selected total and the unique form count.
+pub(crate) fn group(
+    local: &[&IndexedContext],
+    corpus: &[&IndexedContext],
     floor: usize,
-    seen: BTreeMap<&'a str, BTreeSet<Range>>,
-    by_form: BTreeMap<String, (usize, Vec<ContextSite>)>,
-}
+    threshold: usize,
+) -> (usize, usize, Vec<ContextGroup>) {
+    type RangeKey = (String, u32, usize, u32, usize);
+    struct Entry {
+        tokens: usize,
+        sites: BTreeMap<RangeKey, ContextSite>,
+        anchor: bool,
+    }
+    let range = |record: &IndexedContext| -> RangeKey {
+        (
+            record.site.file.clone(),
+            record.site.line,
+            record.site.column,
+            record.site.end,
+            record.site.end_column,
+        )
+    };
 
-impl<'a> Forms<'a> {
-    pub(crate) fn new(floor: usize) -> Self {
-        Self {
-            floor,
-            seen: BTreeMap::new(),
-            by_form: BTreeMap::new(),
+    let mut local_ranges = BTreeSet::new();
+    for record in local {
+        local_ranges.insert(range(record));
+    }
+    let total = local_ranges.len();
+
+    let mut local_forms = BTreeSet::new();
+    for record in local {
+        if record.tokens >= floor {
+            local_forms.insert(record.form.clone());
         }
     }
+    let unique = local_forms.len();
 
-    pub(crate) fn file(&mut self, prefix: &str, file: &'a SourceFile, root: &str) {
-        let path = file
-            .path
-            .strip_prefix(root)
-            .and_then(|p| p.strip_prefix('/'))
-            .unwrap_or(&file.path);
-        let seen = match self.seen.entry(path) {
-            alloc::collections::btree_map::Entry::Occupied(_) => return,
-            alloc::collections::btree_map::Entry::Vacant(entry) => entry.insert(BTreeSet::new()),
-        };
-        let ascii = file.text.is_ascii();
-        let source_offset = file.parsed.shebang.as_ref().map_or(0, String::len)
-            + usize::from(file.text.starts_with('\u{feff}')) * '\u{feff}'.len_utf8();
-        syn_canon::contexts(&file.parsed, &mut |context, canonical| {
-            let (start, end) = (context.span.start(), context.span.end());
-            let range = ((start.line, start.column), (end.line, end.column));
-            if !seen.insert(range) {
-                return;
-            }
-            let tokens = canonical.body_units();
-            if tokens < self.floor {
-                return;
-            }
-            let (column, end_column) = if ascii {
-                (start.column + 1, end.column + 1)
-            } else {
-                let bytes = context.span.byte_range();
-                (
-                    byte_column(&file.text, bytes.start + source_offset),
-                    byte_column(&file.text, bytes.end + source_offset),
-                )
-            };
-            let form = canonical.into_key();
-            let site = ContextSite {
-                file: path.to_string(),
-                line: u32::try_from(start.line).unwrap_or(u32::MAX),
-                column,
-                end: u32::try_from(end.line).unwrap_or(u32::MAX),
-                end_column,
-                item: if context.item.is_empty() {
-                    prefix.to_string()
-                } else {
-                    format!("{prefix}::{}", context.item)
-                },
-                kind: context.kind,
-            };
-            self.by_form
-                .entry(form)
-                .or_insert_with(|| (tokens, Vec::new()))
-                .1
-                .push(site);
+    let mut by_form: BTreeMap<String, Entry> = BTreeMap::new();
+    for (record, anchor) in local
+        .iter()
+        .map(|record| (*record, true))
+        .chain(corpus.iter().map(|record| (*record, false)))
+    {
+        if record.tokens < floor {
+            continue;
+        }
+        let entry = by_form.entry(record.form.clone()).or_insert(Entry {
+            tokens: record.tokens,
+            sites: BTreeMap::new(),
+            anchor: false,
         });
+        entry.anchor = anchor || entry.anchor;
+        entry
+            .sites
+            .entry(range(record))
+            .or_insert_with(|| record.site.clone());
     }
 
-    pub(crate) fn finish(self, threshold: usize) -> (usize, usize, Vec<ContextGroup>) {
-        let total = self.seen.values().map(BTreeSet::len).sum();
-        let unique = self.by_form.len();
-        let mut groups: Vec<_> = self
-            .by_form
-            .into_iter()
-            .filter(|(_, (_, sites))| sites.len() >= threshold)
-            .map(|(form, (tokens, mut sites))| {
-                sites.sort_by(|a, b| {
-                    (&a.file, a.line, a.column, a.end, a.end_column).cmp(&(
-                        &b.file,
-                        b.line,
-                        b.column,
-                        b.end,
-                        b.end_column,
-                    ))
-                });
-                let hash = blake3::hash(form.as_bytes()).to_hex().to_string();
-                ContextGroup {
-                    id: hash[..8].to_string(),
-                    hash,
-                    tokens,
-                    sites,
-                }
+    let mut groups: Vec<ContextGroup> = by_form
+        .into_iter()
+        .filter(|(_, entry)| entry.anchor && entry.sites.len() >= threshold)
+        .map(|(form, entry)| {
+            let hash = blake3::hash(form.as_bytes()).to_hex().to_string();
+            ContextGroup {
+                id: hash[..8].to_string(),
+                hash,
+                tokens: entry.tokens,
+                sites: entry.sites.into_values().collect(),
+            }
+        })
+        .collect();
+    let covered: Vec<bool> = groups
+        .iter()
+        .enumerate()
+        .map(|(index, group)| {
+            groups.iter().enumerate().any(|(other, outer)| {
+                index != other
+                    && group
+                        .sites
+                        .iter()
+                        .all(|site| outer.sites.iter().any(|parent| contains(parent, site)))
             })
-            .collect();
-        let covered: Vec<_> = groups
-            .iter()
-            .enumerate()
-            .map(|(index, group)| {
-                groups.iter().enumerate().any(|(other, outer)| {
-                    index != other
-                        && group
-                            .sites
-                            .iter()
-                            .all(|site| outer.sites.iter().any(|parent| contains(parent, site)))
-                })
-            })
-            .collect();
-        groups = groups
-            .into_iter()
-            .zip(covered)
-            .filter_map(|(group, covered)| (!covered).then_some(group))
-            .collect();
-        groups.sort_by(|a, b| a.hash.cmp(&b.hash));
-        (total, unique, groups)
-    }
+        })
+        .collect();
+    groups = groups
+        .into_iter()
+        .zip(covered)
+        .filter_map(|(group, covered)| (!covered).then_some(group))
+        .collect();
+    groups.sort_by(|a, b| a.hash.cmp(&b.hash));
+    (total, unique, groups)
 }
 
-fn byte_column(text: &str, offset: usize) -> usize {
-    offset - text[..offset].rfind('\n').map_or(0, |newline| newline + 1) + 1
-}
-
+/// `outer` strictly encloses `inner` on one file.
 fn contains(outer: &ContextSite, inner: &ContextSite) -> bool {
     let start = (outer.line, outer.column);
     let end = (outer.end, outer.end_column);
@@ -153,6 +124,22 @@ pub(crate) fn serialize_kind<S: serde::Serializer>(
     serializer.serialize_str(kind_name(*kind))
 }
 
+pub(crate) fn deserialize_kind<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<ContextKind, D::Error> {
+    let name = String::deserialize(deserializer)?;
+    match name.as_str() {
+        "function-body" => Ok(ContextKind::FunctionBody),
+        "block" => Ok(ContextKind::Block),
+        "arm" => Ok(ContextKind::Arm),
+        "closure" => Ok(ContextKind::Closure),
+        other => Err(serde::de::Error::unknown_variant(
+            other,
+            &["function-body", "block", "arm", "closure"],
+        )),
+    }
+}
+
 pub(crate) fn kind_name(kind: ContextKind) -> &'static str {
     match kind {
         ContextKind::FunctionBody => "function-body",
@@ -164,9 +151,13 @@ pub(crate) fn kind_name(kind: ContextKind) -> &'static str {
 
 #[cfg(test)]
 mod tests {
-    use crate::{ContextKind, Dejadoc, Report, SourceFile, TargetScan};
-    use alloc::string::ToString;
+    use super::group;
+    use crate::context_index::IndexedContext;
+    use crate::reuse::ContextAccess;
+    use crate::{ContextGroup, ContextKind, ContextSite, Dejadoc, Report, SourceFile, TargetScan};
+    use alloc::string::{String, ToString};
     use alloc::vec;
+    use alloc::vec::Vec;
 
     fn scan(code: &str, floor: usize) -> Report {
         let target = TargetScan {
@@ -223,7 +214,7 @@ mod tests {
         let above = scan(code, 4);
         assert_eq!(above.context_blocks, 2);
         assert_eq!(above.unique_context_blocks, 0);
-        assert_eq!(above.context_groups.len(), 0);
+        assert_eq!(above.context_groups, Vec::<ContextGroup>::new());
     }
 
     #[test]
@@ -258,7 +249,7 @@ mod tests {
         assert!(sites[0].end_column < sites[1].column);
         let filtered = scan("fn a() {} fn b() {}", 1);
         assert_eq!(filtered.context_blocks, 2);
-        assert_eq!(filtered.context_groups.len(), 0);
+        assert_eq!(filtered.context_groups, Vec::<ContextGroup>::new());
     }
 
     #[test]
@@ -304,7 +295,7 @@ mod tests {
             .context_min_tokens(0)
             .run_targets("", &targets, &|_, _| None);
         assert_eq!(report.context_blocks, 1);
-        assert_eq!(report.context_groups.len(), 0);
+        assert_eq!(report.context_groups, Vec::<ContextGroup>::new());
     }
 
     #[test]
@@ -401,7 +392,7 @@ mod tests {
         let report = scan(code, 0);
         assert_eq!(report.context_blocks, 3);
         assert_eq!(report.unique_context_blocks, 3);
-        assert_eq!(report.context_groups.len(), 0);
+        assert_eq!(report.context_groups, Vec::<ContextGroup>::new());
     }
 
     #[test]
@@ -474,7 +465,7 @@ mod tests {
             .run_targets("", &[target], &|_, _| None);
         assert_eq!(report.context_blocks, 1);
         assert_eq!(report.unique_context_blocks, 1);
-        assert_eq!(report.context_groups.len(), 0);
+        assert_eq!(report.context_groups, Vec::<ContextGroup>::new());
     }
 
     #[test]
@@ -492,5 +483,133 @@ mod tests {
             assert_eq!(site.item, "fixture");
             assert_eq!(site.kind, ContextKind::Block);
         }
+    }
+
+    fn record(
+        form: &str,
+        tokens: usize,
+        file: &str,
+        line: u32,
+        column: usize,
+        end_column: usize,
+    ) -> IndexedContext {
+        IndexedContext {
+            form: form.to_string(),
+            tokens,
+            site: ContextSite {
+                file: file.to_string(),
+                line,
+                column,
+                end: line,
+                end_column,
+                item: String::new(),
+                kind: ContextKind::FunctionBody,
+            },
+            module: "app".to_string(),
+            crate_name: "app".to_string(),
+            crate_root: "src/lib.rs".to_string(),
+            access: ContextAccess::Unresolved,
+            api_path: None,
+            conditions: Vec::new(),
+            extraction_notes: Vec::new(),
+        }
+    }
+
+    fn refs(records: &[IndexedContext]) -> Vec<&IndexedContext> {
+        records.iter().collect()
+    }
+
+    #[test]
+    fn group_requires_a_local_anchor() {
+        let local = vec![record("a", 5, "app/src/lib.rs", 1, 1, 9)];
+        let corpus = vec![
+            record("b", 5, "other/src/lib.rs", 1, 1, 9),
+            record("b", 5, "other/src/lib.rs", 9, 1, 9),
+        ];
+        let (total, unique, groups) = group(&refs(&local), &refs(&corpus), 0, 2);
+        assert_eq!(total, 1);
+        assert_eq!(unique, 1);
+        assert_eq!(groups, Vec::<ContextGroup>::new());
+        let anchored = vec![record("b", 5, "app/src/lib.rs", 1, 1, 9)];
+        let (_, _, groups) = group(&refs(&anchored), &refs(&corpus), 0, 2);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].sites.len(), 3);
+    }
+
+    #[test]
+    fn group_counts_physical_ranges_once() {
+        let local = vec![
+            record("a", 5, "app/src/lib.rs", 1, 1, 9),
+            record("a", 5, "app/src/lib.rs", 1, 1, 9),
+        ];
+        let (total, _, groups) = group(&refs(&local), &[], 0, 2);
+        assert_eq!(total, 1);
+        assert_eq!(groups, Vec::<ContextGroup>::new());
+        let corpus = vec![record("a", 5, "app/src/lib.rs", 1, 1, 9)];
+        let (_, _, groups) = group(&refs(&local), &refs(&corpus), 0, 1);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].sites.len(), 1);
+    }
+
+    #[test]
+    fn group_floor_filters_records_not_totals() {
+        let local = vec![
+            record("big", 10, "app/src/lib.rs", 1, 1, 9),
+            record("small", 1, "app/src/lib.rs", 3, 1, 5),
+        ];
+        let corpus = vec![record("big", 10, "other/src/lib.rs", 1, 1, 9)];
+        let (total, unique, groups) = group(&refs(&local), &refs(&corpus), 5, 2);
+        assert_eq!(total, 2);
+        assert_eq!(unique, 1);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tokens, 10);
+        assert_eq!(groups[0].sites.len(), 2);
+    }
+
+    #[test]
+    fn group_suppresses_contained_groups() {
+        let local = vec![
+            record("outer", 10, "app/src/lib.rs", 1, 1, 50),
+            record("outer", 10, "app/src/lib.rs", 9, 1, 50),
+        ];
+        let corpus = vec![
+            record("outer", 10, "other/src/lib.rs", 1, 1, 50),
+            record("inner", 5, "app/src/lib.rs", 1, 5, 20),
+            record("inner", 5, "app/src/lib.rs", 9, 5, 20),
+            record("inner", 5, "other/src/lib.rs", 1, 5, 20),
+        ];
+        let (_, _, groups) = group(&refs(&local), &refs(&corpus), 0, 2);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].tokens, 10);
+        assert_eq!(groups[0].sites.len(), 3);
+    }
+
+    #[test]
+    fn group_threshold_counts_local_and_corpus_sites() {
+        let local = vec![record("a", 5, "app/src/lib.rs", 1, 1, 9)];
+        let corpus = vec![record("a", 5, "other/src/lib.rs", 1, 1, 9)];
+        let (_, _, groups) = group(&refs(&local), &refs(&corpus), 0, 2);
+        assert_eq!(groups.len(), 1);
+        let (_, _, none) = group(&refs(&local), &refs(&corpus), 0, 3);
+        assert_eq!(none, Vec::<ContextGroup>::new());
+    }
+
+    #[derive(serde::Deserialize)]
+    struct KindWrapper {
+        #[serde(deserialize_with = "super::deserialize_kind")]
+        kind: ContextKind,
+    }
+
+    #[test]
+    fn deserialize_kind_round_trips_the_wire_names() {
+        let parsed: KindWrapper = serde_json::from_str(r#"{"kind":"function-body"}"#).unwrap();
+        assert_eq!(parsed.kind, ContextKind::FunctionBody);
+        let parsed: KindWrapper = serde_json::from_str(r#"{"kind":"block"}"#).unwrap();
+        assert_eq!(parsed.kind, ContextKind::Block);
+        let parsed: KindWrapper = serde_json::from_str(r#"{"kind":"arm"}"#).unwrap();
+        assert_eq!(parsed.kind, ContextKind::Arm);
+        let parsed: KindWrapper = serde_json::from_str(r#"{"kind":"closure"}"#).unwrap();
+        assert_eq!(parsed.kind, ContextKind::Closure);
+        assert!(serde_json::from_str::<KindWrapper>(r#"{"kind":"weird"}"#).is_err());
     }
 }

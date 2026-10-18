@@ -23,6 +23,66 @@ inputs:
     description: Skip functions whose body counts fewer tokens than this, a path or an operator counting as one
     required: false
     default: ''
+  context-blocks:
+    description: Also check for duplicated context blocks
+    required: false
+    default: 'false'
+  context-min-tokens:
+    description: Skip context blocks with fewer tokens than this
+    required: false
+    default: ''
+  context-select:
+    description: Select the local contexts to check, empty keeps the whole workspace
+    required: false
+    default: ''
+  context-search:
+    description: Restrict the comparison corpus to one context scope
+    required: false
+    default: ''
+  context-dependency-depth:
+    description: Search dependency sources to this shortest-path depth, zero stays local
+    required: false
+    default: '0'
+  context-dev-dependencies:
+    description: Include development dependency edges
+    required: false
+    default: 'false'
+  context-build-dependencies:
+    description: Include build dependency edges
+    required: false
+    default: 'false'
+  context-all-optional-dependencies:
+    description: Explore optional dependency paths outside the selected feature configuration
+    required: false
+    default: 'false'
+  context-features:
+    description: Cargo features enabled for dependency discovery
+    required: false
+    default: ''
+  context-all-features:
+    description: Enable all features for dependency discovery
+    required: false
+    default: 'false'
+  context-no-default-features:
+    description: Disable default features for dependency discovery
+    required: false
+    default: 'false'
+  context-target:
+    description: Target triple used for dependency discovery
+    required: false
+    default: ''
+  context-cache-dir:
+    description: Persistent dependency index directory, empty for a run-local directory
+    required: false
+    default: ''
+  context-check-latest:
+    description: Check the latest published release of indexed dependencies
+    required: false
+    default: 'true'
+  context-fail-on-reuse:
+    description: Make dependency reuse findings fail the duplicate gate
+    required: false
+    default: 'false'
   all-targets:
     description: Also scan bin and example targets
     required: false
@@ -124,6 +184,26 @@ runs:
         [ -n "$tag" ] && install+=(--version "$VERSION")
         cargo install "${install[@]}"
 
+    - name: Resolve the dependency index directory
+      id: cache-dir
+      if: ${{ inputs.mode != 'post' && inputs.context-dependency-depth > 0 }}
+      shell: bash
+      env:
+        CONTEXT_CACHE_DIR: ${{ inputs.context-cache-dir }}
+      run: |
+        dir="${CONTEXT_CACHE_DIR:-$RUNNER_TEMP/dejadoc-context-index}"
+        mkdir -p "$dir/public"
+        echo "dir=$dir" >> "$GITHUB_OUTPUT"
+        echo "dejadoc-context-index-dir=$dir" >> "$GITHUB_ENV"
+
+    - name: Restore the dependency index
+      if: ${{ inputs.mode != 'post' && inputs.context-dependency-depth > 0 }}
+      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ env.dejadoc-context-index-dir }}/public
+        key: dejadoc-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1
+        restore-keys: dejadoc-context-index-${{ runner.os }}-
+
     - name: Scan for duplicates
       id: scan
       if: ${{ inputs.mode != 'post' }}
@@ -139,6 +219,21 @@ runs:
         FUNCTIONS: ${{ inputs.functions }}
         FN_MIN_TOKENS: ${{ inputs.fn-min-tokens }}
         ANNOTATIONS: ${{ inputs.annotations }}
+        CONTEXT_BLOCKS: ${{ inputs.context-blocks }}
+        CONTEXT_MIN_TOKENS: ${{ inputs.context-min-tokens }}
+        CONTEXT_SELECT: ${{ inputs.context-select }}
+        CONTEXT_SEARCH: ${{ inputs.context-search }}
+        CONTEXT_DEPTH: ${{ inputs.context-dependency-depth }}
+        CONTEXT_DEV: ${{ inputs.context-dev-dependencies }}
+        CONTEXT_BUILD: ${{ inputs.context-build-dependencies }}
+        CONTEXT_ALL_OPT: ${{ inputs.context-all-optional-dependencies }}
+        CONTEXT_FEATURES: ${{ inputs.context-features }}
+        CONTEXT_ALL_FEATURES: ${{ inputs.context-all-features }}
+        CONTEXT_NO_DEFAULT: ${{ inputs.context-no-default-features }}
+        CONTEXT_TARGET: ${{ inputs.context-target }}
+        CONTEXT_CACHE_DIR: ${{ env.dejadoc-context-index-dir }}
+        CONTEXT_CHECK_LATEST: ${{ inputs.context-check-latest }}
+        CONTEXT_FAIL: ${{ inputs.context-fail-on-reuse }}
       run: |
         # Report paths are relative to the workspace root cargo resolves, the cwd or one of
         # its ancestors. GitHub reads, matches and links paths from the repository root, so
@@ -150,19 +245,41 @@ runs:
           [ "$prefix" = "." ] && prefix=''
         fi
         printf '%s' "$prefix" > "$RUNNER_TEMP/dejadoc-prefix"
-        printf '%s\n' 'if $prefix == "" then . else (.groups[]?.sites[]?, .context_groups[]?.sites[]?) |= (.file = "\($prefix)/\(.file)") end' \
+        printf '%s\n' 'if $prefix == "" then . else ((.groups[]?.sites[]?, .context_groups[]?.sites[]?) |= (.file = "\($prefix)/\(.file)")) | (if .reuse then (.reuse.groups[]?.local |= (.file = "\($prefix)/\(.file)")) else . end) end' \
           > "$RUNNER_TEMP/dejadoc-root.jq"
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
         [ "$FUNCTIONS" = "true" ] && set -- --functions "$@"
         [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
+        [ "$CONTEXT_BLOCKS" = "true" ] && set -- --context-blocks "$@"
+        [ -n "$CONTEXT_MIN_TOKENS" ] && set -- --context-min-tokens "$CONTEXT_MIN_TOKENS" "$@"
+        [ -n "$CONTEXT_SELECT" ] && set -- --context-select "$CONTEXT_SELECT" "$@"
+        [ -n "$CONTEXT_SEARCH" ] && set -- --context-search "$CONTEXT_SEARCH" "$@"
+        if [ "$CONTEXT_DEPTH" != "0" ]; then
+          set -- --context-dependency-depth "$CONTEXT_DEPTH" "$@"
+          [ "$CONTEXT_DEV" = "true" ] && set -- --context-dev-dependencies "$@"
+          [ "$CONTEXT_BUILD" = "true" ] && set -- --context-build-dependencies "$@"
+          [ "$CONTEXT_ALL_OPT" = "true" ] && set -- --context-all-optional-dependencies "$@"
+          [ -n "$CONTEXT_FEATURES" ] && set -- --context-features "$CONTEXT_FEATURES" "$@"
+          [ "$CONTEXT_ALL_FEATURES" = "true" ] && set -- --context-all-features "$@"
+          [ "$CONTEXT_NO_DEFAULT" = "true" ] && set -- --context-no-default-features "$@"
+          [ -n "$CONTEXT_TARGET" ] && set -- --context-target "$CONTEXT_TARGET" "$@"
+          [ -n "$CONTEXT_CACHE_DIR" ] && set -- --context-cache-dir "$CONTEXT_CACHE_DIR" "$@"
+          [ "$CONTEXT_CHECK_LATEST" = "false" ] && set -- --context-check-latest false "$@"
+          [ "$CONTEXT_FAIL" = "true" ] && set -- --context-fail-on-reuse "$@"
+        fi
         if [ -n "$PR_NUMBER" ] || [ "$DRY_RUN" = "true" ]; then
           report="$RUNNER_TEMP/dejadoc-report.json"
+          status=0
           cargo dejadoc \
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
-            --no-fail --json "$@" > "$report.raw"
+            --no-fail --json "$@" > "$report.raw" || status=$?
+          if [ ! -s "$report.raw" ]; then
+            echo "dejadoc: the scan produced no report"
+            exit 2
+          fi
           jq --arg prefix "$prefix" -f "$RUNNER_TEMP/dejadoc-root.jq" "$report.raw" > "$report"
           rm -f "$report.raw"
           jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.functions // 0) functions, \($r.unique_functions // 0) unique functions, \($r.groups | length) duplicated groups"' "$report"
@@ -175,9 +292,57 @@ runs:
                 + (.sites | map("  - `" + .file + ":" + (.line | tostring) + "`  " + .item)
                    | join("\n"))' "$report"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$(jq '.groups | length' "$report")" -gt 0 ]; then
+          # Context groups and dependency reuse, grouped by local context with
+          # the accessible APIs first, in the same public report.
+          context_summary="$(jq -r '
+            def sp: .file;
+            def site_md: "  - `" + sp + ":" + (.line | tostring) + "`  " + .item;
+            def cand_md:
+              "  - `\(.package) \(.version)`"
+              + (if .depth > 0 then " (depth \(.depth))" else "" end)
+              + (if (.conditions | length) > 0 then " (needs \(.conditions | join(", ")))" else "" end)
+              + (if .action == "reuse-api" then ": the public item `\(.api_path // .site.item)` can be reused"
+                 elif .action == "upgrade-api" then ": the public item `\(.api_path // .site.item)` is available in a newer published release"
+                 elif .action == "request-extraction" then ": the internal item `\(.site.item)` can be requested for extraction"
+                 elif .action == "unresolved" then ": source analysis does not establish accessibility"
+                 else ": the reuse path is unresolved" end)
+              + (if .source_url
+                 then (if .api_path and .api_path != .site.item then " [source (\(.site.item))](\(.source_url))" else " [source](\(.source_url))" end)
+                 else "" end)
+              + (if .existing_issue then " [existing request \(.existing_issue.state)](\(.existing_issue.url))"
+                 elif .issue_url then " [request extraction](\(.issue_url))"
+                 elif .action == "request-extraction" then " (the upstream repository is not declared, so no issue link is offered)"
+                 else "" end)
+              + (if .lookup_warning then "\n    lookup: \(.lookup_warning)" else "" end);
+            (if (.context_groups | length) > 0
+             then "### Context groups\n\n"
+                  + ([ .context_groups[]
+                      | "- group `\(.id)`, \(.sites | length) copies\n"
+                        + ([ .sites[] | site_md ] | join("\n"))
+                    ] | join("\n"))
+             else "" end)
+            + (if ((.reuse // {}) | (.groups // []) | length) > 0
+               then "### Dependency reuse\n\n"
+                    + ([ (.reuse.groups // [])[]
+                        | "- local `" + (.local | sp) + ":" + (.local.line | tostring) + "`  " + .local.item + "\n"
+                          + ([ .candidates[] | cand_md ] | join("\n"))
+                      ] | join("\n"))
+                    + "Dependency coverage: \(.reuse.coverage.packages) packages, \(.reuse.coverage.indexed_files) files indexed, \(.reuse.coverage.cached_files) from cache"
+                    + (if .reuse.coverage.complete then "" else "\n\nThe requested dependency analysis is incomplete, the run fails\n" + ([ .reuse.coverage.failures[] | "- " + . ] | join("\n")) end)
+                    + (if (.reuse.coverage.warnings | length) > 0 then "\n" + ([ .reuse.coverage.warnings[] | "- " + . ] | join("\n")) else "" end)
+               else "" end)' "$report")"
+          if [ -n "$context_summary" ]; then
+            printf '%s\n\n' "$context_summary" >> "$GITHUB_STEP_SUMMARY"
+          fi
+          if [ "$(jq '(.groups | length) + (.context_groups | length) + ((.reuse // {}).groups // [] | length)' "$report")" -gt 0 ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
           fi
+          if [ "$CONTEXT_DEPTH" != "0" ]; then
+            index_ok=false
+            [ "$(jq -r '.reuse.coverage.complete // false' "$report")" = "true" ] && index_ok=true
+            echo "index-ok=$index_ok" >> "$GITHUB_OUTPUT"
+          fi
+          exit "$status"
         else
           out="$RUNNER_TEMP/dejadoc-gate.txt"
           status=0
@@ -205,6 +370,12 @@ runs:
             grep -v '^::' "$out"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$CONTEXT_DEPTH" != "0" ]; then
+            case "$status" in
+              0|1) echo "index-ok=true" >> "$GITHUB_OUTPUT" ;;
+              *) echo "index-ok=false" >> "$GITHUB_OUTPUT" ;;
+            esac
+          fi
           exit "$status"
         fi
 
@@ -221,6 +392,21 @@ runs:
         MIN_TOKENS: ${{ inputs.min-tokens }}
         FUNCTIONS: ${{ inputs.functions }}
         FN_MIN_TOKENS: ${{ inputs.fn-min-tokens }}
+        CONTEXT_BLOCKS: ${{ inputs.context-blocks }}
+        CONTEXT_MIN_TOKENS: ${{ inputs.context-min-tokens }}
+        CONTEXT_SELECT: ${{ inputs.context-select }}
+        CONTEXT_SEARCH: ${{ inputs.context-search }}
+        CONTEXT_DEPTH: ${{ inputs.context-dependency-depth }}
+        CONTEXT_DEV: ${{ inputs.context-dev-dependencies }}
+        CONTEXT_BUILD: ${{ inputs.context-build-dependencies }}
+        CONTEXT_ALL_OPT: ${{ inputs.context-all-optional-dependencies }}
+        CONTEXT_FEATURES: ${{ inputs.context-features }}
+        CONTEXT_ALL_FEATURES: ${{ inputs.context-all-features }}
+        CONTEXT_NO_DEFAULT: ${{ inputs.context-no-default-features }}
+        CONTEXT_TARGET: ${{ inputs.context-target }}
+        CONTEXT_CACHE_DIR: ${{ env.dejadoc-context-index-dir }}
+        CONTEXT_CHECK_LATEST: ${{ inputs.context-check-latest }}
+        CONTEXT_FAIL: ${{ inputs.context-fail-on-reuse }}
       run: |
         # The base report lets the review ignore duplicates that already exist on the
         # base commit. Any failure degrades to reviewing the full report.
@@ -242,6 +428,23 @@ runs:
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
         [ "$FUNCTIONS" = "true" ] && set -- --functions "$@"
         [ -n "$FN_MIN_TOKENS" ] && set -- --fn-min-tokens "$FN_MIN_TOKENS" "$@"
+        [ "$CONTEXT_BLOCKS" = "true" ] && set -- --context-blocks "$@"
+        [ -n "$CONTEXT_MIN_TOKENS" ] && set -- --context-min-tokens "$CONTEXT_MIN_TOKENS" "$@"
+        [ -n "$CONTEXT_SELECT" ] && set -- --context-select "$CONTEXT_SELECT" "$@"
+        [ -n "$CONTEXT_SEARCH" ] && set -- --context-search "$CONTEXT_SEARCH" "$@"
+        if [ "$CONTEXT_DEPTH" != "0" ]; then
+          set -- --context-dependency-depth "$CONTEXT_DEPTH" "$@"
+          [ "$CONTEXT_DEV" = "true" ] && set -- --context-dev-dependencies "$@"
+          [ "$CONTEXT_BUILD" = "true" ] && set -- --context-build-dependencies "$@"
+          [ "$CONTEXT_ALL_OPT" = "true" ] && set -- --context-all-optional-dependencies "$@"
+          [ -n "$CONTEXT_FEATURES" ] && set -- --context-features "$CONTEXT_FEATURES" "$@"
+          [ "$CONTEXT_ALL_FEATURES" = "true" ] && set -- --context-all-features "$@"
+          [ "$CONTEXT_NO_DEFAULT" = "true" ] && set -- --context-no-default-features "$@"
+          [ -n "$CONTEXT_TARGET" ] && set -- --context-target "$CONTEXT_TARGET" "$@"
+          [ -n "$CONTEXT_CACHE_DIR" ] && set -- --context-cache-dir "$CONTEXT_CACHE_DIR" "$@"
+          [ "$CONTEXT_CHECK_LATEST" = "false" ] && set -- --context-check-latest false "$@"
+          [ "$CONTEXT_FAIL" = "true" ] && set -- --context-fail-on-reuse "$@"
+        fi
         # Threshold 1 inventories every base site, a group the pull request
         # completes from a single existing copy must still be reported.
         # The base tree has the head's layout, so the head's prefix roots its paths.
@@ -282,6 +485,11 @@ runs:
         payload="${PAYLOAD:-$RUNNER_TEMP/dejadoc-payload}"
         comments="$payload/comments.ndjson"
         meta="$payload/review.json"
+        reuse_tmp="$RUNNER_TEMP/dejadoc-reuse.ndjson"
+        if [ "$mode" = "post" ]; then
+          reuse_tmp="$payload/reuse.ndjson"
+        fi
+        review_event=''
         mkdir -p "$payload"
         failed_sites=''
         out_of_range=''
@@ -300,6 +508,7 @@ runs:
           head_sha="$(jq -r '.head_sha' "$meta")"
           out_of_range="$(jq -r '.out_of_range' "$meta")"
           findings="$(jq -r '.findings' "$meta")"
+          review_event="$(jq -r '.event // empty' "$meta")"
           findings_span=0
           grep -qE " (on another type|and can't be deleted|under another cfg|and is public API)\$" <<< "$findings" && findings_span=1
         else
@@ -320,7 +529,10 @@ runs:
         if [ "$dry" = "true" ]; then
           # A dry run renders the review as if every scanned site were in
           # the diff, so the step summary shows each comment in full.
-          changed_json="$(jq -r '[.groups[].sites[].file] | unique' "$report")"
+          changed_json="$(jq -r '
+            ([.groups[].sites[].file]
+             + [(.context_groups // [])[] | .sites[].file]
+             + [((.reuse // {}).groups // [])[] | .local.file]) | unique' "$report")"
         elif [ -n "$pr" ] && [ -n "$head_sha" ] && [ -n "$changed_files" ]; then
           changed_json="$(printf '%s\n' "$changed_files" | jq -R . | jq -s .)"
         else
@@ -331,13 +543,17 @@ runs:
         # path were already there, and the first base copy is the kept original.
         if [ "$onlynew" = "1" ]; then
           base_json="$(jq '
-            { keys: [.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(.file)"],
+            { keys: ([.groups[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(.file)"]
+                     + [(.context_groups // [])[] | .hash as $h | .sites[] | "\($h)\t\(.item)\t\(.file)"]
+                     + [((.reuse // {}).groups // [])[] | .hash as $h | .local as $l | "\($h)\t\($l.item)\t\($l.file)"]),
               keep: (reduce .groups[] as $gr ({};
+                .[$gr.hash] = ($gr.sites[0].file + ":" + ($gr.sites[0].line | tostring)))),
+              keep_ctx: (reduce (.context_groups // [])[] as $gr ({};
                 .[$gr.hash] = ($gr.sites[0].file + ":" + ($gr.sites[0].line | tostring)))),
               keep_end: (reduce .groups[] as $gr ({}; .[$gr.hash] = ($gr.sites[0].end // null))),
               keep_item: (reduce .groups[] as $gr ({}; .[$gr.hash] = $gr.sites[0].item)) }' "$base_report")"
         else
-          base_json='{"keys": [], "keep": {}, "keep_end": {}, "keep_item": {}}'
+          base_json='{"keys": [], "keep": {}, "keep_ctx": {}, "keep_end": {}, "keep_item": {}}'
         fi
 
         # Sites to comment on. In only-new mode a site must be introduced by this
@@ -397,6 +613,56 @@ runs:
              (if .baseitem == "" then "-" else .baseitem end), .selftypes,
              (if .s.public then "1" else "0" end)]
           | @tsv' "$report" > "$inline_file"
+        # Neutral reuse and context entries, one row per local site that survives
+        # the same changed-file and only-new filters as the local duplicates.
+        jq -c --slurpfile changed "$changed_file" --slurpfile base "$base_file" \
+          --argjson onlynew_mode "$onlynew_mode" '
+          def spath: .file;
+          def site_md: "  - `" + spath + ":" + (.line | tostring) + "`  " + .item;
+          def cand_md:
+            "  - `\(.package) \(.version)`"
+            + (if .depth > 0 then " (depth \(.depth))" else "" end)
+            + (if (.conditions | length) > 0 then " (needs \(.conditions | join(", ")))" else "" end)
+            + (if .action == "reuse-api" then ": the public item `\(.api_path // .site.item)` can be reused"
+               elif .action == "upgrade-api" then ": the public item `\(.api_path // .site.item)` is available in a newer published release"
+               elif .action == "request-extraction" then ": the internal item `\(.site.item)` can be requested for extraction"
+               elif .action == "unresolved" then ": source analysis does not establish accessibility"
+               else ": the reuse path is unresolved" end)
+            + (if .source_url
+               then (if .api_path and .api_path != .site.item then " [source (\(.site.item))](\(.source_url))" else " [source](\(.source_url))" end)
+               else "" end)
+            + (if .existing_issue then " [existing request \(.existing_issue.state)](\(.existing_issue.url))"
+               elif .issue_url then " [request extraction](\(.issue_url))"
+               elif .action == "request-extraction" then " (the upstream repository is not declared, so no issue link is offered)"
+               else "" end)
+            + (if .lookup_warning then "\n    lookup: \(.lookup_warning)" else "" end);
+          $changed[0] as $changed
+          | $base[0] as $base
+          | [ ( (.context_groups // [])
+                | .[] as $gr
+                | ($base.keep_ctx[$gr.hash] // "") as $basekeep
+                | ($gr.sites | length) as $n
+                | range(0; $n) as $i
+                    | (if $i == 0 and (($basekeep == "") or ($onlynew_mode | not)) then empty else $gr.sites[$i] end) as $s
+                    | ($gr.hash + "\t" + $s.item + "\t" + ($s | spath)) as $k
+                    | { path: ($s | spath), line: $s.line, end: $s.end, item: $s.item,
+                        kind: "context", hash: $gr.hash,
+                        isNew: (([ $base.keys[] | select(. == $k) ] | length) == 0),
+                        others: ([ $gr.sites | to_entries[] | select(.key != $i) | .value | site_md ]) }
+              )
+              , ( ((.reuse // {}).groups // [])
+                  | .[] as $gr
+                  | $gr.local as $l
+                  | ($gr.hash + "\t" + $l.item + "\t" + ($l | spath)) as $k
+                  | { path: ($l | spath), line: $l.line, end: $l.end, item: $l.item,
+                      kind: "reuse", hash: $gr.hash,
+                      isNew: (([ $base.keys[] | select(. == $k) ] | length) == 0),
+                      candidates_md: ([ $gr.candidates[] | cand_md ] | join("\n")) } )
+            ]
+          | map(. as $e | select(($changed | index($e.path)) != null))
+          | map(select(if $onlynew_mode then .isNew else true end))
+          | .[]
+        ' "$report" > "$reuse_tmp"
 
         # The inline posts, live mode only. The first post is the permission probe.
         # Each comment links to a prefilled wrong-review issue for its group.
@@ -645,6 +911,44 @@ runs:
               group: $group, item: $item, close_line: ($close | tonumber), body: $body}' \
             >> "$comments"
         done < "$inline_file"
+        # The neutral reuse and context entries, the local comment minus the
+        # removal suggestion, so approximate and upstream matches stay advice.
+        reuse_rendered=''
+        if [ -s "$reuse_tmp" ]; then
+          reuse_built="$RUNNER_TEMP/dejadoc-reuse-built.ndjson"
+          : > "$reuse_built"
+          while IFS= read -r row; do
+            [ -n "$row" ] || continue
+            p="$(printf '%s' "$row" | jq -r '.path')"
+            line="$(printf '%s' "$row" | jq -r '.line')"
+            end="$(printf '%s' "$row" | jq -r '.end')"
+            item="$(printf '%s' "$row" | jq -r '.item')"
+            kind="$(printf '%s' "$row" | jq -r '.kind')"
+            others="$(printf '%s' "$row" | jq -r '.others | join("\n")')"
+            candidates_md="$(printf '%s' "$row" | jq -r '.candidates_md // empty')"
+            if [ "$kind" = "context" ]; then
+              note="This context is repeated in this scan. A shared helper can carry it once. The other copies are at"
+              [ -n "$others" ] && note="$note"$'\n'"$others"
+            else
+              note="This context matches an upstream dependency context. The accessible APIs are listed first"
+              note="$note"$'\n'"$candidates_md"
+            fi
+            note="$note"$'\n\n'"Type compatibility and behavior equivalence need human review."
+            r_url="$(blob_url "$head_sha" "$p" "$line" "$end")"
+            comment="$note"
+            [ -n "$r_url" ] && comment="$comment"$'\n\n'"$(preview_of "$r_url" "$line" "$end" "the local context")"
+            comment="$comment"$'\n\n'"$support_link"
+            if [ "$dry" = "true" ]; then
+              reuse_rendered+="$comment"$'\n\n'
+              continue
+            fi
+            jq -cn --arg path "$p" --arg start "$line" --arg stop "$end" \
+              --arg item "$item" --arg kind "$kind" --arg body "$comment" \
+              '{path: $path, start_line: ($start | tonumber), line: ($stop | tonumber),
+                item: $item, kind: $kind, body: $body}' >> "$reuse_built"
+          done < "$reuse_tmp"
+          mv "$reuse_built" "$reuse_tmp"
+        fi
 
         run_url="$GITHUB_SERVER_URL/$repo/actions/runs/$GITHUB_RUN_ID"
         if [ "$dry" = "true" ]; then
@@ -673,6 +977,12 @@ runs:
             echo 'Inline comments dejadoc would post'
             echo
             printf '%s' "$rendered"
+            if [ -n "$reuse_rendered" ]; then
+              echo
+              echo 'Neutral reuse and context advice dejadoc would post'
+              echo
+              printf '%s' "$reuse_rendered"
+            fi
             if [ -n "$out_of_range" ]; then
               echo
               echo 'Sites outside the lines GitHub shows in the diff, the review body would list them'
@@ -693,14 +1003,17 @@ runs:
           # Both lists grow with the pull request, past one argument's 128 KiB.
           printf '%s' "$out_of_range" > "$RUNNER_TEMP/dejadoc-out-of-range.txt"
           printf '%s' "$findings" > "$RUNNER_TEMP/dejadoc-findings.txt"
-          jq -n --arg pr "$pr" --arg head "$head_sha" \
+          event='REQUEST_CHANGES'
+          [ -s "$comments" ] || [ -n "$out_of_range" ] || event='COMMENT'
+          jq -n --arg pr "$pr" --arg head "$head_sha" --arg event "$event" \
             --rawfile oor "$RUNNER_TEMP/dejadoc-out-of-range.txt" --rawfile f "$RUNNER_TEMP/dejadoc-findings.txt" \
-            '{pr: $pr, head_sha: $head, out_of_range: $oor, findings: $f}' > "$meta"
+            '{pr: $pr, head_sha: $head, event: $event, out_of_range: $oor, findings: $f}' > "$meta"
           touch "$comments"
+          touch "$reuse_tmp"
         fi
         # Nothing to post, in prepare mode the payload still exists so the
         # posting job has something to download.
-        if [ ! -s "$comments" ] && [ -z "$out_of_range" ]; then
+        if [ ! -s "$comments" ] && [ -z "$out_of_range" ] && [ ! -s "$reuse_tmp" ]; then
           if [ "$onlynew" = "1" ]; then
             echo "dejadoc: no duplicate was introduced by this pull request, the review is not posted"
             echo "skipped-existing" > "$status"
@@ -723,6 +1036,7 @@ runs:
           } >> "$GITHUB_STEP_SUMMARY"
         fi
         if [ "$mode" = "prepare" ]; then
+          cp "$reuse_tmp" "$payload/reuse.ndjson"
           echo "dejadoc: the review is prepared in $payload for a later job"
           echo "prepared" > "$status"
           exit 0
@@ -734,8 +1048,8 @@ runs:
         }
         # The first post is the permission probe.
         readonly=0
-        while IFS= read -r row; do
-          [ -n "$row" ] || continue
+        post_one() {
+          local row="$1" p line err item g
           p="$(printf '%s' "$row" | jq -r '.path')"
           line="$(printf '%s' "$row" | jq -r '.start_line')"
           if ! err="$(printf '%s' "$row" | jq -r '.body' | gh api "repos/$repo/pulls/$pr/comments" \
@@ -744,10 +1058,10 @@ runs:
             -f start_side=RIGHT -f side=RIGHT -F 'body=@-' 2>&1)"; then
             if printf '%s' "$err" | grep -qE 'HTTP 403|"status": "403"'; then
               readonly=1
-              break
+              return 1
             fi
             item="$(printf '%s' "$row" | jq -r '.item')"
-            g="$(printf '%s' "$row" | jq -r '.group')"
+            g="$(printf '%s' "$row" | jq -r '.group // .kind')"
             printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
             printf '%s\n' "$err" | sed 's/^/dejadoc: /'
             if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
@@ -756,7 +1070,18 @@ runs:
               failed_sites="$failed_sites  group $g  $p:$line  $item"$'\n'
             fi
           fi
+          return 0
+        }
+        while IFS= read -r row; do
+          [ -n "$row" ] || continue
+          post_one "$row" || break
         done < "$comments"
+        if [ "$readonly" != "1" ]; then
+          while IFS= read -r row; do
+            [ -n "$row" ] || continue
+            post_one "$row" || break
+          done < "$reuse_tmp"
+        fi
         if [ "$readonly" = "1" ]; then
           readonly_notice
           echo "skipped-readonly" > "$status"
@@ -764,7 +1089,11 @@ runs:
         fi
         # A review with no comment of its own needs a body. Sites GitHub could not
         # anchor inline are listed with permalinks to the head commit.
-        review=(-f event=REQUEST_CHANGES)
+        if [ -z "$review_event" ]; then
+          review_event='REQUEST_CHANGES'
+          [ -s "$comments" ] || [ -n "$out_of_range" ] || review_event='COMMENT'
+        fi
+        review=(-f "event=$review_event")
         review_body=''
         if [ -n "$out_of_range" ]; then
           review_body="$(printf 'These duplicates are not on lines GitHub shows in this pull request diff, the inline comment cannot attach there. The links point at the copies on the head commit.\n\n%s' "$out_of_range")"
@@ -788,7 +1117,7 @@ runs:
           exit 1
         fi
         posted_state="$(printf '%s' "$resp" | jq -r '.state' 2>/dev/null)" || posted_state=''
-        if [ "$posted_state" != "CHANGES_REQUESTED" ]; then
+        if [ "$posted_state" != "$review_event" ]; then
           echo "dejadoc: the review response is unexpected"
           printf '%s\n' "$resp"
           echo "failed" > "$status"
@@ -800,3 +1129,10 @@ runs:
         fi
         echo "dejadoc: posted the review on pull request $pr"
         echo "posted" > "$status"
+
+    - name: Save the dependency index
+      if: ${{ always() && !cancelled() && inputs.mode != 'post' && inputs.context-dependency-depth > 0 && steps.scan.outputs.index-ok == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
+      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      with:
+        path: ${{ env.dejadoc-context-index-dir }}/public
+        key: dejadoc-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1-${{ github.run_id }}-${{ github.run_attempt }}

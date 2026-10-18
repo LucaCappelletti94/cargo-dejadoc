@@ -13,6 +13,8 @@ use std::path::PathBuf;
 pub(crate) struct Target {
     /// Crate name used as the item-path root.
     pub(crate) name: String,
+    /// Workspace package owning the target.
+    pub(crate) package: String,
     /// Absolute path of the target's source root file.
     pub(crate) src: PathBuf,
     /// Whether its doctests are scanned.
@@ -56,6 +58,7 @@ pub(crate) fn workspace(
         for target in &package.targets {
             targets.push(Target {
                 name: target.name.clone(),
+                package: package.name.to_string(),
                 src: target.src_path.clone().into(),
                 doc: scan_target(&target.kind, all_targets),
                 library: target.kind.iter().any(|kind| {
@@ -97,15 +100,21 @@ fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool 
             .any(|k| matches!(k, CargoTargetKind::Bin | CargoTargetKind::Example))
 }
 
-/// Parse the target's module tree, each file with its module-path
-/// segments from the target root (empty for the root file).
-///
-/// # Errors
-///
-/// Fails when a module file cannot be canonicalized. Unreadable or
-/// unparseable files are skipped with a warning.
-pub(crate) fn module_tree(target: &Target) -> crate::Result<Vec<crate::SourceFile>> {
+pub(crate) struct ModuleTree {
+    pub(crate) files: Vec<crate::SourceFile>,
+    pub(crate) failures: Vec<ModuleFailure>,
+}
+
+pub(crate) struct ModuleFailure {
+    pub(crate) file: String,
+    pub(crate) module: Vec<String>,
+    pub(crate) message: String,
+}
+
+/// Parse available module files and retain discovery failures.
+pub(crate) fn module_tree(target: &Target, boundary: Option<&std::path::Path>) -> ModuleTree {
     let mut out = Vec::new();
+    let mut failures = Vec::new();
     let mut visited = BTreeSet::new();
     let mut off = alloc::collections::VecDeque::new();
     let root = Child {
@@ -115,43 +124,99 @@ pub(crate) fn module_tree(target: &Target) -> crate::Result<Vec<crate::SourceFil
         mod_rs: true,
         rustdoc: target.doc,
     };
-    collect(root, &mut out, &mut visited, &mut off)?;
+    let boundary = match boundary.map(std::fs::canonicalize).transpose() {
+        Ok(boundary) => boundary,
+        Err(error) => {
+            record_failure(
+                &root,
+                format!("cannot establish source boundary ({error})"),
+                &mut failures,
+            );
+            return ModuleTree {
+                files: out,
+                failures,
+            };
+        }
+    };
+    collect(
+        root,
+        boundary.as_deref(),
+        &mut out,
+        &mut visited,
+        &mut off,
+        &mut failures,
+    );
     // A file declared on both sides of a `cfg` must reach rustdoc first.
     while let Some(child) = off.pop_front() {
-        collect(child, &mut out, &mut visited, &mut off)?;
+        collect(
+            child,
+            boundary.as_deref(),
+            &mut out,
+            &mut visited,
+            &mut off,
+            &mut failures,
+        );
     }
-    Ok(out)
+    ModuleTree {
+        files: out,
+        failures,
+    }
 }
 
 /// Collect `file` and the children rustdoc reaches, queueing the others in `off`.
 fn collect(
     file: Child,
+    boundary: Option<&std::path::Path>,
     out: &mut Vec<crate::SourceFile>,
     visited: &mut BTreeSet<PathBuf>,
     off: &mut alloc::collections::VecDeque<Child>,
-) -> crate::Result<()> {
+    failures: &mut Vec<ModuleFailure>,
+) {
     let canonical = match std::fs::canonicalize(&file.path) {
         Ok(canonical) => canonical,
         Err(err) => {
-            eprintln!("dejadoc: cannot read {}: {err}", file.path.display());
-            return Ok(());
+            record_failure(
+                &file,
+                format!("cannot read {} ({err})", file.path.display()),
+                failures,
+            );
+            return;
         }
     };
+    if boundary.is_some_and(|root| !canonical.starts_with(root)) {
+        record_failure(
+            &file,
+            format!(
+                "module source escapes the artifact boundary ({})",
+                file.path.display()
+            ),
+            failures,
+        );
+        return;
+    }
     if !visited.insert(canonical) {
-        return Ok(());
+        return;
     }
     let text = match std::fs::read_to_string(&file.path) {
         Ok(text) => text,
         Err(err) => {
-            eprintln!("dejadoc: cannot read {}: {err}", file.path.display());
-            return Ok(());
+            record_failure(
+                &file,
+                format!("cannot read {} ({err})", file.path.display()),
+                failures,
+            );
+            return;
         }
     };
     let parsed = match syn::parse_file(&text) {
         Ok(parsed) => parsed,
         Err(err) => {
-            eprintln!("dejadoc: cannot parse {}: {err}", file.path.display());
-            return Ok(());
+            record_failure(
+                &file,
+                format!("cannot parse {} ({err})", file.path.display()),
+                failures,
+            );
+            return;
         }
     };
     let dir = file
@@ -167,10 +232,13 @@ fn collect(
         &parsed.items,
         dir,
         &base,
-        &file.segments,
-        &file.cfg,
-        file.rustdoc,
+        &Declaring {
+            segments: &file.segments,
+            cfg: &file.cfg,
+            rustdoc: file.rustdoc,
+        },
         &mut children,
+        failures,
     );
     out.push(crate::SourceFile {
         path: file.path.to_string_lossy().into_owned(),
@@ -182,24 +250,38 @@ fn collect(
     });
     for child in children {
         if child.rustdoc {
-            collect(child, out, visited, off)?;
+            collect(child, boundary, out, visited, off, failures);
         } else {
             off.push_back(child);
         }
     }
-    Ok(())
+}
+
+fn record_failure(file: &Child, message: String, failures: &mut Vec<ModuleFailure>) {
+    eprintln!("dejadoc: {message}");
+    failures.push(ModuleFailure {
+        file: file.path.to_string_lossy().into_owned(),
+        module: file.segments.clone(),
+        message,
+    });
+}
+
+/// The module path, `cfg` attributes and rustdoc visibility a list of items inherits.
+struct Declaring<'a> {
+    segments: &'a [String],
+    cfg: &'a [String],
+    rustdoc: bool,
 }
 
 /// The `mod name;` files at every nesting depth, `dir` resolving `#[path]` and `base` the
-/// implicit files, `cfg` holding the `cfg` attributes of the declarations around `items`.
+/// implicit files.
 fn mod_decls(
     items: &[syn::Item],
     dir: &std::path::Path,
     base: &std::path::Path,
-    prefix: &[String],
-    cfg: &[String],
-    rustdoc: bool,
+    declaring: &Declaring<'_>,
     out: &mut Vec<Child>,
+    failures: &mut Vec<ModuleFailure>,
 ) {
     use syn::{Item, ext::IdentExt};
 
@@ -207,36 +289,79 @@ fn mod_decls(
         let Item::Mod(moditem) = item else {
             continue;
         };
-        let rustdoc = rustdoc && crate::cfg::allows(&moditem.attrs);
+        let rustdoc = declaring.rustdoc && crate::cfg::allows(&moditem.attrs);
         // A raw identifier names its file without the `r#`, the module
         // path keeps it as rustdoc does.
         let name = moditem.ident.unraw().to_string();
-        let mut segments = prefix.to_vec();
-        let mut cfg = cfg.to_vec();
+        let mut segments = declaring.segments.to_vec();
+        let mut cfg = declaring.cfg.to_vec();
         cfg.extend(crate::cfg::cfgs(&moditem.attrs));
         if let Some((_, children)) = &moditem.content {
             // A `#[path]` on an inline module names its directory, against the declaring file's.
-            let inner = declared_path(&moditem.attrs)
+            let preferred = declared_path(&moditem.attrs)
                 .map_or_else(|| base.join(&name), |path| lexical_join(dir, &path));
             segments.push(moditem.ident.to_string());
-            mod_decls(children, &inner, &inner, &segments, &cfg, rustdoc, out);
+            let mut directories = BTreeSet::new();
+            directories.insert(preferred.clone());
+            let (direct, conditional) = source_paths(&moditem.attrs);
+            directories
+                .insert(direct.map_or_else(|| base.join(&name), |path| lexical_join(dir, &path)));
+            directories.extend(conditional.iter().map(|path| lexical_join(dir, path)));
+            for inner in directories {
+                mod_decls(
+                    children,
+                    &inner,
+                    &inner,
+                    &Declaring {
+                        segments: &segments,
+                        cfg: &cfg,
+                        rustdoc: rustdoc && inner == preferred,
+                    },
+                    out,
+                    failures,
+                );
+            }
             continue;
         }
-        match resolve_mod_path(dir, base, &name, &moditem.attrs) {
-            (path, mod_rs) if path.exists() => {
-                segments.push(moditem.ident.to_string());
+        let preferred = resolve_mod_path(dir, base, &name, &moditem.attrs);
+        let mut paths = BTreeSet::new();
+        paths.insert(preferred.clone());
+        let (direct, conditional) = source_paths(&moditem.attrs);
+        if let Some(path) = direct {
+            paths.insert((lexical_join(dir, &path), true));
+        } else {
+            paths.insert((base.join(format!("{name}.rs")), false));
+            paths.insert((base.join(&name).join("mod.rs"), true));
+        }
+        paths.extend(
+            conditional
+                .iter()
+                .map(|path| (lexical_join(dir, path), true)),
+        );
+        segments.push(moditem.ident.to_string());
+        for (path, mod_rs) in paths {
+            let required = rustdoc && path == preferred.0;
+            if path.exists() {
                 out.push(Child {
                     path,
-                    segments,
-                    cfg,
+                    segments: segments.clone(),
+                    cfg: cfg.clone(),
                     mod_rs,
-                    rustdoc,
+                    rustdoc: required,
                 });
+            } else if required {
+                record_failure(
+                    &Child {
+                        path: path.clone(),
+                        segments: segments.clone(),
+                        cfg: cfg.clone(),
+                        mod_rs,
+                        rustdoc: required,
+                    },
+                    format!("missing module file {}", path.display()),
+                    failures,
+                );
             }
-            (path, _) if rustdoc => {
-                eprintln!("dejadoc: missing module file {}", path.display());
-            }
-            _ => {}
         }
     }
 }
@@ -252,8 +377,7 @@ struct Child {
     rustdoc: bool,
 }
 
-/// The `#[path]` of a module, a top-level one first, then the first `cfg_attr` path whose
-/// predicate holds.
+/// The first module path whose expanded attribute applies.
 fn declared_path(attrs: &[syn::Attribute]) -> Option<String> {
     use syn::Meta;
 
@@ -263,11 +387,43 @@ fn declared_path(attrs: &[syn::Attribute]) -> Option<String> {
         }
         _ => None,
     };
-    attrs.iter().find_map(|attr| path(&attr.meta)).or_else(|| {
-        attrs
-            .iter()
-            .find_map(|attr| crate::cfg::cfg_attr_metas(attr)?.iter().find_map(path))
+    attrs.iter().find_map(|attr| {
+        path(&attr.meta).or_else(|| crate::cfg::cfg_attr_metas(attr)?.iter().find_map(path))
     })
+}
+
+fn source_paths(attrs: &[syn::Attribute]) -> (Option<String>, Vec<String>) {
+    fn path(meta: &syn::Meta) -> Option<String> {
+        match meta {
+            syn::Meta::NameValue(value) if value.path.is_ident("path") => {
+                crate::cfg::lit_str(&value.value).map(syn::LitStr::value)
+            }
+            _ => None,
+        }
+    }
+    fn branches(meta: &syn::Meta, out: &mut Vec<String>) {
+        let syn::Meta::List(list) = meta else { return };
+        if !list.path.is_ident("cfg_attr") {
+            return;
+        }
+        let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
+        let Ok(metas) = list.parse_args_with(parser) else {
+            return;
+        };
+        for meta in metas.iter().skip(1) {
+            if let Some(value) = path(meta) {
+                out.push(value);
+            } else {
+                branches(meta, out);
+            }
+        }
+    }
+    let direct = attrs.iter().find_map(|attr| path(&attr.meta));
+    let mut conditional = Vec::new();
+    for attr in attrs {
+        branches(&attr.meta, &mut conditional);
+    }
+    (direct, conditional)
 }
 
 /// File for `mod name;` and whether it is a mod-rs file. A declared `#[path]` against `dir`,
@@ -315,6 +471,7 @@ mod tests {
     fn target(src: &std::path::Path) -> Target {
         Target {
             name: "mycrate".into(),
+            package: "mycrate".into(),
             src: src.to_path_buf(),
             doc: true,
             library: true,
@@ -325,15 +482,20 @@ mod tests {
     /// walk its module tree, each file as its tempdir-relative path and
     /// its module path.
     fn walk(files: &[(&str, &str)]) -> Vec<(String, String)> {
+        walk_filtered(files, false)
+    }
+
+    fn walk_filtered(files: &[(&str, &str)], rustdoc_only: bool) -> Vec<(String, String)> {
         let dir = tempfile::tempdir().unwrap();
         for (path, text) in files {
             let path = dir.path().join(path);
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        module_tree(&target(&dir.path().join(files[0].0)))
-            .unwrap()
+        module_tree(&target(&dir.path().join(files[0].0)), None)
+            .files
             .into_iter()
+            .filter(|file| !rustdoc_only || file.rustdoc)
             .map(|file| {
                 let path = std::path::Path::new(&file.path)
                     .strip_prefix(dir.path())
@@ -376,16 +538,17 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let mut got: Vec<(String, Vec<String>)> = module_tree(&target(&dir.path().join("lib.rs")))
-            .unwrap()
-            .into_iter()
-            .map(|file| {
-                let path = std::path::Path::new(&file.path)
-                    .strip_prefix(dir.path())
-                    .unwrap();
-                (path.to_string_lossy().into_owned(), file.cfg)
-            })
-            .collect();
+        let mut got: Vec<(String, Vec<String>)> =
+            module_tree(&target(&dir.path().join("lib.rs")), None)
+                .files
+                .into_iter()
+                .map(|file| {
+                    let path = std::path::Path::new(&file.path)
+                        .strip_prefix(dir.path())
+                        .unwrap();
+                    (path.to_string_lossy().into_owned(), file.cfg)
+                })
+                .collect();
         got.sort();
         assert_eq!(
             got,
@@ -424,30 +587,68 @@ mod tests {
 
     #[test]
     fn cfg_attr_path_takes_the_holding_predicate_not_the_first_file() {
-        let got = paths(&[
-            (
-                "lib.rs",
-                "#[cfg_attr(windows, path = \"windows.rs\")]\n\
+        let got: Vec<_> = walk_filtered(
+            &[
+                (
+                    "lib.rs",
+                    "#[cfg_attr(windows, path = \"windows.rs\")]\n\
                  #[cfg_attr(unix, path = \"unix.rs\")]\n\
                  pub mod platform;\n",
-            ),
-            ("windows.rs", "pub fn w() {}\n"),
-            ("unix.rs", "pub fn u() {}\n"),
-        ]);
+                ),
+                ("windows.rs", "pub fn w() {}\n"),
+                ("unix.rs", "pub fn u() {}\n"),
+            ],
+            true,
+        )
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
         assert_eq!(got, ["lib.rs", "unix.rs"]);
     }
 
     #[test]
     fn cfg_attr_path_with_a_failing_predicate_falls_back_to_the_plain_file() {
-        let got = paths(&[
-            (
-                "lib.rs",
-                "#[cfg_attr(windows, path = \"windows.rs\")]\npub mod platform;\n",
-            ),
-            ("windows.rs", "pub fn w() {}\n"),
-            ("platform.rs", "pub fn p() {}\n"),
-        ]);
+        let got: Vec<_> = walk_filtered(
+            &[
+                (
+                    "lib.rs",
+                    "#[cfg_attr(windows, path = \"windows.rs\")]\npub mod platform;\n",
+                ),
+                ("windows.rs", "pub fn w() {}\n"),
+                ("platform.rs", "pub fn p() {}\n"),
+            ],
+            true,
+        )
+        .into_iter()
+        .map(|(path, _)| path)
+        .collect();
         assert_eq!(got, ["lib.rs", "platform.rs"]);
+    }
+
+    #[test]
+    fn rustdoc_preference_follows_nested_path_attribute_order() {
+        for (attrs, preferred) in [
+            (
+                "#[cfg_attr(unix, cfg_attr(all(), path = \"alternate.rs\"))]\n#[path = \"default.rs\"]",
+                "alternate.rs",
+            ),
+            (
+                "#[path = \"default.rs\"]\n#[cfg_attr(unix, cfg_attr(all(), path = \"alternate.rs\"))]",
+                "default.rs",
+            ),
+        ] {
+            let source = format!("{attrs}\npub mod choice;\n");
+            let files = [
+                ("lib.rs", source.as_str()),
+                ("default.rs", "pub fn default_helper() {}"),
+                ("alternate.rs", "pub fn alternate_helper() {}"),
+            ];
+            let paths: Vec<_> = walk_filtered(&files, true)
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect();
+            assert_eq!(paths, ["lib.rs", preferred]);
+        }
     }
 
     #[test]
@@ -555,8 +756,8 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let got: Vec<(String, bool)> = module_tree(&target(&dir.path().join("lib.rs")))
-            .unwrap()
+        let got: Vec<(String, bool)> = module_tree(&target(&dir.path().join("lib.rs")), None)
+            .files
             .into_iter()
             .map(|f| (f.path.rsplit('/').next().unwrap().to_string(), f.rustdoc))
             .collect();
@@ -569,7 +770,7 @@ mod tests {
         assert_eq!(got, want.map(|(p, r)| (p.to_string(), r)));
         let mut lib = target(&dir.path().join("lib.rs"));
         lib.doc = false;
-        assert!(module_tree(&lib).unwrap().iter().all(|f| !f.rustdoc));
+        assert!(module_tree(&lib, None).files.iter().all(|f| !f.rustdoc));
     }
 
     #[test]
@@ -588,8 +789,8 @@ mod tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, text).unwrap();
         }
-        let got: Vec<(String, bool)> = module_tree(&target(&dir.path().join("lib.rs")))
-            .unwrap()
+        let got: Vec<(String, bool)> = module_tree(&target(&dir.path().join("lib.rs")), None)
+            .files
             .into_iter()
             .map(|f| (f.path.rsplit('/').next().unwrap().to_string(), f.rustdoc))
             .collect();
@@ -817,7 +1018,7 @@ mod tests {
         let files: Vec<usize> = ws
             .targets
             .iter()
-            .map(|t| module_tree(t).unwrap().len())
+            .map(|t| module_tree(t, None).files.len())
             .collect();
         assert_eq!(files, [1, 0]);
     }
@@ -857,5 +1058,72 @@ mod tests {
             .map(|t| (t.name.as_str(), t.library))
             .collect();
         assert_eq!(targets, [("ws", true), ("tool", false)]);
+    }
+
+    #[test]
+    fn conditional_module_paths_retain_available_default_and_alternate_sources() {
+        let mut got = paths(&[
+            (
+                "lib.rs",
+                "#[cfg_attr(feature = \"alternate\", path = \"alternate.rs\")] pub mod choice;",
+            ),
+            ("choice.rs", "pub fn default_helper() -> u8 { 11 }"),
+            ("alternate.rs", "pub fn alternate_helper() -> u8 { 13 }"),
+        ]);
+        got.sort();
+        assert_eq!(got, ["alternate.rs", "choice.rs", "lib.rs"]);
+    }
+
+    #[test]
+    fn conditional_inline_directories_retain_every_child_source() {
+        let mut got = walk(&[
+            (
+                "lib.rs",
+                "#[cfg_attr(feature = \"alternate\", path = \"alternate\")] pub mod outer { pub mod child; }",
+            ),
+            ("outer/child.rs", "pub fn default_helper() -> u8 { 11 }"),
+            (
+                "alternate/child.rs",
+                "pub fn alternate_helper() -> u8 { 13 }",
+            ),
+        ]);
+        got.sort();
+        assert_eq!(
+            got,
+            [
+                ("alternate/child.rs".into(), "outer::child".into()),
+                ("lib.rs".into(), String::new()),
+                ("outer/child.rs".into(), "outer::child".into()),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_required_module_retains_a_discovery_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("lib.rs"), "mod missing;").unwrap();
+        let tree = module_tree(&target(&dir.path().join("lib.rs")), None);
+        assert_eq!(tree.files.len(), 1);
+        assert_eq!(tree.failures.len(), 1);
+        assert_eq!(tree.failures[0].module, ["missing"]);
+    }
+
+    #[test]
+    fn source_artifact_boundary_excludes_external_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let artifact = dir.path().join("artifact");
+        std::fs::create_dir(&artifact).unwrap();
+        std::fs::write(
+            artifact.join("lib.rs"),
+            "#[path = \"../shared.rs\"] mod shared;",
+        )
+        .unwrap();
+        std::fs::write(dir.path().join("shared.rs"), "pub fn shared() -> u8 { 7 }").unwrap();
+        let source = target(&artifact.join("lib.rs"));
+        let bounded = module_tree(&source, Some(&artifact));
+        assert_eq!(bounded.files.len(), 1);
+        assert_eq!(bounded.failures.len(), 1);
+        assert_eq!(bounded.failures[0].module, ["shared"]);
+        assert_eq!(module_tree(&source, None).files.len(), 2);
     }
 }

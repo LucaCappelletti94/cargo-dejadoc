@@ -5,6 +5,7 @@ extern crate alloc;
 #[cfg(any(test, feature = "std"))]
 extern crate std;
 
+use alloc::borrow::Cow;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::format;
 use alloc::string::String;
@@ -18,7 +19,19 @@ use std::path::{Path, PathBuf};
 mod cfg;
 #[cfg(feature = "std")]
 mod config;
+#[cfg(feature = "std")]
+mod context_cache;
+mod context_index;
+#[cfg(feature = "std")]
+mod context_manifest;
+#[cfg(feature = "std")]
+mod context_network;
+mod context_scope;
+#[cfg(feature = "std")]
+mod context_upstream;
 mod contexts;
+#[cfg(feature = "std")]
+mod dependencies;
 #[cfg(feature = "std")]
 mod discover;
 pub mod extract;
@@ -26,11 +39,17 @@ mod fence;
 mod functions;
 mod normalize;
 mod report;
+mod reuse;
 
 /// Reader for an `include_str!` doc splice, given the containing file and
 /// the path as written. Yields the resolved path and text.
 type IncludeRead<'a> = dyn Fn(&str, &str) -> Option<(String, String)> + 'a;
+pub use context_scope::ContextScope;
 pub use report::{annotations, human, json};
+pub use reuse::{
+    ContextAccess, DependencyCandidate, DependencyCoverage, DependencySearch, ExistingIssue,
+    ReuseAction, ReuseGroup, ReuseReport,
+};
 pub use syn_canon::ContextKind;
 
 /// Scan parameters. In `run`, unset values fall back to `.dejadoc.toml`,
@@ -46,12 +65,15 @@ pub struct Dejadoc {
     fn_min_tokens: Option<usize>,
     context_blocks: bool,
     context_min_tokens: Option<usize>,
+    context_select: Option<ContextScope>,
+    context_search: Option<ContextScope>,
+    context_dependencies: DependencySearch,
     scan_generated: bool,
     generated_markers: Vec<String>,
 }
 
 impl Dejadoc {
-    /// Restrict the scan to one workspace member by name.
+    /// Restrict doctests, functions and default context scopes to one workspace member.
     #[must_use]
     pub fn package(mut self, name: impl Into<String>) -> Self {
         self.package = Some(name.into());
@@ -110,6 +132,36 @@ impl Dejadoc {
         self
     }
 
+    /// Select the local contexts whose matches are reported.
+    #[must_use]
+    pub fn context_select(mut self, scope: ContextScope) -> Self {
+        self.context_select = Some(scope);
+        self
+    }
+
+    /// Select the workspace contexts compared against the local selection.
+    #[must_use]
+    pub fn context_search(mut self, scope: ContextScope) -> Self {
+        self.context_search = Some(scope);
+        self
+    }
+
+    /// Set dependency context options while retaining fallback for unset fields.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn context_dependencies(mut self, options: DependencySearch) -> Self {
+        self.context_dependencies = options.fill_from(&self.context_dependencies);
+        self
+    }
+
+    /// Search dependencies up to the requested shortest-path distance.
+    #[cfg(feature = "std")]
+    #[must_use]
+    pub fn context_dependency_depth(mut self, depth: usize) -> Self {
+        self.context_dependencies.depth = Some(depth);
+        self
+    }
+
     /// Scan files whose first five lines contain `@generated` or
     /// `// Code generated … DO NOT EDIT.`, skipped otherwise.
     #[must_use]
@@ -145,6 +197,11 @@ impl Dejadoc {
             fn_min_tokens: self.fn_min_tokens.or(file.fn_min_tokens),
             context_blocks: self.context_blocks || file.context_blocks == Some(true),
             context_min_tokens: self.context_min_tokens.or(file.context_min_tokens),
+            context_select: self.context_select.or_else(|| file.context_select.clone()),
+            context_search: self.context_search.or_else(|| file.context_search.clone()),
+            context_dependencies: self
+                .context_dependencies
+                .fill_from(&file.context_dependencies),
             scan_generated: self.scan_generated || file.scan_generated == Some(true),
             generated_markers: self
                 .generated_markers
@@ -160,8 +217,8 @@ impl Dejadoc {
     /// # Errors
     ///
     /// Fails when `cargo metadata` cannot resolve the workspace, when the
-    /// package selector names no workspace member, when the config cannot be
-    /// read or parsed, or when a module file cannot be canonicalized.
+    /// package selector names no workspace member, or when the config cannot be
+    /// read or parsed.
     ///
     /// # Panics
     ///
@@ -175,8 +232,17 @@ impl Dejadoc {
     /// `run` on the calling thread's stack.
     #[cfg(feature = "std")]
     fn run_here(self, root: &Path) -> Result<Report> {
-        let workspace = discover::workspace(root, self.package.as_deref(), self.all_targets)?;
+        let workspace = discover::workspace(root, None, self.all_targets)?;
         let cfg = config::load(&workspace.root.join(".dejadoc.toml"))?;
+        let scan = self.fill_from(&cfg);
+        if let Some(name) = scan.package.as_deref()
+            && !workspace
+                .targets
+                .iter()
+                .any(|target| target.package == name)
+        {
+            return Err(Error::UnknownPackage(name.to_string()));
+        }
         let root_str = workspace.root.to_string_lossy().into_owned();
         let read = |file: &str, p: &str| -> Option<(String, String)> {
             let dir = Path::new(file).parent()?;
@@ -190,42 +256,91 @@ impl Dejadoc {
             }
         };
         let mut targets = Vec::new();
-        for target in &workspace.targets {
+        let mut legacy_roots = BTreeSet::new();
+        let mut discovery_failures = Vec::new();
+        let expand_contexts = scan.context_select.is_some() || scan.context_search.is_some();
+        for target in workspace.targets.iter().filter(|target| {
+            expand_contexts
+                || scan
+                    .package
+                    .as_deref()
+                    .is_none_or(|name| name == target.package)
+        }) {
+            if scan
+                .package
+                .as_deref()
+                .is_none_or(|name| name == target.package)
+            {
+                legacy_roots.insert(target.src.to_string_lossy().into_owned());
+            }
+            let discovered = discover::module_tree(target, None);
+            if scan.context_dependencies.depth.unwrap_or(0) > 0
+                && scan.context_target_requested(target, &root_str)
+            {
+                discovery_failures.extend(
+                    discovered
+                        .failures
+                        .into_iter()
+                        .map(|failure| failure.message),
+                );
+            }
             targets.push(TargetScan {
                 name: target.name.clone(),
-                files: discover::module_tree(target)?,
+                files: discovered.files,
                 library: target.library,
             });
         }
-        let scan = Self {
-            package: None,
-            ..self.fill_from(&cfg)
-        };
-        Ok(scan.scan(&root_str, &targets, &read, group_here))
+        let mut report = scan.scan(
+            &root_str,
+            &targets,
+            Some(&legacy_roots),
+            true,
+            &read,
+            group_here,
+        );
+        if !discovery_failures.is_empty()
+            && let Some(reuse) = report.reuse.as_mut()
+        {
+            reuse.coverage.complete = false;
+            reuse.coverage.failures.extend(discovery_failures);
+        }
+        Ok(report)
     }
 
-    /// Scan resolved targets. Runs no `cargo metadata` and reads no files,
-    /// so it works under `no_std`. `root` is stripped from site paths and
-    /// `read` resolves an `include_str!` doc splice, given the file that
-    /// contains it and the path as written, to the resolved path and text.
-    /// `package` filters the passed targets by name. Values loaded
-    /// through `config` apply here too. Functions and lexical contexts canonicalize on the calling thread.
+    /// Scan supplied targets with caller-provided doc reads and context scopes, reporting requested dependency discovery as incomplete.
     #[must_use]
     pub fn run_targets(self, root: &str, targets: &[TargetScan], read: &IncludeRead<'_>) -> Report {
-        self.scan(root, targets, read, group)
+        self.scan(root, targets, None, false, read, group)
     }
 
     /// Group doctests, then run enabled source-syntax checks.
     fn scan(
-        self,
+        &self,
         root: &str,
         targets: &[TargetScan],
+        legacy_roots: Option<&BTreeSet<String>>,
+        discover_dependencies: bool,
         read: &IncludeRead<'_>,
         group_doctests: fn(&[DocTest], usize, usize) -> Report,
     ) -> Report {
+        let all_targets = targets;
         let targets: Vec<&TargetScan> = targets
             .iter()
-            .filter(|t| self.package.as_deref().is_none_or(|p| p == t.name))
+            .filter(|target| {
+                legacy_roots.map_or_else(
+                    || {
+                        self.package
+                            .as_deref()
+                            .is_none_or(|name| name == target.name)
+                    },
+                    |roots| {
+                        target
+                            .files
+                            .first()
+                            .is_some_and(|file| roots.contains(&file.path))
+                    },
+                )
+            })
             .collect();
         let threshold = self.threshold.unwrap_or(DEFAULT_THRESHOLD);
         let scanned = |file: &SourceFile| {
@@ -278,22 +393,136 @@ impl Dejadoc {
             report.unique_functions = unique;
             report.groups.extend(groups);
         }
-        if self.context_blocks {
-            let mut forms = contexts::Forms::new(
-                self.context_min_tokens
-                    .unwrap_or(DEFAULT_CONTEXT_MIN_TOKENS),
-            );
-            for target in &targets {
-                for file in target.files.iter().filter(|file| scanned(file)) {
-                    forms.file(&module_prefix(target, file), file, root);
-                }
+        self.scan_contexts(
+            root,
+            all_targets,
+            &targets,
+            discover_dependencies,
+            &mut report,
+        );
+        report
+    }
+
+    #[cfg(feature = "std")]
+    fn context_target_requested(&self, target: &discover::Target, root: &str) -> bool {
+        let explicit = self.context_select.is_some() || self.context_search.is_some();
+        let matches = |scope: Option<&ContextScope>| match scope {
+            None => {
+                explicit
+                    || self
+                        .package
+                        .as_deref()
+                        .is_none_or(|name| name == target.package)
             }
-            let (total, unique, groups) = forms.finish(threshold);
+            Some(ContextScope::Workspace | ContextScope::File(_)) => true,
+            Some(ContextScope::Crate(name)) => {
+                name == &target.name
+                    || Path::new(name) == target.src.strip_prefix(root).unwrap_or(&target.src)
+            }
+            Some(ContextScope::Module(name) | ContextScope::ModuleExact(name)) => {
+                name.split("::").next() == Some(target.name.as_str())
+            }
+        };
+        matches(self.context_select.as_ref()) || matches(self.context_search.as_ref())
+    }
+
+    fn scan_contexts(
+        &self,
+        root: &str,
+        all_targets: &[TargetScan],
+        targets: &[&TargetScan],
+        discover_dependencies: bool,
+        report: &mut Report,
+    ) {
+        let threshold = self.threshold.unwrap_or(DEFAULT_THRESHOLD);
+        if self.context_blocks
+            || self.context_select.is_some()
+            || self.context_search.is_some()
+            || self.context_dependencies.depth.unwrap_or(0) > 0
+        {
+            let entries: Vec<_> = all_targets
+                .iter()
+                .flat_map(|target| {
+                    context_index::extract(
+                        target,
+                        root,
+                        self.scan_generated,
+                        &self.generated_markers,
+                    )
+                })
+                .collect();
+            let explicit_scope = self.context_select.is_some() || self.context_search.is_some();
+            let legacy_crates: BTreeSet<Cow<'_, str>> = targets
+                .iter()
+                .filter_map(|target| target.files.first())
+                .map(|file| {
+                    file.path
+                        .strip_prefix(root)
+                        .map_or(file.path.as_str(), |path| {
+                            path.trim_start_matches(['/', '\\'])
+                        })
+                })
+                .map(|path| {
+                    if path.contains('\\') {
+                        Cow::Owned(path.replace('\\', "/"))
+                    } else {
+                        Cow::Borrowed(path)
+                    }
+                })
+                .collect();
+            let selected: Vec<_> = entries
+                .iter()
+                .filter(|entry| {
+                    self.context_select.as_ref().map_or_else(
+                        || explicit_scope || legacy_crates.contains(entry.crate_root.as_str()),
+                        |scope| scope.matches(entry),
+                    )
+                })
+                .collect();
+            let corpus: Vec<_> = entries
+                .iter()
+                .filter(|entry| {
+                    self.context_search.as_ref().map_or_else(
+                        || explicit_scope || legacy_crates.contains(entry.crate_root.as_str()),
+                        |scope| scope.matches(entry),
+                    )
+                })
+                .collect();
+            let floor = self
+                .context_min_tokens
+                .unwrap_or(DEFAULT_CONTEXT_MIN_TOKENS);
+            let (total, unique, groups) = contexts::group(&selected, &corpus, floor, threshold);
             report.context_blocks = total;
             report.unique_context_blocks = unique;
             report.context_groups = groups;
+            #[cfg(feature = "std")]
+            if self.context_dependencies.depth.unwrap_or(0) > 0 {
+                report.reuse = Some(if discover_dependencies {
+                    dependencies::analyze(
+                        Path::new(root),
+                        all_targets,
+                        &selected,
+                        &self.context_dependencies,
+                        floor,
+                        self.scan_generated,
+                        &self.generated_markers,
+                    )
+                } else {
+                    ReuseReport {
+                        coverage: DependencyCoverage {
+                            complete: false,
+                            failures: alloc::vec![
+                                "Dependency discovery requires Dejadoc::run".into(),
+                            ],
+                            ..DependencyCoverage::default()
+                        },
+                        ..ReuseReport::default()
+                    }
+                });
+            }
         }
-        report
+        #[cfg(not(feature = "std"))]
+        let _ = discover_dependencies;
     }
 }
 
@@ -491,22 +720,25 @@ pub struct Group {
 }
 
 /// One approximate lexical context match at its original source range.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct ContextSite {
-    /// Workspace-relative source file.
+    /// Source file relative to its scan root.
     pub file: String,
     /// First source line, 1-based.
     pub line: u32,
     /// First source byte column, 1-based, in the original file bytes including any BOM or shebang.
     pub column: usize,
-    /// Last source line, 1-based.
+    /// Line of the exclusive source end, 1-based.
     pub end: u32,
     /// Exclusive ending source byte column, 1-based.
     pub end_column: usize,
     /// Containing item path.
     pub item: String,
     /// The lexical context boundary.
-    #[serde(serialize_with = "contexts::serialize_kind")]
+    #[serde(
+        serialize_with = "contexts::serialize_kind",
+        deserialize_with = "contexts::deserialize_kind"
+    )]
     pub kind: ContextKind,
 }
 
@@ -543,6 +775,9 @@ pub struct Report {
     pub unique_context_blocks: usize,
     /// Approximate lexical duplicate groups after containment suppression.
     pub context_groups: Vec<ContextGroup>,
+    /// Dependency reuse opportunities and requested-analysis coverage.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub reuse: Option<ReuseReport>,
 }
 
 #[cfg(feature = "std")]
@@ -550,7 +785,18 @@ pub struct Report {
 #[must_use = "return the status from `main`"]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     use std::process::ExitCode;
-    if (report.groups.is_empty() && report.context_groups.is_empty()) || no_fail {
+    if report
+        .reuse
+        .as_ref()
+        .is_some_and(|reuse| !reuse.coverage.complete)
+    {
+        return ExitCode::from(2);
+    }
+    let gated_reuse = report
+        .reuse
+        .as_ref()
+        .is_some_and(|reuse| reuse.fail_on_findings && !reuse.groups.is_empty());
+    if no_fail || (report.groups.is_empty() && report.context_groups.is_empty() && !gated_reuse) {
         ExitCode::SUCCESS
     } else {
         ExitCode::FAILURE
@@ -645,6 +891,7 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         context_blocks: 0,
         unique_context_blocks: 0,
         context_groups: Vec::new(),
+        reuse: None,
     }
 }
 
