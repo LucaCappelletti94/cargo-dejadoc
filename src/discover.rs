@@ -222,10 +222,7 @@ impl Walk<'_> {
                 return;
             }
         };
-        let dir = file
-            .path
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."));
+        let dir = file.path.parent().unwrap_or(std::path::Path::new("."));
         let base = match file.path.file_stem() {
             Some(stem) if !file.mod_rs => dir.join(stem),
             _ => dir.to_path_buf(),

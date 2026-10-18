@@ -42,20 +42,12 @@ pub(crate) struct ManifestWorkspace {
 impl ManifestWorkspace {
     /// Build the manifest mirror under a fresh tempdir.
     pub(crate) fn create(root: &Path, members: &[MemberInfo]) -> std::io::Result<Self> {
-        let original_root = root.canonicalize().unwrap_or_else(|_| root.to_path_buf());
+        let original_root = canonical_or_same(root);
         let dir = tempfile::tempdir()?;
-        let temp_root = dir
-            .path()
-            .canonicalize()
-            .unwrap_or_else(|_| dir.path().to_path_buf());
+        let temp_root = canonical_or_same(dir.path());
         let canonical: BTreeSet<PathBuf> = members
             .iter()
-            .map(|member| {
-                member
-                    .manifest
-                    .canonicalize()
-                    .unwrap_or_else(|_| member.manifest.clone())
-            })
+            .map(|member| canonical_or_same(&member.manifest))
             .collect();
         let destinations: BTreeMap<PathBuf, PathBuf> = canonical
             .iter()
@@ -68,13 +60,7 @@ impl ManifestWorkspace {
             .collect();
         let by_manifest: BTreeMap<PathBuf, &MemberInfo> = members
             .iter()
-            .map(|member| {
-                let manifest = member
-                    .manifest
-                    .canonicalize()
-                    .unwrap_or_else(|_| member.manifest.clone());
-                (manifest, member)
-            })
+            .map(|member| (canonical_or_same(&member.manifest), member))
             .collect();
         let mut written = BTreeSet::new();
         let root_manifest = original_root.join("Cargo.toml");
@@ -140,12 +126,17 @@ fn invalid_data(detail: &str) -> std::io::Error {
     )
 }
 
+/// The canonical form of `path`, `path` itself when it cannot be resolved.
+fn canonical_or_same(path: &Path) -> PathBuf {
+    path.canonicalize().unwrap_or_else(|_| path.to_path_buf())
+}
+
 /// The mirrored location of an original manifest, inside the tempdir.
 fn mirror_destination(temp_root: &Path, manifest: &Path, original_root: &Path) -> PathBuf {
     let ancestor = common_ancestor(manifest, original_root);
     let rel = manifest
         .strip_prefix(&ancestor)
-        .unwrap_or_else(|_| Path::new("Cargo.toml"));
+        .unwrap_or(Path::new("Cargo.toml"));
     temp_root.join(rel)
 }
 
@@ -170,9 +161,7 @@ fn write_manifest(
     by_manifest: &BTreeMap<PathBuf, &MemberInfo>,
     written: &mut BTreeSet<PathBuf>,
 ) -> std::io::Result<()> {
-    let manifest = manifest
-        .canonicalize()
-        .unwrap_or_else(|_| manifest.to_path_buf());
+    let manifest = canonical_or_same(manifest);
     if !written.insert(manifest.clone()) {
         return Ok(());
     }
@@ -189,9 +178,7 @@ fn write_manifest(
         is_root,
     );
     let dest = mirror_destination(temp_root, &manifest, original_root);
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
+    dest.parent().map_or(Ok(()), std::fs::create_dir_all)?;
     std::fs::write(&dest, render(&value)?)?;
     Ok(())
 }
@@ -596,7 +583,7 @@ mod tests {
     fn create_broken(root: &Path, m: &[MemberInfo]) -> std::io::Error {
         ManifestWorkspace::create(root, m)
             .err()
-            .unwrap_or_else(|| panic!("the manifest must fail"))
+            .expect("the manifest must fail")
     }
 
     #[test]

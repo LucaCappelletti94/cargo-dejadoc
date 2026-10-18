@@ -89,13 +89,10 @@ pub(crate) fn github_authorization(
     token.map(|token| format!("Bearer {token}"))
 }
 
-/// The request credential for `url`, present only for https `api.github.com`.
-fn auth_for(url: &str) -> Option<String> {
+/// The request credential for `url` read through `var`, present only for https `api.github.com`.
+fn auth_for(url: &str, var: impl Fn(&str) -> Option<String>) -> Option<String> {
     if is_github_api_https(url) {
-        github_authorization(
-            env::var("GH_TOKEN").ok().as_deref(),
-            env::var("GITHUB_TOKEN").ok().as_deref(),
-        )
+        github_authorization(var("GH_TOKEN").as_deref(), var("GITHUB_TOKEN").as_deref())
     } else {
         None
     }
@@ -121,7 +118,7 @@ fn send(url: &str, deadline: Duration, id: &str) -> Result<Response<Body>, Strin
         .config()
         .timeout_global(Some(deadline))
         .build();
-    if let Some(auth) = auth_for(url) {
+    if let Some(auth) = auth_for(url, |key| env::var(key).ok()) {
         request = request.header("Authorization", auth);
     }
     request.call().map_err(|err| {
@@ -193,9 +190,8 @@ pub fn download(url: &str, destination: &Path) -> Result<(), String> {
         .file_name()
         .ok_or_else(|| fail(&id, url, "destination has no file name"))?
         .to_string_lossy();
-    if let Some(parent) = destination.parent() {
-        fs::create_dir_all(parent).map_err(|err| fail(&id, url, format!("prepare {err}")))?;
-    }
+    let prepared = destination.parent().map_or(Ok(()), fs::create_dir_all);
+    prepared.map_err(|err| fail(&id, url, format!("prepare {err}")))?;
     let part = destination.with_file_name(format!("{name}.dejadoc-part-{id}"));
     let written = match stream_to_file(response.into_body().into_reader(), &part, &id, url) {
         Ok(written) => written,
@@ -258,6 +254,8 @@ pub(crate) mod tests {
     enum BodySpec {
         Bytes(Vec<u8>),
         Fill(u64),
+        /// Declares `n` bytes of `0xAB` and closes after sending half of them.
+        Short(u64),
     }
 
     /// One fixture route.
@@ -303,10 +301,7 @@ pub(crate) mod tests {
                         Ok((stream, _)) => {
                             let _ = handle(stream, &thread_log);
                         }
-                        Err(err) if err.kind() == io::ErrorKind::WouldBlock => {
-                            thread::sleep(Duration::from_millis(20));
-                        }
-                        Err(_) => break,
+                        Err(_) => thread::sleep(Duration::from_millis(20)),
                     }
                 }
             });
@@ -344,6 +339,15 @@ pub(crate) mod tests {
                 path.to_string(),
                 Route::Bytes(status, BodySpec::Fill(total)),
             );
+        }
+
+        /// Serve one exact-path route whose body stops at half its declared `total` bytes.
+        pub(crate) fn short_route(&self, path: &str, total: u64) {
+            self.log
+                .lock()
+                .unwrap()
+                .routes
+                .insert(path.to_string(), Route::Bytes(200, BodySpec::Short(total)));
         }
 
         /// Serve one exact-path route after `sleep_ms`.
@@ -409,17 +413,14 @@ pub(crate) mod tests {
     impl Drop for Fixture {
         fn drop(&mut self) {
             self.stop.store(true, Ordering::Relaxed);
-            if let Ok(mut guard) = self.thread.lock()
-                && let Some(handle) = guard.take()
+            let handle = self.thread.get_mut().ok().and_then(Option::take);
+            let started = Instant::now();
+            while handle.as_ref().is_some_and(|handle| !handle.is_finished())
+                && started.elapsed() < Duration::from_secs(31)
             {
-                let started = Instant::now();
-                while !handle.is_finished() && started.elapsed() < Duration::from_secs(31) {
-                    thread::sleep(Duration::from_millis(10));
-                }
-                if handle.is_finished() {
-                    let _ = handle.join();
-                }
+                thread::sleep(Duration::from_millis(10));
             }
+            let _ = handle.filter(JoinHandle::is_finished).map(JoinHandle::join);
         }
     }
 
@@ -445,9 +446,7 @@ pub(crate) mod tests {
         let route = {
             let mut log = log.lock().unwrap();
             *log.hits.entry(path.to_string()).or_insert(0) += 1;
-            if !host.is_empty() {
-                log.hosts.insert(path.to_string(), host.to_string());
-            }
+            log.hosts.insert(path.to_string(), host.to_string());
             if let Some(auth) = auth {
                 log.auth.insert(path.to_string(), auth.to_string());
             }
@@ -505,12 +504,16 @@ pub(crate) mod tests {
         ratelimited: bool,
         deadline: Instant,
     ) -> io::Result<()> {
-        let total = match body {
-            BodySpec::Bytes(b) => u64::try_from(b.len()).unwrap_or(0),
-            BodySpec::Fill(n) => *n,
+        let (declared, total) = match body {
+            BodySpec::Bytes(b) => {
+                let len = u64::try_from(b.len()).unwrap_or(0);
+                (len, len)
+            }
+            BodySpec::Fill(n) => (*n, *n),
+            BodySpec::Short(n) => (*n, n / 2),
         };
         let mut head = format!(
-            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/octet-stream\r\ncontent-length: {total}\r\n",
+            "HTTP/1.1 {status} {reason}\r\ncontent-type: application/octet-stream\r\ncontent-length: {declared}\r\n",
             reason = reason(status)
         );
         if ratelimited {
@@ -525,7 +528,7 @@ pub(crate) mod tests {
             let n = usize::try_from((total - written).min(4096)).unwrap_or(0);
             let slice: &[u8] = match body {
                 BodySpec::Bytes(b) => &b[cursor..cursor + n],
-                BodySpec::Fill(_) => &fill[..n],
+                BodySpec::Fill(_) | BodySpec::Short(_) => &fill[..n],
             };
             write_before(stream, slice, deadline)?;
             written += n as u64;
@@ -538,19 +541,13 @@ pub(crate) mod tests {
         deadline
             .checked_duration_since(Instant::now())
             .filter(|duration| !duration.is_zero())
-            .ok_or_else(|| io::Error::new(io::ErrorKind::TimedOut, "HTTP fixture deadline expired"))
+            .ok_or(io::Error::from(io::ErrorKind::TimedOut))
     }
 
     fn write_before(stream: &mut TcpStream, mut bytes: &[u8], deadline: Instant) -> io::Result<()> {
         while !bytes.is_empty() {
             stream.set_write_timeout(Some(remaining(deadline)?))?;
             let written = stream.write(bytes)?;
-            if written == 0 {
-                return Err(io::Error::new(
-                    io::ErrorKind::WriteZero,
-                    "HTTP fixture write stopped",
-                ));
-            }
             bytes = &bytes[written..];
         }
         Ok(())
@@ -773,5 +770,38 @@ pub(crate) mod tests {
         let text = String::from_utf8(got).unwrap();
         assert!(text.starts_with("HTTP/1.1 404"), "{text}");
         assert_eq!(fixture.last_auth("/authed").as_deref(), Some("Bearer tok"));
+    }
+
+    #[test]
+    fn credentials_are_read_only_for_the_https_github_api() {
+        let var = |key: &str| (key == "GITHUB_TOKEN").then(|| String::from("tok"));
+        assert_eq!(
+            auth_for("https://api.github.com/repos/o/r", var).as_deref(),
+            Some("Bearer tok")
+        );
+        assert_eq!(auth_for("https://github.com/o/r", var), None);
+        assert_eq!(auth_for("http://api.github.com/repos/o/r", var), None);
+    }
+
+    #[test]
+    fn a_truncated_body_is_reported_and_leaves_no_part() {
+        let fixture = Fixture::start();
+        fixture.short_route("/raw/short", 64 * 1024);
+        let url = format!("{}/short", fixture.raw_base());
+        let err = get_raw(&url, READ_LIMIT, REQUEST_DEADLINE).unwrap_err();
+        assert!(err.contains("body read"), "{err}");
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("dep.crate");
+        let err = download(&url, &destination).unwrap_err();
+        assert!(err.contains("body read"), "{err}");
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn download_refuses_a_destination_without_a_file_name() {
+        let fixture = Fixture::start();
+        fixture.fill_route("/raw/any", 200, 16);
+        let err = download(&format!("{}/any", fixture.raw_base()), Path::new("/")).unwrap_err();
+        assert!(err.contains("destination has no file name"), "{err}");
     }
 }

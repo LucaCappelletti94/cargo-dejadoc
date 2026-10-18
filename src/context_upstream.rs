@@ -370,9 +370,7 @@ impl Upstream {
             .unwrap_or_default();
         map.insert(Self::provenance_key(package), sha);
         let text = serde_json::to_string(&map).expect("a string map always serializes");
-        if let Some(parent) = path.parent() {
-            let _ = fs::create_dir_all(parent);
-        }
+        let _ = path.parent().map(fs::create_dir_all);
         let part = path.with_file_name(format!(
             "provenance.json.part-{}",
             context_network::next_id()

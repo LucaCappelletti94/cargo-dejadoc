@@ -1875,15 +1875,7 @@ fn group(
         if candidates.is_empty() {
             continue;
         }
-        candidates.sort_by(|a, b| {
-            action_rank(a.0.action)
-                .cmp(&action_rank(b.0.action))
-                .then_with(|| a.0.depth.cmp(&b.0.depth))
-                .then_with(|| a.0.package.cmp(&b.0.package))
-                .then_with(|| a.0.version.cmp(&b.0.version))
-                .then_with(|| a.0.site.file.cmp(&b.0.site.file))
-                .then_with(|| a.0.site.line.cmp(&b.0.site.line))
-        });
+        candidates.sort_by(|a, b| candidate_order(&a.0).cmp(&candidate_order(&b.0)));
         let (candidates, rows) = candidates.into_iter().unzip();
         side.push(rows);
         groups.push(ReuseGroup {
@@ -1980,6 +1972,18 @@ fn access_rank(access: ContextAccess) -> u8 {
         ContextAccess::Embedded => 2,
         ContextAccess::Unresolved => 3,
     }
+}
+
+/// The report order of candidates in one group, preferred action first.
+fn candidate_order(candidate: &DependencyCandidate) -> (u8, usize, &str, &str, &str, u32) {
+    (
+        action_rank(candidate.action),
+        candidate.depth,
+        &candidate.package,
+        &candidate.version,
+        &candidate.site.file,
+        candidate.site.line,
+    )
 }
 
 /// The display rank of a reuse path, existing APIs first.
@@ -2841,10 +2845,7 @@ mod tests {
                     }
                     match listener.accept() {
                         Ok((stream, _)) => serve_one(stream, &routes),
-                        Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                            std::thread::sleep(ACCEPT_POLL);
-                        }
-                        Err(_) => break,
+                        Err(_) => std::thread::sleep(ACCEPT_POLL),
                     }
                 }
             });
@@ -3256,7 +3257,7 @@ mod tests {
             .groups
             .iter()
             .find(|group| group.local.item.contains("local_new"))
-            .unwrap_or_else(|| panic!("no local_new group, got {:?}", report.groups));
+            .expect("a local_new group");
         assert_eq!(
             assert_candidate(new_group, "upstream", "1.2.0"),
             ReuseAction::UpgradeApi,
@@ -3266,7 +3267,7 @@ mod tests {
             .groups
             .iter()
             .find(|group| group.local.item.contains("local_old"))
-            .unwrap_or_else(|| panic!("no local_old group, got {:?}", report.groups));
+            .expect("a local_old group");
         assert_eq!(
             assert_candidate(old_group, "upstream", "1.0.0"),
             ReuseAction::ReuseApi,
@@ -3360,7 +3361,7 @@ mod tests {
             .groups
             .iter()
             .find(|group| group.local.item.contains("local_match"))
-            .unwrap_or_else(|| panic!("no local_match group, got {:?}", report.groups));
+            .expect("a local_match group");
         assert_eq!(
             assert_candidate(group, "upstream", "1.0.0"),
             ReuseAction::ReuseApi
@@ -4128,10 +4129,9 @@ iota = { version = "4", optional = true }
     fn oversized_subprocess_output_is_rejected() {
         let id = next_proc_id();
         let args = ["-c", "head -c 17000000 /dev/zero"].map(str::to_owned);
-        let Err(error) = run_bounded("sh", &args, None, std::time::Duration::from_secs(30), &id)
-        else {
-            panic!("oversized output must be rejected")
-        };
+        let error = run_bounded("sh", &args, None, std::time::Duration::from_secs(30), &id)
+            .err()
+            .expect("oversized output must be rejected");
         assert!(error.contains("output exceeds"), "{error}");
     }
 
@@ -4153,15 +4153,15 @@ iota = { version = "4", optional = true }
     fn a_breached_deadline_is_reported_with_the_process_killed() {
         let id = next_proc_id();
         let args = ["30".to_owned()];
-        let Err(error) = run_bounded(
+        let error = run_bounded(
             "sleep",
             &args,
             None,
             std::time::Duration::from_millis(100),
             &id,
-        ) else {
-            panic!("a breached deadline must be reported")
-        };
+        )
+        .err()
+        .expect("a breached deadline must be reported");
         assert!(error.contains("breached its"), "{error}");
     }
 
@@ -4177,30 +4177,23 @@ iota = { version = "4", optional = true }
             pid_file.to_string_lossy().into_owned(),
         ];
         let id = next_proc_id();
-        let Err(error) = run_bounded(
+        let error = run_bounded(
             "sh",
             &args,
             None,
             std::time::Duration::from_millis(500),
             &id,
-        ) else {
-            panic!("a breached deadline must be reported")
-        };
+        )
+        .err()
+        .expect("a breached deadline must be reported");
         assert!(error.contains("breached its"), "{error}");
         let pid = std::fs::read_to_string(&pid_file).unwrap();
         let stat = format!("/proc/{}/stat", pid.trim());
-        let started = std::time::Instant::now();
-        let gone = || {
-            std::fs::read_to_string(&stat).map_or(true, |line| {
-                line.rsplit(')')
-                    .next()
-                    .is_some_and(|rest| rest.trim_start().starts_with('Z'))
-            })
-        };
-        while !gone() && started.elapsed() < std::time::Duration::from_secs(5) {
+        let gone = (0..250).any(|_| {
             std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        assert!(gone(), "grandchild {} survived the group kill", pid.trim());
+            !std::fs::read_to_string(&stat).is_ok_and(|line| !line.contains(") Z "))
+        });
+        assert!(gone, "grandchild {} survived the group kill", pid.trim());
     }
 
     #[cfg(unix)]
@@ -5136,10 +5129,7 @@ iota = { version = "4", optional = true }
         ] {
             let archive = packed(vec![(entry_type, path.into(), link, b"x".to_vec())]);
             let path = write_crate(dir.path(), note, archive);
-            let error = match extract_crate(&path, &dir.path().join("out").join(note)) {
-                Ok(()) => panic!("{note} entry must be rejected"),
-                Err(error) => error,
-            };
+            let error = extract_crate(&path, &dir.path().join("out").join(note)).expect_err(note);
             assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{note}");
             assert!(
                 error.to_string().contains("unsafe entry in crate archive"),
@@ -5194,6 +5184,27 @@ iota = { version = "4", optional = true }
         std::fs::write(&dest, "a file").unwrap();
         assert!(extract_crate(&valid_path, &dest).is_err());
         assert_eq!(std::fs::read_to_string(&dest).unwrap(), "a file");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn non_utf8_names_never_displace_the_package_root() {
+        use std::os::unix::ffi::OsStringExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        let raw = |bytes: &[u8]| std::ffi::OsString::from_vec(bytes.to_vec());
+        let lib = b"pub fn f() {}\n".to_vec();
+        let archive = packed(vec![
+            (0, raw(b"top/src/lib.rs"), String::new(), lib),
+            (0, raw(b"top/\xff"), String::new(), b"x".to_vec()),
+            (0, raw(b"\xff/y"), String::new(), b"y".to_vec()),
+        ]);
+        let path = write_crate(dir.path(), "raw", archive);
+        let dest = dir.path().join("out/raw");
+        extract_crate(&path, &dest).expect("the UTF-8 root is the package root");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("src/lib.rs")).unwrap(),
+            "pub fn f() {}\n"
+        );
     }
 
     /// One indexed context record for the group unit test.

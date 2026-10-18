@@ -102,8 +102,7 @@ impl Store {
         let mut temp = tempfile::NamedTempFile::new_in(dir)?;
         {
             let mut writer = std::io::BufWriter::new(temp.as_file_mut());
-            serde_json::to_writer(&mut writer, &payload)
-                .map_err(|err| std::io::Error::new(std::io::ErrorKind::InvalidData, err))?;
+            serde_json::to_writer(&mut writer, &payload)?;
             writer.flush()?;
         }
         temp.persist(target).map_err(|error| error.error)?;
@@ -200,15 +199,14 @@ mod tests {
                 &records,
             )
             .unwrap();
-        match store.load("public/crates.io", "alpha-1.0.0") {
-            Load::Stored(stored) => {
-                assert_eq!(stored.schema, SCHEMA);
-                assert_eq!(stored.canonicalization, canonicalization_fingerprint());
-                assert_eq!(stored.files, map(3));
-                assert_eq!(stored.records.len(), 3);
-            }
-            other => panic!("expected a stored entry, got {other:?}"),
-        }
+        let load = store.load("public/crates.io", "alpha-1.0.0");
+        assert!(
+            matches!(&load, Load::Stored(stored) if stored.schema == SCHEMA
+                && stored.canonicalization == canonicalization_fingerprint()
+                && stored.files == map(3)
+                && stored.records.len() == 3),
+            "{load:?}"
+        );
         assert!(matches!(
             store.load("public/crates.io", "alpha-1.0.1"),
             Load::Missing
@@ -276,13 +274,12 @@ mod tests {
         store
             .save("public/crates.io", "alpha-1.0.0", "c2", &map(2), &two)
             .unwrap();
-        match store.load("public/crates.io", "alpha-1.0.0") {
-            Load::Stored(stored) => {
-                assert_eq!(stored.canonicalization, "c2");
-                assert_eq!(stored.records.len(), 2);
-            }
-            other => panic!("expected a stored entry, got {other:?}"),
-        }
+        let load = store.load("public/crates.io", "alpha-1.0.0");
+        assert!(
+            matches!(&load, Load::Stored(stored) if stored.canonicalization == "c2"
+                && stored.records.len() == 2),
+            "{load:?}"
+        );
     }
     #[test]
     fn a_directory_where_the_entry_lives_reports_io() {
