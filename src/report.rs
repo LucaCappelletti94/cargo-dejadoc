@@ -845,4 +845,253 @@ mod tests {
             );
         }
     }
+
+    /// A candidate with a source range and its reuse path.
+    fn candidate(
+        package: &str,
+        version: &str,
+        depth: usize,
+        item: &str,
+        api_path: Option<&str>,
+        action: ReuseAction,
+    ) -> crate::DependencyCandidate {
+        crate::DependencyCandidate {
+            package: package.to_string(),
+            version: version.to_string(),
+            source: "registry+https://github.com/rust-lang/crates.io-index".to_string(),
+            depth,
+            site: context_site(
+                "src/dep.rs",
+                30,
+                4,
+                33,
+                8,
+                item,
+                crate::ContextKind::FunctionBody,
+            ),
+            access: crate::ContextAccess::PublicFunction,
+            api_path: api_path.map(ToString::to_string),
+            conditions: Vec::new(),
+            notes: Vec::new(),
+            action,
+            repository: None,
+            source_url: None,
+            issue_url: None,
+            existing_issue: None,
+            lookup_warning: None,
+        }
+    }
+
+    /// Two local contexts matched by four upstream candidates, all render branches on.
+    fn reuse_report() -> Report {
+        let mut full = candidate(
+            "upstream",
+            "1.2.3",
+            1,
+            "upstream::f",
+            Some("upstream::f"),
+            ReuseAction::ReuseApi,
+        );
+        full.source_url = Some("https://github.com/owner/upstream/blob/abc123/src/lib.rs".into());
+        full.existing_issue = Some(crate::ExistingIssue {
+            url: "https://github.com/owner/upstream/issues/7".into(),
+            state: "open".into(),
+        });
+        full.conditions = vec!["cfg(unix)".into()];
+        full.notes = vec!["body calls a private helper".into()];
+        full.lookup_warning = Some("tag missing from the index".into());
+        let mut upgrade = candidate(
+            "other",
+            "0.9.0",
+            2,
+            "other::g",
+            None,
+            ReuseAction::UpgradeApi,
+        );
+        upgrade.issue_url = Some("https://github.com/owner/other/issues/new".into());
+        let extract = candidate(
+            "vendored",
+            "0.1.0",
+            3,
+            "vendored::h",
+            None,
+            ReuseAction::RequestExtraction,
+        );
+        let unresolved = candidate(
+            "legacy",
+            "2.0.0",
+            4,
+            "legacy::i",
+            None,
+            ReuseAction::Unresolved,
+        );
+        let mut report = Report {
+            total: 0,
+            unique: 0,
+            functions: 0,
+            unique_functions: 0,
+            context_blocks: 0,
+            unique_context_blocks: 0,
+            context_groups: Vec::new(),
+            reuse: None,
+            groups: Vec::new(),
+        };
+        report.reuse = Some(crate::ReuseReport {
+            groups: vec![
+                crate::ReuseGroup {
+                    hash: "aa11".into(),
+                    tokens: 20,
+                    local: context_site(
+                        "src/a.rs",
+                        9,
+                        5,
+                        12,
+                        6,
+                        "m::a",
+                        crate::ContextKind::FunctionBody,
+                    ),
+                    candidates: vec![full, upgrade],
+                },
+                crate::ReuseGroup {
+                    hash: "bb22".into(),
+                    tokens: 25,
+                    local: context_site(
+                        "src/b.rs",
+                        41,
+                        9,
+                        44,
+                        10,
+                        "m::b",
+                        crate::ContextKind::Block,
+                    ),
+                    candidates: vec![extract, unresolved],
+                },
+            ],
+            coverage: crate::DependencyCoverage {
+                complete: false,
+                packages: 2,
+                indexed_files: 40,
+                cached_files: 10,
+                failures: vec!["no index for the vendored dependency".into()],
+                warnings: vec!["index cache entry is stale".into()],
+            },
+            fail_on_findings: false,
+        });
+        report.reuse.as_mut().unwrap().groups[1].candidates[1].source_url =
+            Some("https://git.example.com/legacy/commit/def456".into());
+        report
+    }
+
+    #[test]
+    fn human_reuse_section_pins_candidates_and_coverage() {
+        let out = human(&reuse_report(), false);
+        assert_eq!(
+            out,
+            r"0 doctests (0 unique), 0 functions (0 unique), 0 duplicated groups, 2 dependency reuse opportunities (2 packages)
+
+src/a.rs:9:5-12:6  m::a (approximate dependency matches)
+  upstream 1.2.3  upstream::f  review existing API (depth 1)
+    https://github.com/owner/upstream/blob/abc123/src/lib.rs
+    Existing request (open)  https://github.com/owner/upstream/issues/7
+    Conditions  cfg(unix)
+    body calls a private helper
+    tag missing from the index
+  other 0.9.0  other::g  review upgrade and API reuse (depth 2)
+    Propose extraction  https://github.com/owner/other/issues/new
+
+src/b.rs:41:9-44:10  m::b (approximate dependency matches)
+  vendored 0.1.0  vendored::h  request public extraction (depth 3)
+  legacy 2.0.0  legacy::i  establish accessibility (depth 4)
+    https://git.example.com/legacy/commit/def456
+dejadoc: index cache entry is stale
+dejadoc: incomplete dependency analysis, no index for the vendored dependency
+
+"
+        );
+    }
+
+    #[test]
+    fn human_reuse_summary_counts_groups_and_packages() {
+        let mut report = reuse_report();
+        report.reuse.as_mut().unwrap().groups.pop();
+        report.reuse.as_mut().unwrap().coverage.packages = 5;
+        let out = human(&report, false);
+        let summary = out.lines().next().unwrap();
+        assert_eq!(
+            summary,
+            "0 doctests (0 unique), 0 functions (0 unique), 0 duplicated groups, 1 dependency \
+reuse opportunities (5 packages)"
+        );
+    }
+
+    #[test]
+    fn annotations_mark_reuse_groups_and_failures() {
+        let out = annotations(&reuse_report(), false);
+        assert_eq!(
+            out,
+            "::notice file=src/a.rs,line=9,col=5,endLine=12,endColumn=5,title=dejadoc \
+reuse::m::a has 2 approximate upstream reuse candidates requiring compatibility review\n\
+::notice file=src/b.rs,line=41,col=9,endLine=44,endColumn=9,title=dejadoc reuse::m::b has 2 \
+approximate upstream reuse candidates requiring compatibility review\n\
+::error title=dejadoc::Incomplete dependency analysis, no index for the vendored dependency\n"
+        );
+    }
+
+    #[test]
+    fn annotations_fail_reuse_findings_when_the_gate_requires_it() {
+        let mut report = reuse_report();
+        report.reuse.as_mut().unwrap().fail_on_findings = true;
+        let hard = annotations(&report, false);
+        assert_eq!(
+            hard.lines()
+                .filter(|line| line.starts_with("::error file="))
+                .count(),
+            2,
+            "{hard}"
+        );
+        assert!(hard.starts_with("::error file=src/a.rs,line=9,"), "{hard}");
+        let soft = annotations(&report, true);
+        assert!(soft.starts_with("::notice file=src/a.rs,line=9,"), "{soft}");
+    }
+
+    #[test]
+    fn json_serializes_reuse_findings() {
+        let value: serde_json::Value = serde_json::from_str(&json(&reuse_report())).unwrap();
+        let reuse = &value["reuse"];
+        assert_eq!(reuse["coverage"]["complete"], false);
+        assert_eq!(reuse["coverage"]["packages"], 2);
+        assert_eq!(reuse["coverage"]["indexed_files"], 40);
+        assert_eq!(reuse["coverage"]["cached_files"], 10);
+        assert_eq!(
+            reuse["coverage"]["failures"][0],
+            "no index for the vendored dependency"
+        );
+        assert_eq!(
+            reuse["coverage"]["warnings"][0],
+            "index cache entry is stale"
+        );
+        let group = &reuse["groups"][0];
+        assert_eq!(group["hash"], "aa11");
+        assert_eq!(group["tokens"], 20);
+        assert_eq!(group["local"]["file"], "src/a.rs");
+        let first = &group["candidates"][0];
+        assert_eq!(first["package"], "upstream");
+        assert_eq!(first["api_path"], "upstream::f");
+        assert_eq!(first["action"], "reuse-api");
+        assert_eq!(first["access"], "public-function");
+        assert_eq!(first["existing_issue"]["state"], "open");
+        assert_eq!(first["lookup_warning"], "tag missing from the index");
+        let second = &group["candidates"][1];
+        assert_eq!(second["api_path"], serde_json::Value::Null);
+        assert_eq!(
+            second["issue_url"],
+            "https://github.com/owner/other/issues/new"
+        );
+        assert_eq!(second["action"], "upgrade-api");
+        assert_eq!(
+            reuse["groups"][1]["candidates"][0]["action"],
+            "request-extraction"
+        );
+        assert_eq!(reuse["groups"][1]["candidates"][1]["action"], "unresolved");
+    }
 }

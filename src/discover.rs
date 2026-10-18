@@ -1145,4 +1145,45 @@ mod tests {
         assert_eq!(bounded.failures[0].module, ["shared"]);
         assert_eq!(module_tree(&source, None).files.len(), 2);
     }
+
+    #[test]
+    fn records_a_boundary_that_cannot_be_canonicalized() {
+        let missing = std::path::Path::new("/nonexistent/dejadoc-module-boundary");
+        let tree = module_tree(&target(std::path::Path::new("lib.rs")), Some(missing));
+        assert!(tree.files.is_empty());
+        assert_eq!(tree.failures.len(), 1);
+        assert!(
+            tree.failures[0]
+                .message
+                .starts_with("cannot establish source boundary")
+        );
+    }
+
+    #[test]
+    fn records_a_root_file_that_is_not_utf8() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("lib.rs");
+        std::fs::write(&root, [0xff, 0xfe, 0xfd]).unwrap();
+        let tree = module_tree(&target(&root), None);
+        assert!(tree.files.is_empty());
+        assert_eq!(tree.failures.len(), 1);
+        assert!(tree.failures[0].message.starts_with("cannot read "));
+    }
+
+    #[test]
+    fn drops_a_cfg_attr_branch_that_does_not_parse() {
+        let attr = |source: &str| {
+            syn::parse_str::<syn::ItemFn>(&alloc::format!("{source}\nfn f() {{}}"))
+                .unwrap()
+                .attrs
+                .pop()
+                .unwrap()
+        };
+        assert_eq!(
+            source_paths(&[attr("#[cfg_attr(x y)]")]),
+            (None, Vec::new())
+        );
+        let kept = attr("#[cfg_attr(feature = \"x\", path = \"other.rs\")]");
+        assert_eq!(source_paths(&[kept]), (None, vec!["other.rs".into()]));
+    }
 }

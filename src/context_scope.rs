@@ -357,4 +357,18 @@ mod tests {
         assert!(parse("module:app").matches(&root));
         assert!(parse("module-exact:app").matches(&root));
     }
+    #[test]
+    fn a_scope_error_reports_its_input() {
+        let error = "bogus:app".parse::<ContextScope>().unwrap_err();
+        assert_eq!(error.to_string(), "invalid context scope `bogus:app`");
+        assert_eq!(error.input, "bogus:app");
+    }
+
+    #[test]
+    fn a_lone_dot_component_matches_an_empty_path_only() {
+        assert!(paths_equal("", "."));
+        assert!(paths_equal(".", ""));
+        assert!(!paths_equal(".", "x/y"));
+        assert!(!paths_equal("x/y", "."));
+    }
 }

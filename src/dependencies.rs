@@ -372,9 +372,10 @@ fn analyze_discovery(
         let Some(mut src) = d.source_root(pkg) else {
             continue;
         };
-        let Some((records, hashes)) = d.index_package(pkg, &mut src) else {
+        let Some(lib_rel) = pkg.lib_rel.as_deref() else {
             continue;
         };
+        let (records, hashes) = d.index_package(pkg, lib_rel, &mut src);
         source_hashes.insert(
             (
                 pkg.name.clone(),
@@ -462,7 +463,6 @@ fn index_latest(
     };
     let mut latest_pkg = pkg.clone();
     latest_pkg.version.clone_from(&version);
-    latest_pkg.lib_rel = Some(lib_rel);
     latest_pkg.lib_name = lib_name;
     latest_pkg.library = library;
     let mut source = Source {
@@ -472,9 +472,7 @@ fn index_latest(
         name: format!("{}-{version}", pkg.name),
         tree: None,
     };
-    let Some((records, hashes)) = d.index_package(&latest_pkg, &mut source) else {
-        return;
-    };
+    let (records, hashes) = d.index_package(&latest_pkg, &lib_rel, &mut source);
     source_hashes.insert(
         (
             pkg.name.clone(),
@@ -1061,11 +1059,9 @@ impl Discovery {
     fn index_package(
         &mut self,
         pkg: &Package,
+        lib_rel: &str,
         src: &mut Source,
-    ) -> Option<(Vec<IndexedContext>, BTreeMap<String, String>)> {
-        let Some(lib_rel) = &pkg.lib_rel else {
-            return None;
-        };
+    ) -> (Vec<IndexedContext>, BTreeMap<String, String>) {
         let tree = src.tree.take().unwrap_or_else(|| {
             package_tree(pkg, lib_rel, &src.root, src.dir == "public/crates.io")
         });
@@ -1120,7 +1116,7 @@ impl Discovery {
                 {
                     self.coverage.cached_files += file_count;
                     self.coverage.indexed_files += file_count;
-                    return Some((stored.records, stored.files));
+                    return (stored.records, stored.files);
                 }
                 Load::Stored(_) | Load::Missing => {}
                 Load::Corrupt => self.warn(&format!(
@@ -1157,7 +1153,7 @@ impl Discovery {
                 src.name
             ));
         }
-        Some((records, fingerprint))
+        (records, fingerprint)
     }
 }
 
@@ -1408,8 +1404,6 @@ fn next_proc_id() -> String {
 
 /// Deadline for reaping a killed subprocess.
 const REAP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
-/// Deadline for terminating the descendants of a killed subprocess.
-const DESCENDANT_KILL_DEADLINE: std::time::Duration = std::time::Duration::from_secs(5);
 /// The maximum captured subprocess output before a capture is rejected.
 const OUTPUT_LIMIT: u64 = 16 * 1024 * 1024;
 
@@ -1474,7 +1468,7 @@ fn run_bounded(
                 if started.elapsed() >= deadline {
                     let group = child.0.id();
                     let _ = child.0.kill();
-                    kill_process_group(group, id);
+                    kill_process_group(group);
                     let _ = reap_bounded(&mut child.0, REAP_DEADLINE);
                     return Err(format!("{id} {program} breached its {deadline:?} deadline"));
                 }
@@ -1482,7 +1476,7 @@ fn run_bounded(
             Err(err) => {
                 let group = child.0.id();
                 let _ = child.0.kill();
-                kill_process_group(group, id);
+                kill_process_group(group);
                 return Err(format!("{id} wait {program} {err}"));
             }
         }
@@ -1519,21 +1513,23 @@ fn capture_output(path: &Path, program: &str, id: &str) -> Result<Vec<u8>, Strin
 
 /// Terminate the process group of a killed child, best effort.
 #[cfg(unix)]
-fn kill_process_group(pid: u32, id: &str) {
-    let mut cmd = std::process::Command::new("kill");
-    cmd.arg("-KILL").arg(format!("-{pid}"));
-    let Ok(child) = cmd.spawn() else {
-        return;
-    };
-    let mut child = Process(child);
-    if !reap_bounded(&mut child.0, DESCENDANT_KILL_DEADLINE) {
-        eprintln!("{id} group kill -{pid} was still pending after {DESCENDANT_KILL_DEADLINE:?}");
+fn kill_process_group(pid: u32) {
+    if let Some(group) = signalable_group(pid) {
+        let _ = rustix::process::kill_process_group(group, rustix::process::Signal::KILL);
     }
+}
+
+/// The group of a spawned child, never 0 or 1, whose negation would signal the caller's own
+/// group or every process of the user.
+#[cfg(unix)]
+fn signalable_group(pid: u32) -> Option<rustix::process::Pid> {
+    let raw = i32::try_from(pid).ok().filter(|raw| *raw > 1)?;
+    rustix::process::Pid::from_raw(raw)
 }
 
 /// No process-group termination without unix.
 #[cfg(not(unix))]
-fn kill_process_group(_pid: u32, _id: &str) {}
+fn kill_process_group(_pid: u32) {}
 
 /// Poll child completion within a monotonic cleanup deadline.
 fn reap_bounded(child: &mut std::process::Child, deadline: std::time::Duration) -> bool {
@@ -2575,15 +2571,14 @@ mod tests {
         options.all_optional = Some(true);
         options.target = Some("x86_64-pc-windows-gnu".to_owned());
         let report = run(dir.path(), &local, &targets, &options);
+        let names = packages(&report);
         assert!(
-            packages(&report).iter().any(|name| name == "winonly"),
-            "windows target must include the windows-only dependency, got {:?}",
-            packages(&report)
+            names.iter().any(|name| name == "winonly"),
+            "windows target must include the windows-only dependency, got {names:?}"
         );
         assert!(
-            packages(&report).iter().any(|name| name == "winopt"),
-            "windows target must explore the windows-only optional dependency, got {:?}",
-            packages(&report)
+            names.iter().any(|name| name == "winopt"),
+            "windows target must explore the windows-only optional dependency, got {names:?}"
         );
         options.target = None;
         let report = run(dir.path(), &local, &targets, &options);
@@ -3185,14 +3180,16 @@ mod tests {
     }
 
     fn assert_candidate(group: &ReuseGroup, package: &str, version: &str) -> ReuseAction {
-        group
+        let candidate = group
             .candidates
             .iter()
-            .find(|candidate| candidate.package == package && candidate.version == version)
-            .map_or_else(
-                || panic!("no {package} {version} candidate"),
-                |candidate| candidate.action,
-            )
+            .find(|candidate| candidate.package == package && candidate.version == version);
+        assert!(
+            candidate.is_some(),
+            "no {package} {version} candidate, got {:?}",
+            group.candidates
+        );
+        candidate.unwrap().action
     }
 
     #[test]
@@ -3228,16 +3225,20 @@ mod tests {
         let server = HttpServer::start(routes);
         let report = registry_run(&ws, &cache, &server.base, true);
         server.stop();
+        let found = report
+            .groups
+            .iter()
+            .any(|group| group.local.item.contains("local_match"));
+        assert!(
+            found,
+            "no local_match group, groups {:?}, coverage {:?}",
+            report.groups, report.coverage
+        );
         let match_group = report
             .groups
             .iter()
             .find(|group| group.local.item.contains("local_match"))
-            .unwrap_or_else(|| {
-                panic!(
-                    "no local_match group, groups {:?}, coverage {:?}",
-                    report.groups, report.coverage
-                )
-            });
+            .unwrap();
         assert_eq!(
             assert_candidate(match_group, "upstream", "1.0.0"),
             ReuseAction::ReuseApi,
@@ -3379,7 +3380,9 @@ mod tests {
         put(
             &ws,
             "app/src/lib.rs",
-            "pub fn local_new(value: u32) -> u32 { value + 4u32 }\n",
+            &format!(
+                "pub fn local_new(value: u32) -> u32 {{ value + 4u32 }}\npub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"
+            ),
         );
         let mut routes = BTreeMap::new();
         routes.insert(
@@ -3535,6 +3538,1804 @@ mod tests {
             std::fs::read_to_string(dest.join("src/lib.rs")).unwrap(),
             PUBLISHED,
             "a late extraction must not replace the first published source"
+        );
+    }
+    /// Files for a local app crate rooted at `ws/app`.
+    fn app_files(ws: &Path, lib: &str) {
+        put(
+            ws,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        put(ws, "app/src/lib.rs", lib);
+    }
+
+    /// Files for one dependency crate rooted at `ws/name`.
+    fn pkg_files(ws: &Path, name: &str, lib: &str) {
+        put(
+            ws,
+            &format!("{name}/Cargo.toml"),
+            &format!("[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2024\"\n"),
+        );
+        put(ws, &format!("{name}/src/lib.rs"), lib);
+    }
+
+    /// A crafted metadata package entry rooted at `ws/name`.
+    fn json_pkg(
+        name: &str,
+        version: &str,
+        ws: &Path,
+        source: Option<&str>,
+        kind: &str,
+        deps: &[serde_json::Value],
+    ) -> serde_json::Value {
+        let id = source.map_or_else(
+            || format!("path+file://{}#{}", ws.join(name).display(), version),
+            |source| format!("{source}#{name}/{version}"),
+        );
+        serde_json::json!({
+            "name": name,
+            "version": version,
+            "id": id,
+            "source": source,
+            "dependencies": deps,
+            "targets": [
+                {
+                    "name": name,
+                    "kind": [kind],
+                    "crate_types": [kind],
+                    "src_path": format!("{}/src/lib.rs", ws.join(name).display()),
+                }
+            ],
+            "manifest_path": format!("{}/Cargo.toml", ws.join(name).display()),
+            "features": {}
+        })
+    }
+
+    /// A crafted manifest dependency entry.
+    fn json_dep(
+        name: &str,
+        source: Option<&str>,
+        req: &str,
+        optional: bool,
+        target: Option<&str>,
+        path: Option<&str>,
+    ) -> serde_json::Value {
+        serde_json::json!({
+            "name": name,
+            "source": source,
+            "req": req,
+            "kind": null,
+            "optional": optional,
+            "uses_default_features": true,
+            "features": [],
+            "target": target,
+            "rename": null,
+            "registry": null,
+            "path": path
+        })
+    }
+
+    /// A crafted metadata document for an app with the given edges and packages.
+    fn crafted_meta(
+        ws: &Path,
+        app_deps: &[serde_json::Value],
+        packages: &[serde_json::Value],
+        resolve: Option<serde_json::Value>,
+    ) -> serde_json::Value {
+        let app_id = format!("path+file://{}#0.1.0", ws.display());
+        let mut all: Vec<serde_json::Value> = Vec::new();
+        all.push(serde_json::json!({
+            "name": "app",
+            "version": "0.1.0",
+            "id": app_id,
+            "source": null,
+            "dependencies": app_deps,
+            "targets": [
+                {
+                    "name": "app",
+                    "kind": ["lib"],
+                    "crate_types": ["lib"],
+                    "src_path": format!("{}/app/src/lib.rs", ws.display()),
+                }
+            ],
+            "manifest_path": format!("{}/app/Cargo.toml", ws.display()),
+            "features": {}
+        }));
+        all.extend_from_slice(packages);
+        serde_json::json!({
+            "packages": all,
+            "workspace_members": [app_id],
+            "resolve": resolve.unwrap_or(serde_json::json!({ "nodes": [] })),
+            "workspace_root": ws.to_string_lossy(),
+            "target_directory": format!("{}/target", ws.display()),
+            "metadata": null,
+            "version": 1
+        })
+    }
+
+    /// A crafted metadata run, bypassing cargo.
+    fn crafted_run(
+        ws: &Path,
+        cache: &Path,
+        base: Option<&str>,
+        options: &DependencySearch,
+        json: serde_json::Value,
+    ) -> ReuseReport {
+        let local = local_records(ws, "app", &[("app/src/lib.rs", vec![])]);
+        let refs: Vec<&IndexedContext> = local.iter().collect();
+        let metadata: Metadata = serde_json::from_value(json).unwrap();
+        let graph = build_graph(&metadata, &BTreeMap::new());
+        let store = Store::open(cache).unwrap();
+        let eff = effective(options);
+        let mut d = Discovery {
+            graph,
+            index_fingerprint: index_fingerprint(&eff),
+            eff,
+            store: Some(store),
+            store_root: cache.to_path_buf(),
+            registry: match base {
+                Some(base) => Registry {
+                    api: format!("{base}/api/v1/crates"),
+                    cdn: format!("{base}/crates"),
+                },
+                None => Registry::default(),
+            },
+            coverage: DependencyCoverage::default(),
+            effective_targets: Vec::new(),
+            cfgs: BTreeMap::new(),
+            latest_known: BTreeMap::new(),
+        };
+        let targets = single_lib_targets(ws);
+        analyze_discovery(&mut d, ws, &targets, &refs, 0)
+    }
+
+    /// One run of crafted discovery, all-optional at depth `depth`.
+    fn crafted(
+        ws: &Path,
+        cache: &Path,
+        base: Option<&str>,
+        depth: usize,
+        json: serde_json::Value,
+    ) -> ReuseReport {
+        let options = DependencySearch {
+            depth: Some(depth),
+            all_optional: Some(true),
+            check_latest: Some(false),
+            ..DependencySearch::default()
+        };
+        crafted_run(ws, cache, base, &options, json)
+    }
+
+    /// A discovery state without a store, rooted at `dir`.
+    fn discovery(dir: &Path) -> Discovery {
+        Discovery {
+            graph: Graph {
+                packages: BTreeMap::new(),
+                configured: BTreeMap::new(),
+                src_to_member: BTreeMap::new(),
+            },
+            index_fingerprint: String::new(),
+            eff: effective(&DependencySearch::default()),
+            store: None,
+            store_root: dir.to_path_buf(),
+            registry: Registry::default(),
+            coverage: DependencyCoverage::default(),
+            effective_targets: Vec::new(),
+            cfgs: BTreeMap::new(),
+            latest_known: BTreeMap::new(),
+        }
+    }
+
+    #[test]
+    fn zero_depth_skips_discovery_entirely() {
+        let dir = tempfile::tempdir().unwrap();
+        let options = DependencySearch {
+            depth: None,
+            check_latest: Some(false),
+            cache_dir: Some(dir.path().join("index").to_string_lossy().into_owned()),
+            fail_on_findings: Some(true),
+            ..DependencySearch::default()
+        };
+        let report = analyze(dir.path(), &[], &[], &options, 0, false, &[]);
+        assert!(report.groups.is_empty(), "{:?}", report.groups);
+        assert!(report.coverage.complete, "{:?}", report.coverage);
+        assert!(report.coverage.failures.is_empty(), "{:?}", report.coverage);
+        assert!(report.fail_on_findings);
+    }
+
+    #[test]
+    fn an_unknown_dependency_kind_is_not_followed() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        pkg_files(
+            &ws,
+            "kept",
+            &format!("pub fn kept_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        pkg_files(
+            &ws,
+            "dropped",
+            &format!("pub fn dropped_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let app_id = format!("path+file://{}#0.1.0", ws.display());
+        let json = crafted_meta(
+            &ws,
+            &[],
+            &[
+                json_pkg("kept", "0.1.0", &ws, None, "lib", &[]),
+                json_pkg("dropped", "0.1.0", &ws, None, "lib", &[]),
+            ],
+            Some(serde_json::json!({
+                "nodes": [
+                    {
+                        "id": app_id,
+                        "deps": [
+                            { "name": "kept", "pkg": format!("path+file://{}#0.1.0", ws.join("kept").display()), "dep_kinds": [{ "kind": "normal" }] },
+                            { "name": "dropped", "pkg": format!("path+file://{}#0.1.0", ws.join("dropped").display()), "dep_kinds": [{ "kind": "proc" }] }
+                        ],
+                        "dependencies": [],
+                        "features": []
+                    }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, None, 1, json);
+        assert_eq!(packages(&report), vec!["kept".to_owned()]);
+        assert!(report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn a_graph_without_a_resolve_section_follows_manifest_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        pkg_files(
+            &ws,
+            "side",
+            &format!("pub fn side_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let json = crafted_meta(
+            &ws,
+            &[json_dep(
+                "side",
+                None,
+                "*",
+                true,
+                None,
+                Some(&ws.join("side").to_string_lossy()),
+            )],
+            &[json_pkg("side", "0.1.0", &ws, None, "lib", &[])],
+            None,
+        );
+        let report = crafted(&ws, &cache, None, 1, json);
+        assert_eq!(packages(&report), vec!["side".to_owned()]);
+        assert!(report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn a_null_resolve_section_is_treated_as_absent() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let mut json = crafted_meta(&ws, &[], &[], None);
+        json["resolve"] = serde_json::Value::Null;
+        let report = crafted(&ws, &cache, None, 1, json);
+        assert!(report.coverage.complete, "{:?}", report.coverage);
+        assert!(report.groups.is_empty(), "{:?}", report.groups);
+    }
+
+    #[test]
+    fn an_edge_to_an_unknown_package_is_skipped() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        pkg_files(
+            &ws,
+            "real",
+            &format!("pub fn real_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let app_id = format!("path+file://{}#0.1.0", ws.display());
+        let json = crafted_meta(
+            &ws,
+            &[json_dep(
+                "real",
+                None,
+                "*",
+                true,
+                None,
+                Some(&ws.join("real").to_string_lossy()),
+            )],
+            &[json_pkg("real", "0.1.0", &ws, None, "lib", &[])],
+            Some(serde_json::json!({
+                "nodes": [
+                    {
+                        "id": app_id,
+                        "deps": [
+                            { "name": "ghost", "pkg": format!("path+file://{}#9.9.9", ws.join("ghost").display()), "dep_kinds": [{ "kind": "normal" }] }
+                        ],
+                        "dependencies": [],
+                        "features": []
+                    }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, None, 1, json);
+        assert_eq!(packages(&report), vec!["real".to_owned()]);
+        assert!(report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    /// The member and path packages the unresolved-graph test resolves from disk.
+    fn unresolved_fixture(ws: &Path) {
+        app_files(
+            ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        for name in ["side", "inner", "weird", "dup"] {
+            pkg_files(
+                ws,
+                name,
+                &format!("pub fn {name}_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+            );
+        }
+        pkg_files(
+            ws,
+            "inner2",
+            "pub fn inner2_fn(value: u32) -> u32 { value + 1u32 }\n",
+        );
+        put(
+            ws,
+            "badreq/Cargo.toml",
+            "[package]\nname = \"badreq\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nweird = { version = \"not-semver\" }\n",
+        );
+        put(
+            ws,
+            "badreq/src/lib.rs",
+            "pub fn badreq_fn(value: u32) -> u32 { value + 1u32 }\n",
+        );
+    }
+
+    #[test]
+    fn unresolved_packages_follow_their_manifest_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        unresolved_fixture(&ws);
+        let routes = BTreeMap::new();
+        let server = HttpServer::start(routes);
+        let side_deps = [
+            json_dep("inner", None, "^1.0", false, None, None),
+            json_dep("inner2", None, "^9.0", false, None, None),
+        ];
+        let side = json_pkg("side", "0.1.0", &ws, None, "lib", &side_deps);
+        let mut pm = json_pkg("pm", "0.1.0", &ws, None, "proc-macro", &[]);
+        pm["targets"][0]["src_path"] =
+            serde_json::Value::String(format!("{}/pm-else/src/lib.rs", ws.display()));
+        let json = crafted_meta(
+            &ws,
+            &[
+                json_dep(
+                    "side",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("side").to_string_lossy()),
+                ),
+                json_dep(
+                    "badreq",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("badreq").to_string_lossy()),
+                ),
+                json_dep("dup", None, "*", true, None, None),
+            ],
+            &[
+                side,
+                json_pkg("inner", "1.0.0", &ws, None, "lib", &[]),
+                json_pkg("inner2", "1.0.0", &ws, None, "lib", &[]),
+                json_pkg("weird", "1.0.0", &ws, None, "lib", &[]),
+                json_pkg("dup", "1.0.0", &ws, None, "lib", &[]),
+                json_pkg("dup", "1.5.0", &ws, None, "lib", &[]),
+                json_pkg("dup", "2.0.0", &ws, None, "lib", &[]),
+                json_pkg("dup", "10.0.0", &ws, None, "lib", &[]),
+                pm,
+            ],
+            Some(serde_json::json!({
+                "nodes": [
+                    {
+                        "id": format!("path+file://{}#0.1.0", ws.display()),
+                        "deps": [],
+                        "dependencies": [],
+                        "features": []
+                    }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, Some(&server.base), 2, json);
+        server.stop();
+        assert_eq!(
+            packages(&report),
+            vec![
+                "dup".to_owned(),
+                "inner".to_owned(),
+                "side".to_owned(),
+                "weird".to_owned()
+            ]
+        );
+        let dup = report
+            .groups
+            .iter()
+            .flat_map(|group| group.candidates.iter())
+            .find(|candidate| candidate.package == "dup")
+            .expect("the dup candidate is present");
+        assert_eq!(dup.version, "10.0.0");
+        let failures = report.coverage.failures.join("\n");
+        assert!(
+            failures.contains("version of inner2 could not be resolved"),
+            "{failures}"
+        );
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn platform_matches_allows_targets_without_effective_targets() {
+        let mut d = discovery(Path::new("/tmp"));
+        let named = ManifestDep {
+            name: "x".to_owned(),
+            source: None,
+            req: "*".to_owned(),
+            kind: DependencyKind::Normal,
+            optional: true,
+            target: Some(Platform::Name("x86_64-unknown-linux-gnu".to_owned())),
+            path: None,
+        };
+        assert!(d.platform_matches(&named));
+        let plain = ManifestDep {
+            name: "y".to_owned(),
+            source: None,
+            req: "*".to_owned(),
+            kind: DependencyKind::Normal,
+            optional: false,
+            target: None,
+            path: None,
+        };
+        assert!(d.platform_matches(&plain));
+    }
+
+    #[test]
+    fn manifest_library_info_requires_a_library_source() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "src/lib.rs", "pub fn f() {}\n");
+        let value: toml::Value =
+            toml::from_str("[package]\nname = \"p\"\nversion = \"0.1.0\"\n").unwrap();
+        assert_eq!(
+            manifest_library_info(&value, dir.path()),
+            Some((String::from("src/lib.rs"), None, true))
+        );
+        let value: toml::Value = toml::from_str("[lib]\npath = \"src/absent.rs\"\n").unwrap();
+        assert_eq!(manifest_library_info(&value, dir.path()), None);
+        let value: toml::Value = toml::from_str("[lib]\nproc-macro = true\n").unwrap();
+        assert_eq!(
+            manifest_library_info(&value, dir.path()),
+            Some((String::from("src/lib.rs"), None, false))
+        );
+        let value: toml::Value = toml::from_str("[lib]\ncrate-type = [\"cdylib\"]\n").unwrap();
+        assert_eq!(
+            manifest_library_info(&value, dir.path()),
+            Some((String::from("src/lib.rs"), None, false))
+        );
+        let value: toml::Value = toml::from_str("[lib]\ncrate-type = [\"dylib\"]\n").unwrap();
+        assert_eq!(
+            manifest_library_info(&value, dir.path()),
+            Some((String::from("src/lib.rs"), None, true))
+        );
+        let value: toml::Value = toml::from_str("[lib]\nname = \"renamed\"\n").unwrap();
+        assert_eq!(
+            manifest_library_info(&value, dir.path()),
+            Some((String::from("src/lib.rs"), Some("renamed".to_owned()), true))
+        );
+    }
+
+    #[test]
+    fn manifest_deps_parse_every_table_shape() {
+        let dir = tempfile::tempdir().unwrap();
+        let value: toml::Value = toml::from_str(
+            r#"
+[dependencies]
+alpha = "1.0"
+beta = { version = "2", optional = true }
+gamma = { git = "https://example.com/gamma", version = "3" }
+delta = { registry = "https://example.com/idx" }
+epsilon = { path = "rel/epsilon" }
+zeta = { path = "/abs/zeta" }
+ignored = 5
+[dev-dependencies]
+eta = "0.1"
+[build-dependencies]
+theta = "0.2"
+[target]
+stray = "oops"
+[target.'cfg(unix)'.dependencies]
+iota = { version = "4", optional = true }
+"#,
+        )
+        .unwrap();
+        let deps = manifest_deps_from_toml(&value, dir.path());
+        assert_eq!(deps.len(), 9);
+        let by_name: BTreeMap<&str, &ManifestDep> =
+            deps.iter().map(|dep| (dep.name.as_str(), dep)).collect();
+        let alpha = by_name["alpha"];
+        assert_eq!(alpha.req, "1.0");
+        assert!(!alpha.optional);
+        assert_eq!(alpha.kind, DependencyKind::Normal);
+        assert!(alpha.source.is_none());
+        assert!(alpha.path.is_none());
+        assert!(alpha.target.is_none());
+        assert!(by_name["beta"].optional);
+        assert_eq!(by_name["beta"].req, "2");
+        assert_eq!(
+            by_name["gamma"].source.as_deref(),
+            Some("git+https://example.com/gamma")
+        );
+        assert_eq!(
+            by_name["delta"].source.as_deref(),
+            Some("registry+https://example.com/idx")
+        );
+        assert_eq!(
+            by_name["epsilon"].path.as_deref(),
+            Some(dir.path().join("rel/epsilon").as_path())
+        );
+        assert_eq!(
+            by_name["zeta"].path.as_deref(),
+            Some(Path::new("/abs/zeta"))
+        );
+        assert_eq!(by_name["eta"].kind, DependencyKind::Development);
+        assert_eq!(by_name["theta"].kind, DependencyKind::Build);
+        assert!(matches!(by_name["iota"].target, Some(Platform::Cfg(_))));
+        assert!(by_name["iota"].optional);
+    }
+
+    #[test]
+    fn relative_keeps_paths_outside_the_root() {
+        assert_eq!(
+            relative("/other/file.rs", Path::new("/root")),
+            "/other/file.rs"
+        );
+        assert_eq!(relative("/root/a/b.rs", Path::new("/root")), "a/b.rs");
+    }
+
+    #[test]
+    fn oversized_subprocess_output_is_rejected() {
+        let id = next_proc_id();
+        let args = ["-c", "head -c 17000000 /dev/zero"].map(str::to_owned);
+        let Err(error) = run_bounded("sh", &args, None, std::time::Duration::from_secs(30), &id)
+        else {
+            panic!("oversized output must be rejected")
+        };
+        assert!(error.contains("output exceeds"), "{error}");
+    }
+
+    #[test]
+    fn a_live_child_is_not_reaped_within_a_short_window() {
+        let mut child = std::process::Command::new("sleep")
+            .arg("5")
+            .spawn()
+            .unwrap();
+        assert!(!reap_bounded(
+            &mut child,
+            std::time::Duration::from_millis(100)
+        ));
+        child.kill().unwrap();
+        let _ = child.wait();
+    }
+
+    #[test]
+    fn a_breached_deadline_is_reported_with_the_process_killed() {
+        let id = next_proc_id();
+        let args = ["30".to_owned()];
+        let Err(error) = run_bounded(
+            "sleep",
+            &args,
+            None,
+            std::time::Duration::from_millis(100),
+            &id,
+        ) else {
+            panic!("a breached deadline must be reported")
+        };
+        assert!(error.contains("breached its"), "{error}");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_breached_deadline_kills_the_descendants_of_the_process() {
+        let dir = tempfile::tempdir().unwrap();
+        let pid_file = dir.path().join("pid");
+        let args = [
+            "-c".to_owned(),
+            "sleep 30 & echo $! > \"$1\"; wait".to_owned(),
+            "sh".to_owned(),
+            pid_file.to_string_lossy().into_owned(),
+        ];
+        let id = next_proc_id();
+        let Err(error) = run_bounded(
+            "sh",
+            &args,
+            None,
+            std::time::Duration::from_millis(500),
+            &id,
+        ) else {
+            panic!("a breached deadline must be reported")
+        };
+        assert!(error.contains("breached its"), "{error}");
+        let pid = std::fs::read_to_string(&pid_file).unwrap();
+        let stat = format!("/proc/{}/stat", pid.trim());
+        let started = std::time::Instant::now();
+        let gone = || {
+            std::fs::read_to_string(&stat).map_or(true, |line| {
+                line.rsplit(')')
+                    .next()
+                    .is_some_and(|rest| rest.trim_start().starts_with('Z'))
+            })
+        };
+        while !gone() && started.elapsed() < std::time::Duration::from_secs(5) {
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(gone(), "grandchild {} survived the group kill", pid.trim());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn only_child_process_groups_are_signalable() {
+        for pid in [0, 1, u32::MAX] {
+            assert!(signalable_group(pid).is_none(), "{pid}");
+        }
+        let group = signalable_group(2).expect("group 2 is signalable");
+        assert_eq!(group.as_raw_nonzero().get(), 2);
+    }
+
+    #[test]
+    fn acquire_reports_missing_store_layout_and_bad_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::create_dir_all(dir.path().join("public")).unwrap();
+        std::fs::write(dir.path().join("public/crates.io"), "a file").unwrap();
+        let d = discovery(dir.path());
+        let error = d.acquire_crates_io_source("n", "1.0.0").unwrap_err();
+        assert!(error.contains("is unavailable"), "{error}");
+        let dir = tempfile::tempdir().unwrap();
+        let archives = dir.path().join("public/crates.io/archives");
+        std::fs::create_dir_all(&archives).unwrap();
+        std::fs::write(archives.join("n-2.0.0.crate"), "not a crate").unwrap();
+        let d = discovery(dir.path());
+        let error = d.acquire_crates_io_source("n", "2.0.0").unwrap_err();
+        assert!(error.contains("could not be extracted"), "{error}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn serve_one_ends_on_closed_and_idle_peers() {
+        use std::io::Write as _;
+        let routes = BTreeMap::new();
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let addr = listener.local_addr().unwrap();
+        let mut client = std::net::TcpStream::connect(addr).unwrap();
+        client.write_all(b"GET /x HTTP/1.1\r\n").unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        drop(client);
+        serve_one(stream, &routes);
+        let client = std::net::TcpStream::connect(addr).unwrap();
+        let (stream, _) = listener.accept().unwrap();
+        serve_one(stream, &routes);
+        drop(client);
+    }
+
+    #[test]
+    fn a_corrupt_index_entry_is_rebuilt_with_a_warning() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        let manifest_dir = std::fs::canonicalize(dir.path().join("deps/direct")).unwrap();
+        let key = source_key("path", &manifest_dir.to_string_lossy());
+        let entry = cache.join("private").join(&key).join("direct.json");
+        std::fs::create_dir_all(entry.parent().unwrap()).unwrap();
+        std::fs::write(&entry, "not json").unwrap();
+        let local = app_records(dir.path());
+        let targets = app_targets(dir.path());
+        let report = run(
+            dir.path(),
+            &local,
+            &targets,
+            &app_options(dir.path(), &cache, 1),
+        );
+        let warnings = report.coverage.warnings.join("\n");
+        assert!(
+            warnings.contains("dependency index for direct is corrupt, rebuilt"),
+            "{warnings}"
+        );
+        assert_eq!(packages(&report), vec!["direct".to_owned()]);
+        let rebuilt: serde_json::Value =
+            serde_json::from_reader(std::fs::File::open(&entry).unwrap()).unwrap();
+        assert_eq!(
+            rebuilt.get("schema").and_then(serde_json::Value::as_u64),
+            Some(u64::from(cache::SCHEMA))
+        );
+    }
+
+    #[test]
+    fn an_unwritable_store_keeps_the_findings_and_warns() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("private"), "blocked").unwrap();
+        let local = app_records(dir.path());
+        let targets = app_targets(dir.path());
+        let report = run(
+            dir.path(),
+            &local,
+            &targets,
+            &app_options(dir.path(), &cache, 1),
+        );
+        let warnings = report.coverage.warnings.join("\n");
+        assert!(
+            warnings.contains("dependency index for direct is unavailable"),
+            "{warnings}"
+        );
+        assert!(
+            warnings.contains("dependency index for direct could not be saved"),
+            "{warnings}"
+        );
+        assert_eq!(packages(&report), vec!["direct".to_owned()]);
+    }
+
+    #[test]
+    fn an_unopenable_index_dir_still_reports_findings() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        std::fs::write(&cache, "a file").unwrap();
+        let local = app_records(dir.path());
+        let targets = app_targets(dir.path());
+        let report = run(
+            dir.path(),
+            &local,
+            &targets,
+            &app_options(dir.path(), &cache, 1),
+        );
+        assert_eq!(packages(&report), vec!["direct".to_owned()]);
+        assert!(report.coverage.complete, "{:?}", report.coverage);
+        assert_eq!(std::fs::read_to_string(&cache).unwrap(), "a file");
+    }
+
+    #[test]
+    fn an_unlocated_selected_crate_leaves_the_analysis_incomplete() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        put(
+            dir.path(),
+            "stray/src/lib.rs",
+            &format!("pub fn stray_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let local = local_records(dir.path(), "stray", &[("stray/src/lib.rs", vec![])]);
+        let file = dir.path().join("stray/src/lib.rs");
+        let text = std::fs::read_to_string(&file).unwrap();
+        let targets = vec![TargetScan {
+            name: "stray".to_owned(),
+            files: vec![SourceFile {
+                path: file.to_string_lossy().into_owned(),
+                segments: Vec::new(),
+                cfg: Vec::new(),
+                parsed: syn::parse_file(&text).unwrap(),
+                text,
+                rustdoc: true,
+            }],
+            library: true,
+        }];
+        let options = app_options(dir.path(), &cache, 1);
+        let report = run(dir.path(), &local, &targets, &options);
+        let failures = report.coverage.failures.join("\n");
+        assert!(
+            failures.contains(
+                "selected crate stray could not be located in the workspace metadata (target stray)"
+            ),
+            "{failures}"
+        );
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn cfg_gated_optional_dependencies_follow_the_host_conditions() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        let root = dir.path().join("Cargo.toml");
+        let mut root_manifest = std::fs::read_to_string(&root).unwrap();
+        root_manifest = root_manifest.replacen(
+            "\"deps/winonly\", \"deps/winopt\"]",
+            "\"deps/winonly\", \"deps/winopt\", \"deps/cfgdep\", \"deps/cfgdep2\"]",
+            1,
+        );
+        std::fs::write(&root, root_manifest).unwrap();
+        put(
+            dir.path(),
+            "deps/cfgdep/Cargo.toml",
+            "[package]\nname = \"cfgdep\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        );
+        put(
+            dir.path(),
+            "deps/cfgdep/src/lib.rs",
+            &format!("pub fn helper(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(
+            dir.path(),
+            "deps/cfgdep2/Cargo.toml",
+            "[package]\nname = \"cfgdep2\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[workspace]\n",
+        );
+        put(
+            dir.path(),
+            "deps/cfgdep2/src/lib.rs",
+            &format!("pub fn helper(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let path = dir.path().join("app/Cargo.toml");
+        let mut manifest = std::fs::read_to_string(&path).unwrap();
+        manifest.push_str(
+            "[target.'cfg(unix)'.dependencies]\ncfgdep = { path = \"../deps/cfgdep\", optional = true }\ncfgdep2 = { path = \"../deps/cfgdep2\", optional = true }\n",
+        );
+        std::fs::write(&path, manifest).unwrap();
+        let local = app_records(dir.path());
+        let targets = app_targets(dir.path());
+        let mut options = app_options(dir.path(), &cache, 2);
+        options.all_optional = Some(true);
+        let report = run(dir.path(), &local, &targets, &options);
+        assert_eq!(
+            packages(&report),
+            vec![
+                "cfgdep".to_owned(),
+                "cfgdep2".to_owned(),
+                "direct".to_owned(),
+                "opt2".to_owned(),
+                "optional".to_owned(),
+                "transitive".to_owned()
+            ]
+        );
+    }
+
+    #[test]
+    fn unparseable_dependency_sources_are_reported_with_their_modules() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        put(
+            dir.path(),
+            "deps/badsrc/Cargo.toml",
+            "[package]\nname = \"badsrc\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        put(dir.path(), "deps/badsrc/src/lib.rs", "fn broken( {\n");
+        put(
+            dir.path(),
+            "deps/badsub/Cargo.toml",
+            "[package]\nname = \"badsub\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        put(
+            dir.path(),
+            "deps/badsub/src/lib.rs",
+            &format!("mod sub;\npub fn helper(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(dir.path(), "deps/badsub/src/sub.rs", "not rust at all\n");
+        let path = dir.path().join("app/Cargo.toml");
+        let mut app: toml::Value =
+            toml::from_str(&std::fs::read_to_string(&path).unwrap()).unwrap();
+        let deps = app["dependencies"].as_table_mut().unwrap();
+        deps.insert(
+            "badsrc".to_owned(),
+            toml::Value::try_from(serde_json::json!({ "path": "../deps/badsrc" })).unwrap(),
+        );
+        deps.insert(
+            "badsub".to_owned(),
+            toml::Value::try_from(serde_json::json!({ "path": "../deps/badsub" })).unwrap(),
+        );
+        std::fs::write(&path, toml::to_string(&app).unwrap()).unwrap();
+        let local = app_records(dir.path());
+        let targets = app_targets(dir.path());
+        let report = run(
+            dir.path(),
+            &local,
+            &targets,
+            &app_options(dir.path(), &cache, 1),
+        );
+        let failures = report.coverage.failures.join("\n");
+        assert!(
+            failures.contains("dependency source for badsrc"),
+            "{failures}"
+        );
+        assert!(failures.contains("in sub"), "{failures}");
+        assert_eq!(
+            packages(&report),
+            vec!["badsub".to_owned(), "direct".to_owned()]
+        );
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn unavailable_sources_are_reported_with_their_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let json = crafted_meta(
+            &ws,
+            &[
+                json_dep(
+                    "privreg",
+                    Some("registry+https://example.com/idx"),
+                    "*",
+                    true,
+                    None,
+                    None,
+                ),
+                json_dep(
+                    "gitdep",
+                    Some("git+https://example.com/repo"),
+                    "*",
+                    true,
+                    None,
+                    None,
+                ),
+            ],
+            &[],
+            Some(serde_json::json!({
+                "nodes": [
+                    { "id": format!("path+file://{}#0.1.0", ws.display()), "deps": [], "dependencies": [], "features": [] }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, None, 1, json);
+        let failures = report.coverage.failures.join("\n");
+        assert!(
+            failures.contains("source for privreg is unavailable offline (registry registry+https://example.com/idx)"),
+            "{failures}"
+        );
+        assert!(
+            failures.contains(
+                "source for gitdep is unavailable offline (source git+https://example.com/repo)"
+            ),
+            "{failures}"
+        );
+        assert!(report.groups.is_empty(), "{:?}", report.groups);
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn broken_path_manifests_are_reported_per_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(&ws, "ghost2/Cargo.toml", "this is not toml");
+        put(&ws, "ghost3/Cargo.toml", "[workspace]\n");
+        put(&ws, "ghost4/Cargo.toml", "[package]\nname = \"other\"\n");
+        pkg_files(
+            &ws,
+            "good",
+            &format!("pub fn good_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let json = crafted_meta(
+            &ws,
+            &[
+                json_dep(
+                    "bad1",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("ghost1").to_string_lossy()),
+                ),
+                json_dep(
+                    "bad2",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("ghost2").to_string_lossy()),
+                ),
+                json_dep(
+                    "bad3",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("ghost3").to_string_lossy()),
+                ),
+                json_dep(
+                    "bad4",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("ghost4").to_string_lossy()),
+                ),
+                json_dep(
+                    "good",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("good").to_string_lossy()),
+                ),
+                json_dep(
+                    "good2",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("good").to_string_lossy()),
+                ),
+            ],
+            &[],
+            Some(serde_json::json!({
+                "nodes": [
+                    { "id": format!("path+file://{}#0.1.0", ws.display()), "deps": [], "dependencies": [], "features": [] }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, None, 1, json);
+        let failures = report.coverage.failures.join("\n");
+        assert!(failures.contains("manifest for bad1"), "{failures}");
+        assert!(failures.contains("is unreadable"), "{failures}");
+        assert!(failures.contains("manifest for bad2"), "{failures}");
+        assert!(failures.contains("is invalid"), "{failures}");
+        assert!(failures.contains("manifest for bad3"), "{failures}");
+        assert!(failures.contains("has no package name"), "{failures}");
+        assert!(failures.contains("manifest for bad4"), "{failures}");
+        assert!(failures.contains("declares other"), "{failures}");
+        assert_eq!(packages(&report), vec!["good".to_owned()]);
+    }
+
+    fn raw_crate(name: &str, version: &str, files: &[(&str, &str)]) -> Vec<u8> {
+        let top = format!("{name}-{version}");
+        let mut bytes = Vec::new();
+        let encoder = flate2::write::GzEncoder::new(&mut bytes, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        for (file, text) in files {
+            let data = text.as_bytes();
+            let mut header = tar::Header::new_gnu();
+            header.set_size(u64::try_from(data.len()).unwrap());
+            header.set_mode(0o644);
+            header.set_cksum();
+            tar.append_data(&mut header, format!("{top}/{file}"), data)
+                .unwrap();
+        }
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+        bytes
+    }
+
+    /// Registry routes that make each lookup of the failure test fail its own way.
+    fn failing_registry_routes() -> BTreeMap<String, Vec<u8>> {
+        let lib = format!("pub fn dup_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n");
+        let mut routes = BTreeMap::new();
+        for name in [
+            "badreq", "gnover", "gpre", "gnomani", "gbadmani", "gwrong", "gcdn404", "gdup",
+        ] {
+            let body = match name {
+                "gnover" => "{}",
+                "gpre" => r#"{"versions":[{"num":"1.0.0-beta"}]}"#,
+                _ => r#"{"versions":[{"num":"1.0.0"}]}"#,
+            };
+            routes.insert(format!("/api/v1/crates/{name}"), body.as_bytes().to_vec());
+        }
+        routes.insert(
+            "/crates/gnomani/gnomani-1.0.0.crate".to_owned(),
+            raw_crate("gnomani", "1.0.0", &[("src/lib.rs", "pub fn f() {}\n")]),
+        );
+        routes.insert(
+            "/crates/gbadmani/gbadmani-1.0.0.crate".to_owned(),
+            raw_crate(
+                "gbadmani",
+                "1.0.0",
+                &[
+                    ("Cargo.toml", "not toml"),
+                    ("src/lib.rs", "pub fn f() {}\n"),
+                ],
+            ),
+        );
+        routes.insert(
+            "/crates/gwrong/gwrong-1.0.0.crate".to_owned(),
+            raw_crate(
+                "gwrong",
+                "1.0.0",
+                &[
+                    (
+                        "Cargo.toml",
+                        "[package]\nname = \"other\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+                    ),
+                    ("src/lib.rs", "pub fn f() {}\n"),
+                ],
+            ),
+        );
+        routes.insert(
+            "/crates/gdup/gdup-1.0.0.crate".to_owned(),
+            crate_archive("gdup", "1.0.0", &lib),
+        );
+        routes
+    }
+
+    #[test]
+    fn registry_lookup_failures_are_reported_per_dependency() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(
+            &ws,
+            "badspec/Cargo.toml",
+            "[package]\nname = \"badspec\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nbadreq = { version = \"^bad\" }\n",
+        );
+        put(
+            &ws,
+            "badspec/src/lib.rs",
+            "pub fn badspec_fn(value: u32) -> u32 { value + 1u32 }\n",
+        );
+        let server = HttpServer::start(failing_registry_routes());
+        let json = crafted_meta(
+            &ws,
+            &[
+                json_dep("g404", None, "*", true, None, None),
+                json_dep(
+                    "badspec",
+                    None,
+                    "*",
+                    true,
+                    None,
+                    Some(&ws.join("badspec").to_string_lossy()),
+                ),
+                json_dep("gnover", None, "*", true, None, None),
+                json_dep("gpre", None, "*", true, None, None),
+                json_dep("gnomani", None, "*", true, None, None),
+                json_dep("gbadmani", None, "*", true, None, None),
+                json_dep("gwrong", None, "*", true, None, None),
+                json_dep("gcdn404", None, "*", true, None, None),
+                json_dep("gdup", None, "1.0.0", true, None, None),
+                json_dep("gdup", None, "1.0.0", true, None, None),
+            ],
+            &[],
+            Some(serde_json::json!({
+                "nodes": [
+                    { "id": format!("path+file://{}#0.1.0", ws.display()), "deps": [], "dependencies": [], "features": [] }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, Some(&server.base), 2, json);
+        server.stop();
+        let failures = report.coverage.failures.join("\n");
+        for needle in [
+            "version of g404 could not be resolved",
+            "requirement ^bad for badreq is unparseable",
+            "version of gnover could not be resolved (no versions listed)",
+            "no stable version of gpre matches *",
+            "manifest for gnomani 1.0.0 in the downloaded source is unreadable",
+            "manifest for gbadmani 1.0.0 in the downloaded source is invalid",
+            "manifest for gwrong 1.0.0 in the downloaded source declares other",
+        ] {
+            assert!(failures.contains(needle), "{needle} missing in {failures}");
+        }
+        assert!(failures.contains("gcdn404"), "{failures}");
+        assert_eq!(packages(&report), vec!["gdup".to_owned()]);
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    #[test]
+    fn exotic_sources_resolve_or_fail_with_their_identity() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        for name in ["gsrc", "rsrc", "usrc"] {
+            pkg_files(
+                &ws,
+                name,
+                &format!("pub fn {name}_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+            );
+        }
+        let sources = [
+            ("gsrc", "git+https://example.com/repo"),
+            ("gsrc2", "git+https://example.com/repo2"),
+            ("rsrc", "registry+https://example.com/idx"),
+            ("rsrc2", "registry+https://example.com/idx2"),
+            ("usrc", "https://example.com/dep"),
+            ("usrc2", "https://example.com/dep2"),
+        ];
+        let deps: Vec<_> = sources
+            .iter()
+            .map(|(name, source)| json_dep(name, Some(source), "*", true, None, None))
+            .collect();
+        let pkgs: Vec<_> = sources
+            .iter()
+            .map(|(name, source)| json_pkg(name, "1.0.0", &ws, Some(source), "lib", &[]))
+            .collect();
+        let json = crafted_meta(
+            &ws,
+            &deps,
+            &pkgs,
+            Some(serde_json::json!({
+                "nodes": [
+                    { "id": format!("path+file://{}#0.1.0", ws.display()), "deps": [], "dependencies": [], "features": [] }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, None, 1, json);
+        let failures = report.coverage.failures.join("\n");
+        assert!(
+            failures.contains("dependency source for gsrc2 is missing"),
+            "{failures}"
+        );
+        assert!(
+            failures.contains("dependency source for rsrc2 1.0.0 is unavailable at registry https://example.com/idx2"),
+            "{failures}"
+        );
+        assert!(
+            failures.contains("dependency source for usrc2 1.0.0 is unavailable"),
+            "{failures}"
+        );
+        assert_eq!(
+            packages(&report),
+            vec!["gsrc".to_owned(), "rsrc".to_owned(), "usrc".to_owned()]
+        );
+    }
+
+    /// Local sources and published archives that differ or match for the privacy test.
+    fn privacy_fixture(ws: &Path) -> BTreeMap<String, Vec<u8>> {
+        app_files(
+            ws,
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(
+            ws,
+            "cprivdiff/Cargo.toml",
+            "[package]\nname = \"cprivdiff\"\nversion = \"1.0.0\"\nedition = \"2021\"\n",
+        );
+        put(
+            ws,
+            "cprivdiff/src/lib.rs",
+            &format!("pub mod extra;\npub fn cpriv_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(
+            ws,
+            "cprivdiff/src/extra.rs",
+            "pub fn extra_fn(value: u32) -> u32 { value + 1u32 }\n",
+        );
+        pkg_files(
+            ws,
+            "cmanidiff",
+            &format!("pub fn cmana_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        pkg_files(ws, "cnolib", "fn main() {}\n");
+        std::fs::rename(ws.join("cnolib/src/lib.rs"), ws.join("cnolib/src/main.rs")).unwrap();
+        pkg_files(
+            ws,
+            "cwarn",
+            &format!("pub fn cwarn_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        put(
+            ws,
+            "creadfail/src/lib.rs",
+            "pub fn cread_fn(value: u32) -> u32 { value + 1u32 }\n",
+        );
+        let mut routes = BTreeMap::new();
+        for (name, body) in [
+            (
+                "cprivdiff",
+                format!("pub fn cpriv_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+            ),
+            (
+                "cmanidiff",
+                format!("pub fn cmana_fn(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+            ),
+            (
+                "creadfail",
+                "pub fn cread_fn(value: u32) -> u32 { value + 1u32 }\n".to_owned(),
+            ),
+        ] {
+            routes.insert(
+                format!("/crates/{name}/{name}-1.0.0.crate"),
+                crate_archive(name, "1.0.0", &body),
+            );
+        }
+        routes
+    }
+
+    #[test]
+    fn private_and_published_bytes_decide_the_index_privacy() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        let server = HttpServer::start(privacy_fixture(&ws));
+        let kinds = [
+            ("cprivdiff", "lib"),
+            ("cmanidiff", "lib"),
+            ("cnolib", "bin"),
+            ("cwarn", "lib"),
+            ("cfail", "lib"),
+            ("creadfail", "lib"),
+        ];
+        let deps: Vec<_> = kinds
+            .iter()
+            .map(|(name, _)| json_dep(name, Some(CRATES_IO_SOURCE), "*", true, None, None))
+            .collect();
+        let pkgs: Vec<_> = kinds
+            .iter()
+            .map(|(name, kind)| json_pkg(name, "1.0.0", &ws, Some(CRATES_IO_SOURCE), kind, &[]))
+            .collect();
+        let json = crafted_meta(
+            &ws,
+            &deps,
+            &pkgs,
+            Some(serde_json::json!({
+                "nodes": [
+                    { "id": format!("path+file://{}#0.1.0", ws.display()), "deps": [], "dependencies": [], "features": [] }
+                ]
+            })),
+        );
+        let report = crafted(&ws, &cache, Some(&server.base), 1, json);
+        server.stop();
+        let warnings = report.coverage.warnings.join("\n");
+        assert!(
+            warnings.contains("cwarn remains private because its published source is unavailable"),
+            "{warnings}"
+        );
+        let failures = report.coverage.failures.join("\n");
+        assert!(failures.contains("cfail-1.0.0.crate"), "{failures}");
+        assert!(
+            failures.contains("dependency source for creadfail has an unreadable manifest"),
+            "{failures}"
+        );
+        assert_eq!(
+            packages(&report),
+            vec![
+                "cmanidiff".to_owned(),
+                "cprivdiff".to_owned(),
+                "cwarn".to_owned()
+            ]
+        );
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    /// Registry routes that make each latest-release check fail its own way.
+    fn failing_latest_routes() -> BTreeMap<String, Vec<u8>> {
+        let mut routes = BTreeMap::new();
+        routes.insert("/api/v1/crates/u0".to_owned(), b"{}".to_vec());
+        routes.insert(
+            "/api/v1/crates/u1".to_owned(),
+            br#"{"crate":{"max_stable_version":"not-a-version"}}"#.to_vec(),
+        );
+        for name in ["u2", "u3", "u4", "u5", "u6"] {
+            routes.insert(
+                format!("/api/v1/crates/{name}"),
+                br#"{"crate":{"max_stable_version":"2.0.0"}}"#.to_vec(),
+            );
+        }
+        routes.insert(
+            "/crates/u4/u4-2.0.0.crate".to_owned(),
+            raw_crate("u4", "2.0.0", &[("src/lib.rs", "pub fn f() {}\n")]),
+        );
+        routes.insert(
+            "/crates/u5/u5-2.0.0.crate".to_owned(),
+            raw_crate(
+                "u5",
+                "2.0.0",
+                &[
+                    ("Cargo.toml", "not toml"),
+                    ("src/lib.rs", "pub fn f() {}\n"),
+                ],
+            ),
+        );
+        routes.insert(
+            "/crates/u6/u6-2.0.0.crate".to_owned(),
+            raw_crate(
+                "u6",
+                "2.0.0",
+                &[
+                    (
+                        "Cargo.toml",
+                        "[package]\nname = \"u6\"\nversion = \"2.0.0\"\nedition = \"2021\"\n",
+                    ),
+                    ("src/main.rs", "fn main() {}\n"),
+                ],
+            ),
+        );
+        routes
+    }
+
+    #[test]
+    fn latest_release_failures_are_reported_per_package() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        app_files(
+            &ws,
+            "pub fn local_other(value: u32) -> u32 { value + 9u32 }\n",
+        );
+        for name in ["u0", "u1", "u2", "u3", "u4", "u5", "u6"] {
+            pkg_files(
+                &ws,
+                name,
+                &format!("pub fn {name}_fn(value: u32) -> u32 {{ value + 1u32 }}\n"),
+            );
+        }
+        let server = HttpServer::start(failing_latest_routes());
+        let packages_json: Vec<serde_json::Value> = [
+            ("u0", "1.0.0"),
+            ("u1", "1.0.0"),
+            ("u2", "2.0.0"),
+            ("u3", "1.0.0"),
+            ("u4", "1.0.0"),
+            ("u5", "1.0.0"),
+            ("u6", "1.0.0"),
+        ]
+        .iter()
+        .map(|(name, version)| json_pkg(name, version, &ws, Some(CRATES_IO_SOURCE), "lib", &[]))
+        .collect();
+        let json = crafted_meta(
+            &ws,
+            &["u0", "u1", "u2", "u3", "u4", "u5", "u6"]
+                .iter()
+                .map(|name| json_dep(name, Some(CRATES_IO_SOURCE), "*", true, None, None))
+                .collect::<Vec<_>>(),
+            &packages_json,
+            Some(serde_json::json!({
+                "nodes": [
+                    { "id": format!("path+file://{}#0.1.0", ws.display()), "deps": [], "dependencies": [], "features": [] }
+                ]
+            })),
+        );
+        let options = DependencySearch {
+            depth: Some(1),
+            all_optional: Some(true),
+            check_latest: Some(true),
+            ..DependencySearch::default()
+        };
+        let report = crafted_run(&ws, &cache, Some(&server.base), &options, json);
+        server.stop();
+        let warnings = report.coverage.warnings.join("\n");
+        assert!(
+            warnings.contains("latest release of u0 is unknown (no max_stable_version)"),
+            "{warnings}"
+        );
+        assert!(
+            warnings
+                .contains("latest release of u1 is unknown (unparseable version not-a-version)"),
+            "{warnings}"
+        );
+        assert!(
+            warnings.contains("newer version u6-2.0.0 exposes no library"),
+            "{warnings}"
+        );
+        assert!(!warnings.contains("newer version u2"), "{warnings}");
+        assert!(!warnings.contains("latest release of u2"), "{warnings}");
+        let failures = report.coverage.failures.join("\n");
+        assert!(
+            failures.contains("newer version u4-2.0.0 manifest is unreadable"),
+            "{failures}"
+        );
+        assert!(
+            failures.contains("newer version u5-2.0.0 manifest is invalid"),
+            "{failures}"
+        );
+        assert!(failures.contains("u3-2.0.0.crate"), "{failures}");
+        assert!(!report.coverage.complete, "{:?}", report.coverage);
+    }
+
+    /// A gzip tar archive with explicit entry types, `0` for regular files.
+    fn packed(entries: Vec<(u8, std::ffi::OsString, String, Vec<u8>)>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        let encoder = flate2::write::GzEncoder::new(&mut bytes, flate2::Compression::default());
+        let mut tar = tar::Builder::new(encoder);
+        tar.preserve_absolute(true);
+        for (entry_type, path, link, data) in entries {
+            let mut header = tar::Header::new_gnu();
+            header.set_size(u64::try_from(data.len()).unwrap());
+            header.set_mode(if entry_type == b'5' { 0o755 } else { 0o644 });
+            if entry_type != 0 {
+                header.set_entry_type(tar::EntryType::new(entry_type));
+                if !link.is_empty() {
+                    header.set_link_name(&link).unwrap();
+                }
+            }
+            tar.append_data(&mut header, &path, data.as_slice())
+                .unwrap();
+        }
+        let encoder = tar.into_inner().unwrap();
+        encoder.finish().unwrap();
+        bytes
+    }
+
+    /// A gzip tar of one raw header entry, for paths the builder refuses.
+    fn raw_tar_entry(path: &str, data: &[u8]) -> Vec<u8> {
+        let mut header = [0u8; 512];
+        header[..path.len()].copy_from_slice(path.as_bytes());
+        header[100..108].copy_from_slice(b"000644\0 ");
+        header[108..116].copy_from_slice(b"0000000 ");
+        header[116..124].copy_from_slice(b"0000000 ");
+        let size = format!("{:011o} ", u64::try_from(data.len()).unwrap());
+        header[124..136].copy_from_slice(size.as_bytes());
+        header[156] = b'0';
+        header[136..148].copy_from_slice(b"00000000000 ");
+        for byte in &mut header[148..156] {
+            *byte = b' ';
+        }
+        let sum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
+        header[148..154].copy_from_slice(format!("{sum:06o}").as_bytes());
+        header[155] = b' ';
+        let mut out = header.to_vec();
+        out.extend_from_slice(data);
+        while out.len() % 512 != 0 {
+            out.push(0);
+        }
+        out.extend(std::iter::repeat_n(0, 1024));
+        let mut bytes = Vec::new();
+        let mut encoder = flate2::write::GzEncoder::new(&mut bytes, flate2::Compression::default());
+        encoder.write_all(&out).unwrap();
+        encoder.finish().unwrap();
+        bytes
+    }
+
+    fn write_crate(dir: &Path, name: &str, bytes: Vec<u8>) -> std::path::PathBuf {
+        let path = dir.join(format!("{name}.crate"));
+        std::fs::write(&path, bytes).unwrap();
+        path
+    }
+
+    #[test]
+    fn extraction_rejects_unsafe_and_oversized_archives() {
+        let dir = tempfile::tempdir().unwrap();
+        let valid = packed(vec![(
+            0,
+            "top/src/lib.rs".into(),
+            String::new(),
+            b"pub fn f() {}\n".to_vec(),
+        )]);
+        let valid_path = write_crate(dir.path(), "valid", valid);
+        let error = extract_crate(&valid_path, Path::new("nv")).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
+        for (entry_type, path, link, note) in [
+            (0u8, "/etc/evil", String::new(), "absolute"),
+            (b'2', "top/link", "escape".to_owned(), "symlink"),
+            (b'1', "top/hard", "other".to_owned(), "hard link"),
+        ] {
+            let archive = packed(vec![(entry_type, path.into(), link, b"x".to_vec())]);
+            let path = write_crate(dir.path(), note, archive);
+            let error = match extract_crate(&path, &dir.path().join("out").join(note)) {
+                Ok(()) => panic!("{note} entry must be rejected"),
+                Err(error) => error,
+            };
+            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{note}");
+            assert!(
+                error.to_string().contains("unsafe entry in crate archive"),
+                "{note}"
+            );
+        }
+
+        let archive = raw_tar_entry("../evil", b"x");
+        let path = write_crate(dir.path(), "parent", archive);
+        let error = extract_crate(&path, &dir.path().join("out/parent")).unwrap_err();
+        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
+        assert!(error.to_string().contains("unsafe entry in crate archive"));
+        let blob = vec![0u8; 300_000_000];
+        let archive = packed(vec![(0, "top/blob".into(), String::new(), blob)]);
+        let path = write_crate(dir.path(), "huge", archive);
+        let error = extract_crate(&path, &dir.path().join("out/huge")).unwrap_err();
+        assert!(error.to_string().contains("exceeds the extraction limit"));
+        let entries: Vec<(u8, std::ffi::OsString, String, Vec<u8>)> = (0..65_537)
+            .map(|i| (0, format!("top/f{i}").into(), String::new(), vec![b'x']))
+            .collect();
+        let path = write_crate(dir.path(), "many", packed(entries));
+        let error = extract_crate(&path, &dir.path().join("out/many")).unwrap_err();
+        assert!(error.to_string().contains("exceeds the extraction limit"));
+        let archive = packed(vec![
+            (b'5', "top/".into(), String::new(), Vec::new()),
+            (
+                0,
+                "top/src/lib.rs".into(),
+                String::new(),
+                b"pub fn f() {}\n".to_vec(),
+            ),
+        ]);
+        let path = write_crate(dir.path(), "skipped", archive);
+        let dest = dir.path().join("out/skipped");
+        extract_crate(&path, &dest).expect("the skipped entry must not block extraction");
+        assert_eq!(
+            std::fs::read_to_string(dest.join("src/lib.rs")).unwrap(),
+            "pub fn f() {}\n"
+        );
+        for name in [".crate", "dejadoc-extract"] {
+            let archive = packed(vec![(0, name.into(), String::new(), b"x".to_vec())]);
+            let path = write_crate(dir.path(), name, archive);
+            let error = extract_crate(&path, &dir.path().join("out").join(name)).unwrap_err();
+            assert!(error.to_string().contains("no package root"), "{name}");
+        }
+        let archive = packed(vec![(0, "top".into(), String::new(), b"x".to_vec())]);
+        let path = write_crate(dir.path(), "file-top", archive);
+        let error = extract_crate(&path, &dir.path().join("out/file-top")).unwrap_err();
+        assert!(error.to_string().contains("no package root"));
+        let dest = dir.path().join("out/taken");
+        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
+        std::fs::write(&dest, "a file").unwrap();
+        assert!(extract_crate(&valid_path, &dest).is_err());
+        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "a file");
+    }
+
+    /// One indexed context record for the group unit test.
+    fn record(
+        item: &str,
+        file: &str,
+        line: u32,
+        crate_name: &str,
+        access: ContextAccess,
+    ) -> IndexedContext {
+        IndexedContext {
+            form: "F".to_owned(),
+            tokens: 50,
+            site: crate::ContextSite {
+                file: file.to_owned(),
+                line,
+                column: 1,
+                end: line + 1,
+                end_column: 2,
+                item: item.to_owned(),
+                kind: crate::ContextKind::FunctionBody,
+            },
+            module: crate_name.to_owned(),
+            crate_name: crate_name.to_owned(),
+            crate_root: "app/src/lib.rs".to_owned(),
+            access,
+            api_path: None,
+            conditions: Vec::new(),
+            extraction_notes: Vec::new(),
+        }
+    }
+
+    /// One dependency record for the group unit test.
+    fn dep_rec(
+        name: &str,
+        source: &str,
+        root: &Path,
+        file: &str,
+        line: u32,
+        access: ContextAccess,
+        latest_only: bool,
+    ) -> DepRec {
+        DepRec {
+            name: name.to_owned(),
+            version: "1.0.0".to_owned(),
+            source: source.to_owned(),
+            depth: 0,
+            root: root.to_path_buf(),
+            repository: None,
+            latest_only,
+            record: record(&format!("{name}::helper"), file, line, name, access),
+        }
+    }
+
+    #[test]
+    fn group_merges_candidates_by_action_rank() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path();
+        let anchor = record(
+            "app::anchor",
+            "app/src/lib.rs",
+            10,
+            "app",
+            ContextAccess::Embedded,
+        );
+        let recs: Vec<DepRec> = vec![
+            dep_rec(
+                "up",
+                "",
+                ws,
+                "app/src/lib.rs",
+                10,
+                ContextAccess::PublicFunction,
+                false,
+            ),
+            dep_rec(
+                "plain",
+                "",
+                ws,
+                "plain/src/lib.rs",
+                60,
+                ContextAccess::PublicFunction,
+                false,
+            ),
+            dep_rec(
+                "latest",
+                "registry+x",
+                ws,
+                "latest/src/lib.rs",
+                40,
+                ContextAccess::PublicFunction,
+                true,
+            ),
+            dep_rec(
+                "intern",
+                "",
+                ws,
+                "intern/src/lib.rs",
+                20,
+                ContextAccess::InternalFunction,
+                false,
+            ),
+            dep_rec(
+                "embed",
+                "",
+                ws,
+                "embed/src/lib.rs",
+                50,
+                ContextAccess::Embedded,
+                false,
+            ),
+            dep_rec(
+                "unres",
+                "",
+                ws,
+                "unres/src/lib.rs",
+                30,
+                ContextAccess::Unresolved,
+                false,
+            ),
+        ];
+        let mut by_form: BTreeMap<String, Vec<DepRec>> = BTreeMap::new();
+        by_form.insert("F".to_owned(), recs);
+        let anchors: Vec<&IndexedContext> = vec![&anchor, &anchor];
+        let (groups, _) = group(&anchors, &by_form, ws, 0);
+        assert_eq!(groups.len(), 1, "{groups:?}");
+        let names: Vec<String> = groups[0]
+            .candidates
+            .iter()
+            .map(|c| c.package.clone())
+            .collect();
+        assert_eq!(names, vec!["plain", "latest", "embed", "intern", "unres"]);
+        let actions: Vec<ReuseAction> = groups[0].candidates.iter().map(|c| c.action).collect();
+        assert_eq!(
+            actions,
+            vec![
+                ReuseAction::ReuseApi,
+                ReuseAction::UpgradeApi,
+                ReuseAction::RequestExtraction,
+                ReuseAction::RequestExtraction,
+                ReuseAction::Unresolved
+            ]
         );
     }
 }

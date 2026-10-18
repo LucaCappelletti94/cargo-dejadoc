@@ -55,9 +55,10 @@ pub fn extract(
         .filter(|file| scan_generated || !crate::is_generated(&file.text, generated_markers))
     {
         let path = workspace_relative(&file.path, root);
-        let Some(memberships) = layout.memberships.get(&workspace_relative(&file.path, "")) else {
-            continue;
-        };
+        let memberships = layout
+            .memberships
+            .get(&workspace_relative(&file.path, ""))
+            .expect("a layout file");
         let meta = context_meta(&file.parsed);
         let mut extractor = Extractor {
             model: &model,
@@ -167,21 +168,15 @@ impl Extractor<'_> {
                 &membership.module,
                 branch.as_deref(),
                 shadowed,
-                self.meta.get(&key_span),
+                self.meta
+                    .get(&key_span)
+                    .expect("the source walk records every emitted context"),
                 context.item,
             );
             let prefix = join_path(
                 core::iter::once(self.name).chain(membership.module.iter().map(String::as_str)),
             );
-            let item = if context.item.is_empty() {
-                prefix.clone()
-            } else {
-                join_path(
-                    [prefix.as_str()]
-                        .into_iter()
-                        .chain(context.item.split("::")),
-                )
-            };
+            let item = join_path([prefix.as_str(), context.item]);
             let module = join_path(
                 [prefix.as_str()]
                     .into_iter()
@@ -224,17 +219,9 @@ fn classify(
     membership: &[String],
     branch: Option<&str>,
     shadowed: bool,
-    meta: Option<&Meta>,
+    meta: &Meta,
     item: &str,
 ) -> (ContextAccess, Option<String>, Vec<String>, Vec<String>) {
-    let Some(meta) = meta else {
-        return (
-            ContextAccess::Unresolved,
-            None,
-            Vec::new(),
-            alloc::vec!["context metadata unmatched by the source walk".to_string()],
-        );
-    };
     let mut conditions: Vec<String> = meta.cfg.clone();
     if let Some(branch) = branch {
         conditions.push(branch.to_string());
@@ -440,12 +427,12 @@ fn item_route(model: &CrateModel, path: &str, visible: bool) -> Established {
             "module {module} is not found in the scanned source"
         ));
     }
-    if let Some(module) = model.first_unresolved_module() {
-        return Established::Unknown(format!(
-            "module {module} is not found in the scanned source"
-        ));
-    }
-    Established::Unknown("unscanned module declarations may hide a public re-export".to_string())
+    let module = model
+        .first_unresolved_module()
+        .expect("an unresolved target records an unresolved module");
+    Established::Unknown(format!(
+        "module {module} is not found in the scanned source"
+    ))
 }
 
 /// The first module of `path` missing from the model.
@@ -905,10 +892,9 @@ fn node_span(node: &impl ToTokens) -> SpanKey {
         }
         last = Some(tree.span());
     }
-    match (first, last) {
-        (Some(first), Some(last)) => span_key(first.join(last).unwrap_or_else(Span::call_site)),
-        _ => (0, 0, 0, 0),
-    }
+    let last = last.expect("a recorded node carries tokens");
+    let first = first.unwrap_or(last);
+    span_key(first.join(last).unwrap_or_else(Span::call_site))
 }
 
 /// The inline module chain, enclosing cfgs and function flavour of each emitted context.
@@ -975,16 +961,6 @@ struct Owner {
     trait_name: Option<String>,
     /// The enclosing trait's declared visibility.
     trait_vis: Vis,
-}
-
-impl Default for Owner {
-    fn default() -> Self {
-        Owner {
-            self_type: String::new(),
-            trait_name: None,
-            trait_vis: Vis::Inherited,
-        }
-    }
 }
 
 impl MetaWalk {
@@ -1075,7 +1051,7 @@ impl Visit<'_> for MetaWalk {
         };
         let depth = self.cfg.len();
         self.cfg.extend(cfgs(&f.attrs));
-        let owner = self.owner.clone().unwrap_or_default();
+        let owner = self.owner.clone().expect("an enclosing impl or trait");
         self.record(
             node_span(&f.block),
             Flavor::Method {
@@ -1101,7 +1077,7 @@ impl Visit<'_> for MetaWalk {
         };
         let depth = self.cfg.len();
         self.cfg.extend(cfgs(&f.attrs));
-        let owner = self.owner.clone().unwrap_or_default();
+        let owner = self.owner.clone().expect("an enclosing impl or trait");
         self.record(
             node_span(block),
             Flavor::TraitDefault {
@@ -1263,14 +1239,8 @@ impl CrateModel {
         let mut resolved = true;
         for file in &target.files {
             let path = workspace_relative(&file.path, "");
-            let file_decls: &[Decl] = match layout.decls.get(&path) {
-                Some(decls) => decls.as_slice(),
-                None => &[],
-            };
-            let memberships: &[Membership] = match layout.memberships.get(&path) {
-                Some(memberships) => memberships.as_slice(),
-                None => &[],
-            };
+            let file_decls = layout.decls.get(&path).expect("a drained file");
+            let memberships = layout.memberships.get(&path).expect("a layout file");
             let items = item_defs(&file.parsed);
             for membership in memberships {
                 for decl in file_decls {
@@ -2905,5 +2875,558 @@ mod tests {
             .unwrap();
         assert_eq!(main.conditions, vec!["not(cfg(unix))"]);
         assert_eq!(alt.conditions, vec!["cfg(unix)"]);
+    }
+    #[test]
+    fn a_bin_method_and_trait_default_are_not_established() {
+        let out = extract(
+            &target(
+                &[file(
+                    "src/main.rs",
+                    &[],
+                    "struct A; impl A { pub fn m(&self) -> u32 { 1u32 } } trait T { fn d(&self) -> u32 { 1u32 } }",
+                )],
+                false,
+            ),
+            "",
+            false,
+            &[],
+        );
+        let method = out.iter().find(|r| r.site.item == "app::A::m").unwrap();
+        let default = out.iter().find(|r| r.site.item == "app::T::d").unwrap();
+        for record in [method, default] {
+            assert_eq!(
+                record.access,
+                ContextAccess::Unresolved,
+                "{}",
+                record.site.item
+            );
+            assert!(
+                record
+                    .extraction_notes
+                    .iter()
+                    .any(|note| note.contains("not a library"))
+            );
+        }
+    }
+
+    #[test]
+    fn a_root_qualified_self_type_keeps_its_leading_colons_in_the_item() {
+        let out = extract(
+            &target(
+                &[file(
+                    "src/lib.rs",
+                    &[],
+                    "pub trait T { fn m(&self) -> u32; } impl T for ::core::cell::Cell<u32> { fn m(&self) -> u32 { 1u32 } }",
+                )],
+                true,
+            ),
+            "",
+            false,
+            &[],
+        );
+        let items: Vec<&str> = out.iter().map(|r| r.site.item.as_str()).collect();
+        assert!(
+            items.contains(&"app:::: core :: cell :: Cell < u32 >::m"),
+            "{items:?}"
+        );
+    }
+
+    #[test]
+    fn items_inside_a_function_body_are_nested() {
+        let out = records(
+            "struct A;\npub fn outer() -> u32 { impl A { pub fn m(&self) -> u32 { 1u32 } } 1u32 }",
+        );
+        let nested = out
+            .iter()
+            .find(|r| r.site.item == "app::outer::A::m")
+            .unwrap();
+        assert_eq!(nested.access, ContextAccess::InternalMethod);
+        assert!(
+            nested
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("nested"))
+        );
+    }
+
+    #[test]
+    fn a_trait_inside_a_function_body_is_nested() {
+        let out = records("pub fn outer() -> u32 { trait T { fn d(&self) -> u32 { 1u32 } } 1u32 }");
+        let nested = out
+            .iter()
+            .find(|r| r.site.item == "app::outer::T::d")
+            .unwrap();
+        assert_eq!(nested.access, ContextAccess::InternalMethod);
+        assert!(
+            nested
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("nested"))
+        );
+    }
+
+    #[test]
+    fn a_private_method_stays_internal() {
+        let out = records("pub struct A;\nimpl A { fn m(&self) -> u32 { 1u32 } }");
+        let record = one(&out, "app");
+        assert_eq!(record.access, ContextAccess::InternalMethod);
+        assert_eq!(record.api_path, None);
+    }
+
+    #[test]
+    fn a_trait_default_on_an_undeclared_chain_is_unresolved() {
+        let out = extract(
+            &target(
+                &[file(
+                    "src/b.rs",
+                    &["a", "b"],
+                    "pub trait T { fn d(&self) -> u32 { 1u32 } }",
+                )],
+                true,
+            ),
+            "",
+            false,
+            &[],
+        );
+        let record = one(&out, "app::a::b");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("module a is not found"))
+        );
+    }
+
+    #[test]
+    fn a_reference_receiver_is_not_established() {
+        let out = records("struct A;\nimpl &A { pub fn m(&self) -> u32 { 1u32 } }");
+        let record = one(&out, "app");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("&A"))
+        );
+    }
+
+    #[test]
+    fn a_primitive_receiver_is_public() {
+        let out = records("impl u32 { pub fn inc(&self) -> u32 { *self + 1u32 } }");
+        let record = one(&out, "app");
+        assert_eq!(record.access, ContextAccess::PublicMethod);
+        assert_eq!(record.api_path.as_deref(), Some("app::u32::inc"));
+    }
+
+    #[test]
+    fn a_type_shadowed_by_a_glob_import_is_unresolved() {
+        let out = records(
+            "pub struct Pack;\nmod inner { use super::*; impl Pack { pub fn m(&self) -> u32 { 1u32 } } }",
+        );
+        let record = one(&out, "app::inner");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("shadowed by a glob import"))
+        );
+    }
+
+    #[test]
+    fn a_receiver_aliased_to_a_module_is_unresolved() {
+        let out = records(
+            "mod inner { pub struct Pack; }\nmod m { use crate::inner as Pack; impl Pack { pub fn m(&self) -> u32 { 1u32 } } }",
+        );
+        let record = one(&out, "app::m");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("outside the scanned source"))
+        );
+    }
+
+    #[test]
+    fn a_receiver_bound_to_an_unresolvable_path_is_unresolved() {
+        let out =
+            records("mod m { use nope::Pack; impl Pack { pub fn m(&self) -> u32 { 1u32 } } }");
+        let record = one(&out, "app::m");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("unresolvable path"))
+        );
+    }
+
+    #[test]
+    fn an_undeclared_receiver_is_not_defined() {
+        let out = records("mod m { impl Ghost { pub fn m(&self) -> u32 { 1u32 } } }");
+        let record = one(&out, "app::m");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("not defined in the scanned source"))
+        );
+    }
+
+    #[test]
+    fn a_terminating_redirect_cycle_yields_no_reexport() {
+        let out = records(
+            "mod x { pub struct T; }\nmod deep { pub fn helper(x: u32) -> u32 { x + 1u32 } }\npub mod api { use crate::x::T as P; pub use crate::api::b as a; pub use crate::api::a as b; pub use P::c; }",
+        );
+        let record = one(&out, "app::deep");
+        assert_eq!(record.access, ContextAccess::InternalFunction);
+        assert_eq!(record.api_path, None);
+    }
+
+    #[test]
+    fn a_route_through_an_ancestor_binding_follows_the_target_module() {
+        let files = vec![file(
+            "src/lib.rs",
+            &[],
+            "mod store { pub fn helper(x: u32) -> u32 { x + 1u32 } pub fn other(x: u32) -> u32 { x + 2u32 } }\nuse crate::store as P;\npub mod n { pub use P::helper; pub use Q::missing; }",
+        )];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let helper = out
+            .iter()
+            .find(|r| r.site.item == "app::store::helper")
+            .unwrap();
+        let other = out
+            .iter()
+            .find(|r| r.site.item == "app::store::other")
+            .unwrap();
+        assert_eq!(helper.access, ContextAccess::PublicFunction);
+        assert_eq!(helper.api_path.as_deref(), Some("app::n::helper"));
+        assert_eq!(other.access, ContextAccess::InternalFunction);
+        assert_eq!(other.api_path, None);
+    }
+
+    #[test]
+    fn a_receiver_follows_a_rebound_alias_to_the_original_type() {
+        let out = records(
+            "pub struct Box;\nuse crate::Box as B;\nmod n { use B as C; impl C { pub fn pack(&self) -> u32 { 1u32 } } }",
+        );
+        let record = one(&out, "app::n");
+        assert_eq!(record.access, ContextAccess::PublicMethod);
+        assert_eq!(record.api_path.as_deref(), Some("app::Box::pack"));
+    }
+
+    #[test]
+    fn a_super_qualified_reexport_at_the_root_is_unresolvable() {
+        let out = records(
+            "mod inner { pub fn helper(x: u32) -> u32 { x + 1u32 } }\npub use super::inner::helper;",
+        );
+        let record = one(&out, "app::inner");
+        assert_eq!(record.access, ContextAccess::InternalFunction);
+        assert_eq!(record.api_path, None);
+    }
+
+    #[test]
+    fn a_reexport_rest_stops_at_an_undeclared_module() {
+        let files = vec![
+            file("src/lib.rs", &[], "pub mod a;\npub use a::name as leaf;"),
+            file("src/a.rs", &["a"], ""),
+            file(
+                "src/a/name/sub.rs",
+                &["a", "name", "sub"],
+                "pub fn helper(x: u32) -> u32 { x + 1u32 }",
+            ),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let record = one(&out, "app::a::name::sub");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("module a::name is not found"))
+        );
+    }
+
+    #[test]
+    fn a_dot_prefixed_root_file_is_normalized() {
+        let files = vec![
+            file(
+                "./lib.rs",
+                &[],
+                "pub mod m;\npub fn helper(x: u32) -> u32 { x + 1u32 }",
+            ),
+            file("m.rs", &["m"], "pub fn other(x: u32) -> u32 { x + 2u32 }"),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let helper = out.iter().find(|r| r.site.item == "app::helper").unwrap();
+        let other = out.iter().find(|r| r.site.item == "app::m::other").unwrap();
+        assert_eq!(helper.site.file, "lib.rs");
+        assert_eq!(helper.crate_root, "lib.rs");
+        assert_eq!(helper.api_path.as_deref(), Some("app::helper"));
+        assert_eq!(other.site.file, "m.rs");
+        assert_eq!(other.api_path.as_deref(), Some("app::m::other"));
+    }
+
+    #[test]
+    fn an_unclaimed_file_without_an_extension_keeps_its_context() {
+        let out = extract(
+            &target(
+                &[file(
+                    "m",
+                    &["m"],
+                    "pub fn helper(x: u32) -> u32 { x + 1u32 }",
+                )],
+                true,
+            ),
+            "",
+            false,
+            &[],
+        );
+        let record = one(&out, "app::m");
+        assert_eq!(record.site.file, "m");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("module m is not found"))
+        );
+    }
+
+    #[test]
+    fn an_unclaimed_mod_rs_file_keeps_its_context() {
+        let out = extract(
+            &target(
+                &[file(
+                    "src/m/mod.rs",
+                    &["m"],
+                    "pub fn helper(x: u32) -> u32 { x + 1u32 }",
+                )],
+                true,
+            ),
+            "",
+            false,
+            &[],
+        );
+        let record = one(&out, "app::m");
+        assert_eq!(record.site.file, "src/m/mod.rs");
+        assert_eq!(record.access, ContextAccess::Unresolved);
+        assert!(
+            record
+                .extraction_notes
+                .iter()
+                .any(|note| note.contains("module m is not found"))
+        );
+    }
+
+    #[test]
+    fn an_inline_module_with_a_path_claim_links_its_children() {
+        let files = vec![
+            file(
+                "lib.rs",
+                &[],
+                "#[path = \"m\"]\npub mod m { #[path = \"m/x.rs\"] pub mod child; }",
+            ),
+            file(
+                "m/m/x.rs",
+                &["m", "child"],
+                "pub fn helper(x: u32) -> u32 { x + 1u32 }",
+            ),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let record = one(&out, "app::m::child");
+        assert_eq!(record.site.file, "m/m/x.rs");
+        assert_eq!(record.api_path.as_deref(), Some("app::m::child::helper"));
+    }
+
+    #[test]
+    fn a_path_claim_without_an_extension_resolves() {
+        let files = vec![
+            file("lib.rs", &[], "#[path = \"m\"]\npub mod m;"),
+            file("m", &["m"], "pub fn helper(x: u32) -> u32 { x + 1u32 }"),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let record = one(&out, "app::m");
+        assert_eq!(record.site.file, "m");
+        assert_eq!(record.api_path.as_deref(), Some("app::m::helper"));
+    }
+
+    #[test]
+    fn a_rooted_path_claim_keeps_its_absolute_form() {
+        assert_eq!(lexical_join("src", "/abs/m.rs"), "/abs/m.rs");
+        assert_eq!(lexical_join("src", "../up/m.rs"), "up/m.rs");
+    }
+
+    #[test]
+    fn a_branch_onto_the_implicit_file_clears_the_module_conditions() {
+        let files = vec![
+            file(
+                "src/lib.rs",
+                &[],
+                "#[cfg_attr(unix, path = \"m.rs\")]\npub mod m;",
+            ),
+            file(
+                "src/m.rs",
+                &["m"],
+                "pub fn helper(x: u32) -> u32 { x + 1u32 }",
+            ),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let record = one(&out, "app::m");
+        assert_eq!(record.site.file, "src/m.rs");
+        assert_eq!(record.access, ContextAccess::PublicFunction);
+        assert_eq!(record.api_path.as_deref(), Some("app::m::helper"));
+        assert_eq!(record.conditions, Vec::<String>::new());
+    }
+
+    #[test]
+    fn malformed_module_attributes_do_not_block_the_implicit_claim() {
+        let files = vec![
+            file(
+                "lib.rs",
+                &[],
+                "#[doc = \"x\"]\npub mod a;\n#[cfg_attr(=)]\npub mod b;\n#[cfg_attr()]\npub mod c;",
+            ),
+            file("a.rs", &["a"], "pub fn helper(x: u32) -> u32 { x + 1u32 }"),
+            file("b.rs", &["b"], "pub fn helper(x: u32) -> u32 { x + 1u32 }"),
+            file("c.rs", &["c"], "pub fn helper(x: u32) -> u32 { x + 1u32 }"),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        for module in ["app::a", "app::b", "app::c"] {
+            let record = one(&out, module);
+            assert_eq!(record.access, ContextAccess::PublicFunction, "{module}");
+            assert_eq!(
+                record.api_path.as_deref(),
+                Some(format!("{module}::helper").as_str())
+            );
+        }
+    }
+
+    #[test]
+    fn nested_cfg_attr_noise_is_skipped_around_the_path() {
+        let files = vec![
+            file(
+                "lib.rs",
+                &[],
+                "#[cfg_attr(unix, doc = \"x\", cfg(target_os = \"linux\"), cfg_attr(=), cfg_attr(), path = \"alt.rs\")]\npub mod m;",
+            ),
+            file("m.rs", &["m"], "pub fn helper(x: u32) -> u32 { x + 1u32 }"),
+            file(
+                "alt.rs",
+                &["m"],
+                "pub fn helper(x: u32) -> u32 { x + 2u32 }",
+            ),
+        ];
+        let out = extract(&target(&files, true), "", false, &[]);
+        let default = out
+            .iter()
+            .find(|r| r.site.file == "m.rs" && r.module == "app::m")
+            .unwrap();
+        let branch = out
+            .iter()
+            .find(|r| r.site.file == "alt.rs" && r.module == "app::m")
+            .unwrap();
+        assert_eq!(default.conditions, ["not(cfg(unix))"]);
+        assert_eq!(branch.conditions, ["cfg(unix)"]);
+    }
+
+    #[test]
+    fn module_scope_items_define_types_and_walk_expression_bodies() {
+        let out = records(
+            "const PICK: fn(u32) -> u32 = |x| x;\n\
+             const IF: u32 = if true { 1u32 } else { 2u32 };\n\
+             const FOR: u32 = for x in 0..1u32 { x };\n\
+             const WHILE: u32 = while false { 1u32 };\n\
+             const LOOP: u32 = loop { 1u32 };\n\
+             const UNSAFE: u32 = unsafe { 1u32 };\n\
+             const ASYNC: u32 = async { 1u32 };\n\
+             const TRY: u32 = try { 1u32 };\n\
+             const CONST: u32 = const { 1u32 };\n\
+             const MATCH: u32 = match 0u32 { _ => 1u32 };\n\
+             pub enum E { V }\n\
+             impl E { pub fn on(&self) -> u32 { 1u32 } }\n\
+             pub union U { x: u32 }\n\
+             impl U { pub fn on(&self) -> u32 { 1u32 } }\n\
+             pub type Num = u32;\n\
+             impl Num { pub fn inc(&self) -> u32 { *self + 1u32 } }",
+        );
+        let on_e = out.iter().find(|r| r.site.item == "app::E::on").unwrap();
+        let on_u = out.iter().find(|r| r.site.item == "app::U::on").unwrap();
+        let inc = out.iter().find(|r| r.site.item == "app::Num::inc").unwrap();
+        assert_eq!(on_e.access, ContextAccess::PublicMethod);
+        assert_eq!(on_e.api_path.as_deref(), Some("app::E::on"));
+        assert_eq!(on_u.access, ContextAccess::PublicMethod);
+        assert_eq!(on_u.api_path.as_deref(), Some("app::U::on"));
+        assert_eq!(inc.access, ContextAccess::PublicMethod);
+        assert_eq!(inc.api_path.as_deref(), Some("app::Num::inc"));
+        assert!(
+            out.iter()
+                .any(|r| r.site.item == "app::IF" && r.access == ContextAccess::Embedded)
+        );
+    }
+
+    #[test]
+    fn loop_bodies_are_embedded_contexts() {
+        let out = records(
+            "pub fn spin() -> u32 { let mut n = 0u32; while n < 1u32 { n += 1u32; } loop { n += 1u32; if n >= 3u32 { break; } } n }",
+        );
+        let embedded = out
+            .iter()
+            .filter(|r| r.access == ContextAccess::Embedded)
+            .count();
+        assert_eq!(embedded, 3);
+        let spin = out.iter().find(|r| r.site.item == "app::spin").unwrap();
+        assert_eq!(spin.access, ContextAccess::PublicFunction);
+    }
+
+    #[test]
+    fn special_block_expressions_are_embedded_contexts() {
+        let out = records(
+            "pub fn outer() -> u32 { let u = unsafe { 1u32 }; let a = async { 1u32 }; let t = try { 1u32 }; let c = const { 1u32 }; drop((a, t)); u + c }",
+        );
+        let embedded = out
+            .iter()
+            .filter(|r| r.access == ContextAccess::Embedded)
+            .count();
+        assert_eq!(embedded, 4);
+        assert!(out.iter().all(|r| r.module == "app"));
+    }
+
+    #[test]
+    fn non_function_impl_and_trait_items_are_walked_without_contexts() {
+        let out = records(
+            "#[cfg(unix)]\nstatic C: u32 = 0u32;\npub struct A;\nimpl A { const V: u32 = 1u32; type T = u32; }\ntrait S { type Item; fn bare(&self) -> u32; }\npub fn helper(x: u32) -> u32 { x + 1u32 }",
+        );
+        let helper = out.iter().find(|r| r.site.item == "app::helper").unwrap();
+        assert_eq!(helper.access, ContextAccess::PublicFunction);
+        assert_eq!(helper.conditions, Vec::<String>::new());
+        assert_eq!(out.len(), 1);
+    }
+
+    #[test]
+    fn a_use_group_reexports_every_name() {
+        let out = records(
+            "mod inner { pub fn helper(x: u32) -> u32 { x + 1u32 } pub fn other(x: u32) -> u32 { x + 2u32 } }\npub use inner::{helper, other};",
+        );
+        let helper = out
+            .iter()
+            .find(|r| r.site.item == "app::inner::helper")
+            .unwrap();
+        let other = out
+            .iter()
+            .find(|r| r.site.item == "app::inner::other")
+            .unwrap();
+        assert_eq!(helper.api_path.as_deref(), Some("app::helper"));
+        assert_eq!(other.api_path.as_deref(), Some("app::other"));
+    }
+
+    #[test]
+    fn the_lookup_helper_reports_the_missing_module() {
+        let out = records("pub fn helper(x: u32) -> u32 { x + 1u32 }");
+        let result = std::panic::catch_unwind(|| one(&out, "app::missing"));
+        assert!(result.is_err(), "the lookup of a missing module must fail");
     }
 }

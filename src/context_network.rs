@@ -127,7 +127,6 @@ fn send(url: &str, deadline: Duration, id: &str) -> Result<Response<Body>, Strin
     request.call().map_err(|err| {
         let cause = match &err {
             Error::Timeout(_) => "deadline exceeded".to_string(),
-            Error::StatusCode(code) => format!("HTTP {code}"),
             _ => format!("{err}"),
         };
         fail(id, url, &cause)
@@ -248,7 +247,7 @@ pub(crate) mod tests {
     use alloc::format;
     use alloc::sync::Arc;
     use core::sync::atomic::AtomicBool;
-    use std::io;
+    use std::io::{self, Write};
     use std::net::{SocketAddr, TcpListener, TcpStream};
     use std::sync::Mutex;
     use std::thread::{self, JoinHandle};
@@ -692,5 +691,87 @@ pub(crate) mod tests {
             "https://api.github.com.evil.com/repos/o/r"
         ));
         assert!(!is_github_api_https("not-a-url"));
+    }
+    #[test]
+    fn send_discloses_a_transport_failure() {
+        let port = {
+            let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let url = format!("http://127.0.0.1:{port}/raw/none");
+        let err = get_raw(&url, READ_LIMIT, Duration::from_secs(5)).unwrap_err();
+        assert!(err.starts_with("djd.net."), "{err}");
+        assert!(err.contains(&url), "{err}");
+        assert!(!err.contains("deadline exceeded"), "{err}");
+    }
+
+    #[test]
+    fn download_discloses_a_rename_failure() {
+        let fixture = Fixture::start();
+        fixture.fill_route("/raw/rename", 200, 4096);
+        let dir = tempfile::tempdir().unwrap();
+        let destination = dir.path().join("dep.crate");
+        std::fs::create_dir_all(&destination).unwrap();
+        let err = download(&format!("{}/rename", fixture.raw_base()), &destination).unwrap_err();
+        assert!(err.contains("rename"), "{err}");
+        assert!(destination.is_dir());
+        assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 1);
+    }
+
+    #[test]
+    fn download_removes_the_part_on_a_prepare_failure() {
+        use std::os::unix::fs::PermissionsExt;
+        let fixture = Fixture::start();
+        fixture.fill_route("/raw/locked", 200, 4096);
+        let dir = tempfile::tempdir().unwrap();
+        let parent = dir.path().join("locked");
+        std::fs::create_dir_all(&parent).unwrap();
+        let original = std::fs::metadata(&parent).unwrap().permissions().mode();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(0o555)).unwrap();
+        let destination = parent.join("dep.crate");
+        let err = download(&format!("{}/locked", fixture.raw_base()), &destination).unwrap_err();
+        std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(original)).unwrap();
+        assert!(err.contains("prepare"), "{err}");
+        assert!(!destination.exists());
+        assert_eq!(std::fs::read_dir(&parent).unwrap().count(), 0);
+    }
+
+    #[test]
+    fn json_discloses_a_429_status() {
+        let fixture = Fixture::start();
+        fixture.route("/api/slow", 429, b"{}");
+        let err = json(&format!("{}/slow", fixture.api_base())).unwrap_err();
+        assert!(err.contains("HTTP 429"), "{err}");
+    }
+
+    #[test]
+    fn fixture_drops_an_oversized_head_and_records_headers() {
+        let fixture = Fixture::start();
+        let mut stream = TcpStream::connect(fixture.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        let mut head = String::from("GET /big HTTP/1.1\r\nhost: fixture\r\nx-big: ");
+        head.push_str(&"a".repeat(70_000));
+        head.push_str("\r\n\r\n");
+        stream.write_all(head.as_bytes()).unwrap();
+        let mut got = Vec::new();
+        let _ = stream.read_to_end(&mut got);
+        assert!(got.is_empty(), "{got:?}");
+        assert_eq!(fixture.hits("/big"), 0);
+        let mut stream = TcpStream::connect(fixture.addr).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(10)))
+            .unwrap();
+        stream
+            .write_all(
+                b"GET /authed HTTP/1.1\r\nhost: fixture\r\nauthorization: Bearer tok\r\n\r\n",
+            )
+            .unwrap();
+        let mut got = Vec::new();
+        stream.read_to_end(&mut got).unwrap();
+        let text = String::from_utf8(got).unwrap();
+        assert!(text.starts_with("HTTP/1.1 404"), "{text}");
+        assert_eq!(fixture.last_auth("/authed").as_deref(), Some("Bearer tok"));
     }
 }

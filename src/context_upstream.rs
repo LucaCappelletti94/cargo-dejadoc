@@ -369,9 +369,7 @@ impl Upstream {
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default();
         map.insert(Self::provenance_key(package), sha);
-        let Ok(text) = serde_json::to_string(&map) else {
-            return;
-        };
+        let text = serde_json::to_string(&map).expect("a string map always serializes");
         if let Some(parent) = path.parent() {
             let _ = fs::create_dir_all(parent);
         }
@@ -881,6 +879,10 @@ mod tests {
             None
         );
         assert_eq!(normalize_github_repository("github.com/o/repo"), None);
+        assert_eq!(
+            normalize_github_repository("https://[::1]:443/o/repo"),
+            None
+        );
     }
 
     #[test]
@@ -1996,5 +1998,453 @@ mod tests {
         );
         assert!(warnings.iter().any(|w| w.contains("is empty")));
         assert_eq!(fixture.hits(&format!("/raw/o/repo/{SHA}/{FILE}")), 0);
+    }
+    #[test]
+    fn enrich_missing_commit_requires_a_version_tag() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route("/api/repos/o/repo/git/ref/tags/v1.2.3", 404, b"");
+        fixture.route("/api/repos/o/repo/git/ref/tags/1.2.3", 404, b"");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        let c = &candidates[0];
+        assert!(c.source_url.is_none());
+        assert!(c.issue_url.is_none());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no verified upstream commit")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_discloses_a_source_transport_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let dead_port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let dead_base = format!("http://127.0.0.1:{dead_port}");
+        let mut up = Upstream::with_base(&cache, "http://127.0.0.1:1", &dead_base);
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut up, &package, &mut candidates);
+        let c = &candidates[0];
+        assert!(c.source_url.is_none());
+        assert!(
+            c.lookup_warning
+                .as_deref()
+                .unwrap_or_default()
+                .contains(&format!("upstream source {FILE} at {SHA}")),
+            "{:?}",
+            c.lookup_warning
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("djd.net.")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_missing_source_at_commit_withholds_link() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(&format!("/raw/o/repo/{SHA}/{FILE}"), 404, b"");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(candidates[0].source_url.is_none());
+        assert!(
+            warnings.iter().any(|w| w.contains("is not at commit")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_memoizes_unavailable_lookups() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let dead_port = {
+            let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            listener.local_addr().unwrap().port()
+        };
+        let api_base = format!("http://127.0.0.1:{dead_port}");
+        let fixture = Fixture::start();
+        fixture.route(&format!("/raw/o/repo/{SHA}/{FILE}"), 200, BODY.as_bytes());
+        let mut up = Upstream::with_base(&cache, &api_base, &fixture.raw_base());
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![
+            candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9),
+            candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9),
+        ];
+        let warnings = enrich_owned(&mut up, &package, &mut candidates);
+        for c in &candidates {
+            assert!(
+                c.lookup_warning
+                    .as_deref()
+                    .unwrap_or_default()
+                    .contains("issue lookup unavailable"),
+                "{:?}",
+                c.lookup_warning
+            );
+        }
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        assert!(
+            warnings.iter().any(|w| w.contains("djd.net.")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_unavailable_search_http_status() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(&format!("/raw/o/repo/{SHA}/{FILE}"), 200, BODY.as_bytes());
+        fixture.route("/api/search/issues", 500, b"{}");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        let warning = candidates[0].lookup_warning.as_deref().unwrap_or_default();
+        assert!(
+            warning.contains("issue lookup unavailable HTTP 500"),
+            "{warning}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("HTTP 500")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_unavailable_search_invalid_json() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(&format!("/raw/o/repo/{SHA}/{FILE}"), 200, BODY.as_bytes());
+        fixture.route("/api/search/issues", 200, b"not json");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        let warning = candidates[0].lookup_warning.as_deref().unwrap_or_default();
+        assert!(
+            warning.contains("issue lookup unavailable invalid JSON"),
+            "{warning}"
+        );
+        assert!(
+            warnings.iter().any(|w| w.contains("invalid JSON")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_search_skips_items_missing_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(&format!("/raw/o/repo/{SHA}/{FILE}"), 200, BODY.as_bytes());
+        let p = permalink(SHA);
+        let no_title = serde_json::json!({
+            "number": 1,
+            "state": "open",
+            "body": format!("please extract {p}"),
+            "html_url": "https://github.com/o/repo/issues/1",
+        });
+        let no_body = serde_json::json!({
+            "number": 2,
+            "state": "open",
+            "title": TITLE,
+        });
+        let no_url = serde_json::json!({
+            "number": 3,
+            "state": "open",
+            "title": TITLE,
+            "body": format!("please extract {p}"),
+        });
+        fixture.route(
+            "/api/search/issues",
+            200,
+            search_json(&[no_title, no_body, no_url])
+                .to_string()
+                .as_bytes(),
+        );
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        let c = &candidates[0];
+        assert!(c.existing_issue.is_none());
+        assert!(c.issue_url.is_some());
+    }
+
+    #[test]
+    fn enrich_search_page_cap_discloses_truncation() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(&format!("/raw/o/repo/{SHA}/{FILE}"), 200, BODY.as_bytes());
+        let page: Vec<serde_json::Value> = (0u64..100)
+            .map(|n| issue_item(n, "open", "unrelated tagged request", TITLE))
+            .collect();
+        let pages: Vec<(u16, Vec<u8>)> = (0u16..10)
+            .map(|_| (200, search_json(&page).to_string().into_bytes()))
+            .collect();
+        fixture.page_route("/api/search/issues", pages);
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        let c = &candidates[0];
+        assert!(c.existing_issue.is_none());
+        assert!(c.issue_url.is_some());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("issue search was incomplete")),
+            "{warnings:?}"
+        );
+        assert_eq!(fixture.hits("/api/search/issues"), 10);
+    }
+
+    #[test]
+    fn enrich_provenance_write_failure_is_best_effort() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        std::fs::create_dir_all(&cache).unwrap();
+        std::fs::write(cache.join("private"), "blocked").unwrap();
+        let fixture = Fixture::start();
+        verified_fixture(&fixture);
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            candidates[0].source_url.as_deref(),
+            Some(permalink(SHA).as_str())
+        );
+        assert!(!cache.join("private/upstream").exists());
+    }
+
+    #[test]
+    fn enrich_provenance_rename_failure_removes_the_part() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info(&root, SHA);
+        let cache = dir.path().join("cache");
+        let provenance_dir = cache.join("private/upstream");
+        std::fs::create_dir_all(&provenance_dir).unwrap();
+        std::fs::create_dir_all(provenance_dir.join("provenance.json")).unwrap();
+        let fixture = Fixture::start();
+        verified_fixture(&fixture);
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(warnings.is_empty(), "{warnings:?}");
+        assert_eq!(
+            candidates[0].source_url.as_deref(),
+            Some(permalink(SHA).as_str())
+        );
+        let entries: Vec<String> = std::fs::read_dir(&provenance_dir)
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(entries, vec!["provenance.json".to_string()], "{entries:?}");
+    }
+
+    #[test]
+    fn enrich_tag_object_endpoint_failure_withholds_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(
+            "/api/repos/o/repo/git/ref/tags/v1.2.3",
+            200,
+            serde_json::json!({"object": {"type": "tag", "sha": TAG_OBJECT}})
+                .to_string()
+                .as_bytes(),
+        );
+        fixture.route(
+            format!("/api/repos/o/repo/git/tags/{TAG_OBJECT}").as_str(),
+            500,
+            b"{}",
+        );
+        fixture.route("/api/repos/o/repo/git/ref/tags/1.2.3", 404, b"");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(candidates[0].source_url.is_none());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no verified upstream commit")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_tag_object_type_withholds_commit() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(
+            "/api/repos/o/repo/git/ref/tags/v1.2.3",
+            200,
+            serde_json::json!({"object": {"type": "blob", "sha": TAG_OBJECT}})
+                .to_string()
+                .as_bytes(),
+        );
+        fixture.route("/api/repos/o/repo/git/ref/tags/1.2.3", 404, b"");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(candidates[0].source_url.is_none());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("no verified upstream commit")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn enrich_git_checkout_without_origin_discloses_the_gap() {
+        let dir = tempfile::tempdir().unwrap();
+        let checkout = dir.path().join("checkout");
+        let root = checkout.join("crates").join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        let git_dir = checkout.join(".git");
+        std::fs::create_dir_all(&git_dir).unwrap();
+        std::fs::write(git_dir.join("config"), "[core]\n\trepo = true\n").unwrap();
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        let source = format!("git+https://github.com/o/repo?branch=main#{PIN}");
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            &source,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert!(candidates[0].source_url.is_none());
+        assert!(
+            warnings
+                .iter()
+                .any(|w| w.contains("has no recorded origin")),
+            "{warnings:?}"
+        );
+    }
+
+    #[test]
+    fn percent_decode_maps_a_plus_to_a_space() {
+        assert_eq!(percent_decode("a%2Bb+c%20d"), "a+b c d");
     }
 }

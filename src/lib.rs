@@ -2151,4 +2151,61 @@ mod tests {
             .unwrap();
         assert_eq!(report.total, 1);
     }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn context_dependency_depth_sets_the_search_depth() {
+        let scan = Dejadoc::default().context_dependency_depth(3);
+        assert_eq!(scan.context_dependencies.depth, Some(3));
+        let scan = Dejadoc::default()
+            .context_dependencies(DependencySearch {
+                check_latest: Some(false),
+                ..DependencySearch::default()
+            })
+            .context_dependency_depth(2);
+        assert_eq!(scan.context_dependencies.depth, Some(2));
+        assert_eq!(scan.context_dependencies.check_latest, Some(false));
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn context_target_requested_applies_scope_and_package() {
+        let target = discover::Target {
+            name: "mycrate".into(),
+            package: "mycrate".into(),
+            src: std::path::PathBuf::from("src/lib.rs"),
+            doc: true,
+            library: true,
+        };
+        let requested = |scan: Dejadoc| scan.context_target_requested(&target, "root");
+        assert!(requested(Dejadoc::default()));
+        assert!(requested(Dejadoc::default().package("mycrate")));
+        assert!(!requested(Dejadoc::default().package("other")));
+        assert!(requested(
+            Dejadoc::default().context_select(ContextScope::Workspace)
+        ));
+        assert!(requested(
+            Dejadoc::default()
+                .context_select(ContextScope::Crate("other".into()))
+                .context_search(ContextScope::File("src/lib.rs".into()))
+        ));
+    }
+
+    #[test]
+    #[cfg(feature = "std")]
+    fn run_targets_reports_dependency_discovery_as_incomplete() {
+        let target = target_from("mycrate", "src\\lib.rs", &[], "fn one() {}\n");
+        let report =
+            Dejadoc::default()
+                .context_dependency_depth(1)
+                .run_targets("", &[target], &|_f, _i| None);
+        assert!(report.reuse.is_some());
+        let reuse = report.reuse.as_ref().unwrap();
+        assert!(!reuse.coverage.complete);
+        assert_eq!(
+            reuse.coverage.failures,
+            ["Dependency discovery requires Dejadoc::run"]
+        );
+        assert_eq!(reuse.groups, Vec::new());
+    }
 }

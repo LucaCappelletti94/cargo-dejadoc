@@ -343,9 +343,7 @@ fn mirrored_dep_path(
 /// Re-declare every target of a member from the discovery run, and disable
 /// auto-discovery, so the mirror needs no source files.
 fn redeclare_targets(value: &mut toml::Value, member: &MemberInfo) {
-    let Some(table) = value.as_table_mut() else {
-        return;
-    };
+    let table = value.as_table_mut().expect("a manifest root is a table");
     table.remove("lib");
     for key in ["bin", "bench", "test", "example"] {
         table.remove(key);
@@ -561,5 +559,402 @@ fn remap_id_str(s: &str, temp: &str, original: &str) -> String {
             }
         }
         None => s.to_owned(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloc::vec;
+    use std::fs;
+
+    fn put(root: &Path, rel: &str, text: &str) {
+        let path = root.join(rel);
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, text).unwrap();
+    }
+
+    fn read(path: &Path) -> String {
+        fs::read_to_string(path).unwrap()
+    }
+
+    fn member(manifest: PathBuf) -> MemberInfo {
+        MemberInfo {
+            manifest,
+            targets: Vec::new(),
+        }
+    }
+
+    fn temp_root(workspace: &ManifestWorkspace) -> String {
+        workspace.remap().0
+    }
+
+    fn create_ok(root: &Path, m: &[MemberInfo]) -> ManifestWorkspace {
+        ManifestWorkspace::create(root, m).unwrap_or_else(|e| panic!("create the mirror: {e}"))
+    }
+
+    fn create_broken(root: &Path, m: &[MemberInfo]) -> std::io::Error {
+        ManifestWorkspace::create(root, m)
+            .err()
+            .unwrap_or_else(|| panic!("the manifest must fail"))
+    }
+
+    #[test]
+    fn create_rejects_a_broken_root_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[package\nname = \"broken\"");
+        let err = create_broken(dir.path(), &[]);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        let message = format!("{err}");
+        assert!(message.contains("manifest mirror"), "{message}");
+        assert!(message.contains("parse"), "{message}");
+    }
+
+    #[test]
+    fn create_rejects_a_broken_member_manifest() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(dir.path(), "m/Cargo.toml", "[workspace\n");
+        let members = vec![member(dir.path().join("m/Cargo.toml"))];
+        let err = create_broken(dir.path(), &members);
+        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+    }
+
+    #[test]
+    fn create_skips_the_root_when_it_is_its_own_member() {
+        let dir = tempfile::tempdir().unwrap();
+        put(
+            dir.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers = [\".\"]\n\n[package]\nname = \"root\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let members = vec![member(dir.path().join("Cargo.toml"))];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror = read(
+            Path::new(temp_root(&workspace).as_str())
+                .join("Cargo.toml")
+                .as_path(),
+        );
+        assert!(mirror.contains("name = \"root\""), "{mirror}");
+    }
+
+    #[test]
+    fn create_mirrors_a_member_outside_the_root() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = []\n");
+        let outside = tempfile::tempdir().unwrap();
+        put(
+            outside.path(),
+            "Cargo.toml",
+            "[package]\nname = \"out\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let members = vec![member(outside.path().join("Cargo.toml"))];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror_dir =
+            Path::new(temp_root(&workspace).as_str()).join(outside.path().file_name().unwrap());
+        let mirror = read(mirror_dir.join("Cargo.toml").as_path());
+        assert!(mirror.contains("name = \"out\""), "{mirror}");
+    }
+
+    #[test]
+    fn create_repoints_a_member_workspace_pointer() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(
+            dir.path(),
+            "m/Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2024\"\nworkspace = \"..\"\n",
+        );
+        let members = vec![member(dir.path().join("m/Cargo.toml"))];
+        let workspace = create_ok(dir.path(), &members);
+        let temp_root = temp_root(&workspace);
+        let mirror = read(Path::new(temp_root.as_str()).join("m/Cargo.toml").as_path());
+        assert!(
+            mirror.contains(&format!("workspace = \"{temp_root}\"")),
+            "{mirror}"
+        );
+    }
+
+    #[test]
+    fn create_remakes_target_scoped_and_odd_target_tables() {
+        let dir = tempfile::tempdir().unwrap();
+        put(
+            dir.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        );
+        put(
+            dir.path(),
+            "a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[target.'cfg(unix)'.dependencies]\nb = { path = \"../b\" }\n",
+        );
+        put(
+            dir.path(),
+            "b/Cargo.toml",
+            "[target]\nodd = 1\n\n[package]\nname = \"b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let members = vec![
+            member(dir.path().join("a/Cargo.toml")),
+            member(dir.path().join("b/Cargo.toml")),
+        ];
+        let workspace = create_ok(dir.path(), &members);
+        let temp_root = temp_root(&workspace);
+        let mirror = read(Path::new(temp_root.as_str()).join("a/Cargo.toml").as_path());
+        let mirror_b = read(Path::new(temp_root.as_str()).join("b/Cargo.toml").as_path());
+        assert!(
+            mirror.contains(&format!("path = \"{temp_root}/b\"")),
+            "{mirror}"
+        );
+        assert!(mirror_b.contains("odd = 1"), "{mirror_b}");
+    }
+
+    #[test]
+    fn create_remakes_patch_and_replace_path_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        put(
+            dir.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"a\", \"b\"]\n",
+        );
+        put(
+            dir.path(),
+            "a/Cargo.toml",
+            "[package]\nname = \"a\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nb = { path = \"../b\" }\n[patch.crates-io]\nb = { path = \"../b\" }\nstray = 1\n[replace.foo]\nb = { git = \"https://example.test/b\" }\n",
+        );
+        put(
+            dir.path(),
+            "b/Cargo.toml",
+            "[package]\nname = \"b\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[replace]\nodd = 2\n",
+        );
+        let members = vec![
+            member(dir.path().join("a/Cargo.toml")),
+            member(dir.path().join("b/Cargo.toml")),
+        ];
+        let workspace = create_ok(dir.path(), &members);
+        let temp_root = temp_root(&workspace);
+        let mirror = read(Path::new(temp_root.as_str()).join("a/Cargo.toml").as_path());
+        let mirror_b = read(Path::new(temp_root.as_str()).join("b/Cargo.toml").as_path());
+        assert!(
+            mirror.contains(&format!("path = \"{temp_root}/b\"")),
+            "{mirror}"
+        );
+        assert!(mirror.contains("stray = 1"), "{mirror}");
+        assert!(
+            mirror.contains("git = \"https://example.test/b\""),
+            "{mirror}"
+        );
+        assert!(mirror_b.contains("odd = 2"), "{mirror_b}");
+    }
+
+    #[test]
+    fn create_keeps_version_and_git_dependencies_bare() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(
+            dir.path(),
+            "m/Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2024\"\n[dependencies]\nserde = \"1\"\nextra = { git = \"https://example.test/extra\" }\n",
+        );
+        let members = vec![member(dir.path().join("m/Cargo.toml"))];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror = read(
+            Path::new(temp_root(&workspace).as_str())
+                .join("m/Cargo.toml")
+                .as_path(),
+        );
+        assert!(mirror.contains("serde = \"1\""), "{mirror}");
+        assert!(
+            mirror.contains("git = \"https://example.test/extra\""),
+            "{mirror}"
+        );
+    }
+
+    #[test]
+    fn create_declares_the_build_target_from_discovery() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(
+            dir.path(),
+            "m/Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let src = dir.path().join("m/build.rs");
+        fs::write(&src, "// build\n").unwrap();
+        let members = vec![MemberInfo {
+            manifest: dir.path().join("m/Cargo.toml"),
+            targets: vec![TargetInfo {
+                name: "build".into(),
+                kind: vec!["custom-build".into()],
+                crate_types: Vec::new(),
+                src_path: src.clone(),
+                edition: None,
+                required_features: Vec::new(),
+            }],
+        }];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror = read(
+            Path::new(temp_root(&workspace).as_str())
+                .join("m/Cargo.toml")
+                .as_path(),
+        );
+        assert!(
+            mirror.contains(&format!("build = \"{}\"", src.display())),
+            "{mirror}"
+        );
+    }
+
+    #[test]
+    fn create_declares_proc_macro_and_crate_type_targets() {
+        let dir = tempfile::tempdir().unwrap();
+        put(
+            dir.path(),
+            "Cargo.toml",
+            "[workspace]\nmembers = [\"p\", \"c\"]\n",
+        );
+        put(
+            dir.path(),
+            "p/Cargo.toml",
+            "[package]\nname = \"p\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        put(
+            dir.path(),
+            "c/Cargo.toml",
+            "[package]\nname = \"c\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let members = vec![
+            MemberInfo {
+                manifest: dir.path().join("p/Cargo.toml"),
+                targets: vec![TargetInfo {
+                    name: "p".into(),
+                    kind: vec!["proc-macro".into()],
+                    crate_types: Vec::new(),
+                    src_path: dir.path().join("p/src/lib.rs"),
+                    edition: None,
+                    required_features: Vec::new(),
+                }],
+            },
+            MemberInfo {
+                manifest: dir.path().join("c/Cargo.toml"),
+                targets: vec![TargetInfo {
+                    name: "c".into(),
+                    kind: vec!["lib".into()],
+                    crate_types: vec!["lib".into(), "cdylib".into()],
+                    src_path: dir.path().join("c/src/lib.rs"),
+                    edition: None,
+                    required_features: Vec::new(),
+                }],
+            },
+        ];
+        let workspace = create_ok(dir.path(), &members);
+        let temp_root = temp_root(&workspace);
+        let mirror = read(Path::new(temp_root.as_str()).join("p/Cargo.toml").as_path());
+        assert!(mirror.contains("proc-macro = true"), "{mirror}");
+        let mirror = read(Path::new(temp_root.as_str()).join("c/Cargo.toml").as_path());
+        assert!(
+            mirror.contains("crate-type = [\"lib\", \"cdylib\"]"),
+            "{mirror}"
+        );
+    }
+
+    #[test]
+    fn create_skips_an_unrecognized_target_kind() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(
+            dir.path(),
+            "m/Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let members = vec![MemberInfo {
+            manifest: dir.path().join("m/Cargo.toml"),
+            targets: vec![TargetInfo {
+                name: "weird".into(),
+                kind: vec!["weird".into()],
+                crate_types: Vec::new(),
+                src_path: dir.path().join("m/weird.rs"),
+                edition: None,
+                required_features: Vec::new(),
+            }],
+        }];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror = read(
+            Path::new(temp_root(&workspace).as_str())
+                .join("m/Cargo.toml")
+                .as_path(),
+        );
+        assert!(!mirror.contains("[lib]"), "{mirror}");
+    }
+
+    #[test]
+    fn create_appends_a_second_bin_with_required_features() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(
+            dir.path(),
+            "m/Cargo.toml",
+            "[package]\nname = \"m\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        let members = vec![MemberInfo {
+            manifest: dir.path().join("m/Cargo.toml"),
+            targets: vec![
+                TargetInfo {
+                    name: "one".into(),
+                    kind: vec!["bin".into()],
+                    crate_types: vec!["bin".into()],
+                    src_path: dir.path().join("m/src/bin/one.rs"),
+                    edition: None,
+                    required_features: Vec::new(),
+                },
+                TargetInfo {
+                    name: "two".into(),
+                    kind: vec!["bin".into()],
+                    crate_types: vec!["bin".into()],
+                    src_path: dir.path().join("m/src/bin/two.rs"),
+                    edition: None,
+                    required_features: vec!["f1".into()],
+                },
+            ],
+        }];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror = read(
+            Path::new(temp_root(&workspace).as_str())
+                .join("m/Cargo.toml")
+                .as_path(),
+        );
+        assert_eq!(mirror.matches("[[bin]]").count(), 2, "{mirror}");
+        assert!(mirror.contains("required-features = [\"f1\"]"), "{mirror}");
+    }
+
+    #[test]
+    fn create_keeps_a_member_without_a_package_table() {
+        let dir = tempfile::tempdir().unwrap();
+        put(dir.path(), "Cargo.toml", "[workspace]\nmembers = [\"m\"]\n");
+        put(dir.path(), "m/Cargo.toml", "[workspace]\nmembers = []\n");
+        let members = vec![member(dir.path().join("m/Cargo.toml"))];
+        let workspace = create_ok(dir.path(), &members);
+        let mirror = read(
+            Path::new(temp_root(&workspace).as_str())
+                .join("m/Cargo.toml")
+                .as_path(),
+        );
+        assert!(mirror.contains("[workspace]"), "{mirror}");
+        assert!(!mirror.contains("autobins"), "{mirror}");
+    }
+
+    #[test]
+    fn remap_value_keeps_unknown_and_sparse_documents() {
+        let sparse = serde_json::json!({"workspace_members": [123]});
+        assert_eq!(remap_value(sparse.clone(), "/tmp/a", "/orig"), sparse);
+        let nodes = serde_json::json!({
+            "packages": [{"name": "x"}],
+            "resolve": {"nodes": [{"id": "path+dep"}]}
+        });
+        assert_eq!(remap_value(nodes.clone(), "/tmp/a", "/orig"), nodes);
+    }
+
+    #[test]
+    fn remap_value_keeps_a_non_boundary_id_occurrence() {
+        let value = serde_json::json!({"workspace_members": ["path+file:///tmp/ab/dep#sha"]});
+        assert_eq!(remap_value(value.clone(), "/tmp/a", "/orig"), value);
     }
 }

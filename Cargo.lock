@@ -237,6 +237,7 @@ dependencies = [
  "proc-macro2",
  "pulldown-cmark",
  "quote",
+ "rustix",
  "semver",
  "serde",
  "serde_json",

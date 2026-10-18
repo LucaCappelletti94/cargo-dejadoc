@@ -1,7 +1,6 @@
 //! Persistent dependency indexes partitioned by source privacy.
 
 use crate::context_index::IndexedContext;
-use alloc::borrow::ToOwned;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::{String, ToString};
@@ -142,9 +141,7 @@ fn main() {
 
 /// A fingerprint of canonicalization output and the crate version.
 pub(crate) fn canonicalization_fingerprint() -> String {
-    let Ok(file) = syn::parse_file(SENTINEL) else {
-        return env!("CARGO_PKG_VERSION").to_owned();
-    };
+    let file = syn::parse_file(SENTINEL).expect("the sentinel source parses");
     let tokens = syn_canon::canonicalize(file).to_string();
     format!(
         "{}:{}",
@@ -156,6 +153,7 @@ pub(crate) fn canonicalization_fingerprint() -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use alloc::borrow::ToOwned;
 
     fn records(n: usize) -> Vec<IndexedContext> {
         (0..n)
@@ -285,5 +283,43 @@ mod tests {
             }
             other => panic!("expected a stored entry, got {other:?}"),
         }
+    }
+    #[test]
+    fn a_directory_where_the_entry_lives_reports_io() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = Store::open(dir.path()).unwrap();
+        std::fs::create_dir_all(dir.path().join("public/crates.io/alpha.json")).unwrap();
+        assert!(matches!(
+            store.load("public/crates.io", "alpha"),
+            Load::Io(err) if matches!(err.kind(), std::io::ErrorKind::IsADirectory)
+        ));
+    }
+
+    #[test]
+    fn the_sentinel_source_parses() {
+        assert!(syn::parse_file(SENTINEL).is_ok());
+    }
+
+    #[test]
+    fn default_root_honors_the_xdg_cache_home() {
+        if std::env::var_os("DEJADOC_COV_XDG_PROBE").is_some() {
+            let home = std::env::var_os("XDG_CACHE_HOME").expect("the probe run sets the variable");
+            assert_eq!(Store::default_root(), PathBuf::from(home).join("dejadoc"));
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let output =
+            std::process::Command::new(std::env::current_exe().expect("the test binary path"))
+                .env("DEJADOC_COV_XDG_PROBE", "1")
+                .env("XDG_CACHE_HOME", dir.path())
+                .arg("context_cache::tests::default_root_honors_the_xdg_cache_home")
+                .arg("--exact")
+                .output()
+                .expect("the test binary runs itself");
+        assert!(
+            output.status.success(),
+            "the probe run failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
     }
 }
