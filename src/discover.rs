@@ -101,7 +101,11 @@ fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool 
 }
 
 pub(crate) struct ModuleTree {
+    /// Every discovered file, the alternatives included.
     pub(crate) files: Vec<crate::SourceFile>,
+    /// Paths of files reached only through a module path the build does not prefer, such as
+    /// a second `cfg_attr(..., path = ...)` branch.
+    pub(crate) alternatives: BTreeSet<String>,
     pub(crate) failures: Vec<ModuleFailure>,
 }
 
@@ -113,16 +117,18 @@ pub(crate) struct ModuleFailure {
 
 /// Parse available module files and retain discovery failures.
 pub(crate) fn module_tree(target: &Target, boundary: Option<&std::path::Path>) -> ModuleTree {
-    let mut out = Vec::new();
-    let mut failures = Vec::new();
-    let mut visited = BTreeSet::new();
-    let mut off = alloc::collections::VecDeque::new();
+    let mut tree = ModuleTree {
+        files: Vec::new(),
+        alternatives: BTreeSet::new(),
+        failures: Vec::new(),
+    };
     let root = Child {
         path: target.src.clone(),
         segments: Vec::new(),
         cfg: Vec::new(),
         mod_rs: true,
         rustdoc: target.doc,
+        alternative: false,
     };
     let boundary = match boundary.map(std::fs::canonicalize).transpose() {
         Ok(boundary) => boundary,
@@ -130,129 +136,134 @@ pub(crate) fn module_tree(target: &Target, boundary: Option<&std::path::Path>) -
             record_failure(
                 &root,
                 format!("cannot establish source boundary ({error})"),
-                &mut failures,
+                &mut tree.failures,
             );
-            return ModuleTree {
-                files: out,
-                failures,
-            };
+            return tree;
         }
     };
-    collect(
-        root,
-        boundary.as_deref(),
-        &mut out,
-        &mut visited,
-        &mut off,
-        &mut failures,
-    );
-    // A file declared on both sides of a `cfg` must reach rustdoc first.
-    while let Some(child) = off.pop_front() {
-        collect(
-            child,
-            boundary.as_deref(),
-            &mut out,
-            &mut visited,
-            &mut off,
-            &mut failures,
-        );
+    let mut walk = Walk {
+        boundary: boundary.as_deref(),
+        tree: &mut tree,
+        visited: BTreeSet::new(),
+        off: alloc::collections::VecDeque::new(),
+        alternates: alloc::collections::VecDeque::new(),
+    };
+    walk.collect(root);
+    // A file declared on both sides of a `cfg` must reach rustdoc first, and a preferred
+    // module path before any alternative branch.
+    while let Some(child) = walk.off.pop_front().or_else(|| walk.alternates.pop_front()) {
+        walk.collect(child);
     }
-    ModuleTree {
-        files: out,
-        failures,
-    }
+    tree
 }
 
-/// Collect `file` and the children rustdoc reaches, queueing the others in `off`.
-fn collect(
-    file: Child,
-    boundary: Option<&std::path::Path>,
-    out: &mut Vec<crate::SourceFile>,
-    visited: &mut BTreeSet<PathBuf>,
-    off: &mut alloc::collections::VecDeque<Child>,
-    failures: &mut Vec<ModuleFailure>,
-) {
-    let canonical = match std::fs::canonicalize(&file.path) {
-        Ok(canonical) => canonical,
-        Err(err) => {
+/// One module-tree traversal.
+struct Walk<'a> {
+    boundary: Option<&'a std::path::Path>,
+    tree: &'a mut ModuleTree,
+    visited: BTreeSet<PathBuf>,
+    /// Preferred module files rustdoc does not reach.
+    off: alloc::collections::VecDeque<Child>,
+    /// Files of module paths the build does not prefer.
+    alternates: alloc::collections::VecDeque<Child>,
+}
+
+impl Walk<'_> {
+    /// Collect `file` and the children rustdoc reaches, queueing the others.
+    fn collect(&mut self, file: Child) {
+        let failures = &mut self.tree.failures;
+        let canonical = match std::fs::canonicalize(&file.path) {
+            Ok(canonical) => canonical,
+            Err(err) => {
+                record_failure(
+                    &file,
+                    format!("cannot read {} ({err})", file.path.display()),
+                    failures,
+                );
+                return;
+            }
+        };
+        if self
+            .boundary
+            .is_some_and(|root| !canonical.starts_with(root))
+        {
             record_failure(
                 &file,
-                format!("cannot read {} ({err})", file.path.display()),
+                format!(
+                    "module source escapes the artifact boundary ({})",
+                    file.path.display()
+                ),
                 failures,
             );
             return;
         }
-    };
-    if boundary.is_some_and(|root| !canonical.starts_with(root)) {
-        record_failure(
-            &file,
-            format!(
-                "module source escapes the artifact boundary ({})",
-                file.path.display()
-            ),
+        if !self.visited.insert(canonical) {
+            return;
+        }
+        let text = match std::fs::read_to_string(&file.path) {
+            Ok(text) => text,
+            Err(err) => {
+                record_failure(
+                    &file,
+                    format!("cannot read {} ({err})", file.path.display()),
+                    failures,
+                );
+                return;
+            }
+        };
+        let parsed = match syn::parse_file(&text) {
+            Ok(parsed) => parsed,
+            Err(err) => {
+                record_failure(
+                    &file,
+                    format!("cannot parse {} ({err})", file.path.display()),
+                    failures,
+                );
+                return;
+            }
+        };
+        let dir = file
+            .path
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."));
+        let base = match file.path.file_stem() {
+            Some(stem) if !file.mod_rs => dir.join(stem),
+            _ => dir.to_path_buf(),
+        };
+        let mut children = Vec::new();
+        mod_decls(
+            &parsed.items,
+            dir,
+            &base,
+            &Declaring {
+                segments: &file.segments,
+                cfg: &file.cfg,
+                rustdoc: file.rustdoc,
+                alternative: file.alternative,
+            },
+            &mut children,
             failures,
         );
-        return;
-    }
-    if !visited.insert(canonical) {
-        return;
-    }
-    let text = match std::fs::read_to_string(&file.path) {
-        Ok(text) => text,
-        Err(err) => {
-            record_failure(
-                &file,
-                format!("cannot read {} ({err})", file.path.display()),
-                failures,
-            );
-            return;
+        let path = file.path.to_string_lossy().into_owned();
+        if file.alternative {
+            self.tree.alternatives.insert(path.clone());
         }
-    };
-    let parsed = match syn::parse_file(&text) {
-        Ok(parsed) => parsed,
-        Err(err) => {
-            record_failure(
-                &file,
-                format!("cannot parse {} ({err})", file.path.display()),
-                failures,
-            );
-            return;
-        }
-    };
-    let dir = file
-        .path
-        .parent()
-        .unwrap_or_else(|| std::path::Path::new("."));
-    let base = match file.path.file_stem() {
-        Some(stem) if !file.mod_rs => dir.join(stem),
-        _ => dir.to_path_buf(),
-    };
-    let mut children = Vec::new();
-    mod_decls(
-        &parsed.items,
-        dir,
-        &base,
-        &Declaring {
-            segments: &file.segments,
-            cfg: &file.cfg,
+        self.tree.files.push(crate::SourceFile {
+            path,
+            segments: file.segments,
+            cfg: file.cfg,
+            parsed,
+            text,
             rustdoc: file.rustdoc,
-        },
-        &mut children,
-        failures,
-    );
-    out.push(crate::SourceFile {
-        path: file.path.to_string_lossy().into_owned(),
-        segments: file.segments,
-        cfg: file.cfg,
-        parsed,
-        text,
-        rustdoc: file.rustdoc,
-    });
-    for child in children {
-        if child.rustdoc {
-            collect(child, boundary, out, visited, off, failures);
-        } else {
-            off.push_back(child);
+        });
+        for child in children {
+            if child.alternative {
+                self.alternates.push_back(child);
+            } else if child.rustdoc {
+                self.collect(child);
+            } else {
+                self.off.push_back(child);
+            }
         }
     }
 }
@@ -266,11 +277,13 @@ fn record_failure(file: &Child, message: String, failures: &mut Vec<ModuleFailur
     });
 }
 
-/// The module path, `cfg` attributes and rustdoc visibility a list of items inherits.
+/// The module path, `cfg` attributes, rustdoc visibility and branch preference a list of items
+/// inherits.
 struct Declaring<'a> {
     segments: &'a [String],
     cfg: &'a [String],
     rustdoc: bool,
+    alternative: bool,
 }
 
 /// The `mod name;` files at every nesting depth, `dir` resolving `#[path]` and `base` the
@@ -316,6 +329,7 @@ fn mod_decls(
                         segments: &segments,
                         cfg: &cfg,
                         rustdoc: rustdoc && inner == preferred,
+                        alternative: declaring.alternative || inner != preferred,
                     },
                     out,
                     failures,
@@ -341,6 +355,7 @@ fn mod_decls(
         segments.push(moditem.ident.to_string());
         for (path, mod_rs) in paths {
             let required = rustdoc && path == preferred.0;
+            let alternative = declaring.alternative || path != preferred.0;
             if path.exists() {
                 out.push(Child {
                     path,
@@ -348,6 +363,7 @@ fn mod_decls(
                     cfg: cfg.clone(),
                     mod_rs,
                     rustdoc: required,
+                    alternative,
                 });
             } else if required {
                 record_failure(
@@ -357,6 +373,7 @@ fn mod_decls(
                         cfg: cfg.clone(),
                         mod_rs,
                         rustdoc: required,
+                        alternative,
                     },
                     format!("missing module file {}", path.display()),
                     failures,
@@ -375,6 +392,8 @@ struct Child {
     /// A crate root, `mod.rs` or `#[path]` file, whose children sit beside it.
     mod_rs: bool,
     rustdoc: bool,
+    /// Reached only through a module path the build does not prefer.
+    alternative: bool,
 }
 
 /// The first module path whose expanded attribute applies.

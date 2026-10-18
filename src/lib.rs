@@ -256,9 +256,12 @@ impl Dejadoc {
             }
         };
         let mut targets = Vec::new();
+        let mut context_targets = Vec::new();
         let mut legacy_roots = BTreeSet::new();
         let mut discovery_failures = Vec::new();
         let expand_contexts = scan.context_select.is_some() || scan.context_search.is_some();
+        // Conditional module branches feed only the context scope and dependency features.
+        let keep_alternatives = expand_contexts || scan.context_dependencies.depth.unwrap_or(0) > 0;
         for target in workspace.targets.iter().filter(|target| {
             expand_contexts
                 || scan
@@ -284,16 +287,35 @@ impl Dejadoc {
                         .map(|failure| failure.message),
                 );
             }
+            let (preferred, every) = split_alternatives(
+                discovered.files,
+                &discovered.alternatives,
+                keep_alternatives,
+            );
+            if let Some(files) = every {
+                context_targets.push(TargetScan {
+                    name: target.name.clone(),
+                    files,
+                    library: target.library,
+                });
+            }
             targets.push(TargetScan {
                 name: target.name.clone(),
-                files: discovered.files,
+                files: preferred,
                 library: target.library,
             });
         }
         let mut report = scan.scan(
             &root_str,
             &targets,
-            Some(&legacy_roots),
+            Some(&Discovered {
+                legacy_roots: &legacy_roots,
+                context_targets: if keep_alternatives {
+                    &context_targets
+                } else {
+                    &targets
+                },
+            }),
             true,
             &read,
             group_here,
@@ -318,26 +340,26 @@ impl Dejadoc {
         &self,
         root: &str,
         targets: &[TargetScan],
-        legacy_roots: Option<&BTreeSet<String>>,
+        discovered: Option<&Discovered<'_>>,
         discover_dependencies: bool,
         read: &IncludeRead<'_>,
         group_doctests: fn(&[DocTest], usize, usize) -> Report,
     ) -> Report {
-        let all_targets = targets;
+        let all_targets = discovered.map_or(targets, |discovered| discovered.context_targets);
         let targets: Vec<&TargetScan> = targets
             .iter()
             .filter(|target| {
-                legacy_roots.map_or_else(
+                discovered.map_or_else(
                     || {
                         self.package
                             .as_deref()
                             .is_none_or(|name| name == target.name)
                     },
-                    |roots| {
+                    |discovered| {
                         target
                             .files
                             .first()
-                            .is_some_and(|file| roots.contains(&file.path))
+                            .is_some_and(|file| discovered.legacy_roots.contains(&file.path))
                     },
                 )
             })
@@ -524,6 +546,15 @@ impl Dejadoc {
         #[cfg(not(feature = "std"))]
         let _ = discover_dependencies;
     }
+}
+
+/// Targets workspace discovery prepared, the preferred files for every check and the context
+/// scope corpus.
+struct Discovered<'a> {
+    /// Root files of the targets the doctest, function and default context checks scan.
+    legacy_roots: &'a BTreeSet<String>,
+    /// Targets carrying every conditional module branch, for the context index.
+    context_targets: &'a [TargetScan],
 }
 
 /// One resolved target.
@@ -822,6 +853,30 @@ pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report 
     }
     #[cfg(not(feature = "std"))]
     group_here(blocks, threshold, min_tokens)
+}
+
+/// The files of preferred module paths, plus every file when `keep` asks for the conditional
+/// branches too.
+#[cfg(feature = "std")]
+fn split_alternatives(
+    files: Vec<SourceFile>,
+    alternatives: &BTreeSet<String>,
+    keep: bool,
+) -> (Vec<SourceFile>, Option<Vec<SourceFile>>) {
+    if keep {
+        let preferred = files
+            .iter()
+            .filter(|file| !alternatives.contains(&file.path))
+            .cloned()
+            .collect();
+        (preferred, Some(files))
+    } else {
+        let preferred = files
+            .into_iter()
+            .filter(|file| !alternatives.contains(&file.path))
+            .collect();
+        (preferred, None)
+    }
 }
 
 /// `f` on a thread with `stack` reserved, or on the calling thread when the

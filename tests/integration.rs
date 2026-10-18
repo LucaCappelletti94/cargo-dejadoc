@@ -162,6 +162,34 @@ fn copies_selected_by_module_declarations_merge_their_cfgs() {
 }
 
 #[test]
+fn conditional_module_paths_reach_only_the_context_scope_corpus() {
+    let alternative = |report: &Report| {
+        report
+            .groups
+            .iter()
+            .flat_map(|g| g.sites.iter().map(|s| s.file.as_str()))
+            .chain(
+                report
+                    .context_groups
+                    .iter()
+                    .flat_map(|g| g.sites.iter().map(|s| s.file.as_str())),
+            )
+            .any(|file| file.contains("width.rs"))
+    };
+    let default = Dejadoc::default()
+        .functions()
+        .context_blocks()
+        .run("tests/fixtures/modcfgws")
+        .unwrap();
+    assert!(!alternative(&default), "{:?}", default.groups);
+    let scoped = Dejadoc::default()
+        .context_select(dejadoc::ContextScope::Workspace)
+        .run("tests/fixtures/modcfgws")
+        .unwrap();
+    assert!(alternative(&scoped), "{:?}", scoped.context_groups);
+}
+
+#[test]
 fn shared_group_spans_crates_and_variants() {
     let report = scan();
     assert_eq!(report.total, 9);
