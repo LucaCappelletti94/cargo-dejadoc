@@ -193,7 +193,8 @@ struct Discovery {
     registry: Registry,
     index_fingerprint: String,
     coverage: DependencyCoverage,
-    effective_target: Option<String>,
+    /// The targets discovery resolves for, empty when none could be established.
+    effective_targets: Vec<String>,
     /// rustc cfg predicates per target triple, lazily acquired.
     cfgs: BTreeMap<String, Vec<Cfg>>,
     /// Latest published version per package, when the check succeeded.
@@ -257,19 +258,17 @@ impl Discovery {
         let Some(platform) = &dep.target else {
             return true;
         };
-        let Some(target) = &self.effective_target else {
+        if self.effective_targets.is_empty() {
             return true;
-        };
-        match platform {
-            Platform::Name(name) => name == target,
-            Platform::Cfg(expr) => {
-                let target = target.clone();
-                match self.cfgs_for(&target) {
-                    Some(cfgs) => expr.matches(cfgs),
-                    None => false,
-                }
-            }
         }
+        let platform = platform.clone();
+        self.effective_targets
+            .clone()
+            .iter()
+            .any(|target| match &platform {
+                Platform::Name(name) => name == target,
+                Platform::Cfg(expr) => self.cfgs_for(target).is_some_and(|cfgs| expr.matches(cfgs)),
+            })
     }
 }
 
@@ -318,17 +317,17 @@ pub(crate) fn analyze(
         store_root,
         registry: Registry::default(),
         coverage: DependencyCoverage::default(),
-        effective_target: None,
+        effective_targets: Vec::new(),
         cfgs: BTreeMap::new(),
         latest_known: BTreeMap::new(),
     };
-    d.effective_target = establish_target(root, d.eff.target.as_deref());
-    if d.effective_target.is_none() {
+    d.effective_targets = establish_targets(root, d.eff.target.as_deref());
+    if d.effective_targets.is_empty() {
         d.fail(
             "dependency discovery: could not establish the effective target, platform filtering skipped",
         );
     }
-    let (metadata, targeted) = match run_metadata(root, &d.eff, d.effective_target.as_deref()) {
+    let (metadata, targeted) = match run_metadata(root, &d.eff, &d.effective_targets) {
         Ok(value) => value,
         Err(err) => {
             d.fail(&format!("dependency discovery: {err}"));
@@ -785,7 +784,7 @@ impl Discovery {
     /// A crates.io dependency not in the resolved graph, resolved to the newest
     /// stable version that matches the requirement.
     fn discover_registry(&mut self, dep: &ManifestDep) -> Option<String> {
-        let url = format!("{}/crates/{}", self.registry.api, dep.name);
+        let url = format!("{}/{}", self.registry.api, dep.name);
         let value = match crate::context_network::json(&url) {
             Ok(value) => value,
             Err(err) => {
@@ -1226,32 +1225,20 @@ fn same_sources(
     })
 }
 
-/// The effective target for discovery, explicit option first, then the Cargo
-/// build target, then the rustc host.
-fn establish_target(root: &Path, explicit: Option<&str>) -> Option<String> {
+/// The effective targets for discovery, the explicit option first, then every Cargo
+/// `build.target`, then the rustc host.
+fn establish_targets(root: &Path, explicit: Option<&str>) -> Vec<String> {
     if let Some(target) = explicit {
-        return Some(target.to_owned());
+        return vec![target.to_owned()];
     }
-    let id = next_proc_id();
-    let args = vec![
-        "config".to_owned(),
-        "get".to_owned(),
-        "--output-format".to_owned(),
-        "json".to_owned(),
-        "build.target".to_owned(),
-    ];
-    if let Ok(out) = run_bounded("cargo", &args, Some(root), FAST_PROCESS_DEADLINE, &id)
-        && out.status.success()
-    {
-        let Ok(value) = serde_json::from_slice::<serde_json::Value>(&out.stdout) else {
-            return host_target();
-        };
-        let Some(target) = value.as_str().filter(|target| !target.is_empty()) else {
-            return host_target();
-        };
-        return Some(target.to_owned());
+    let configured = cargo_config2::Config::load_with_cwd(root)
+        .and_then(|config| config.build_target_for_cli(core::iter::empty::<&str>()))
+        .unwrap_or_default();
+    if configured.is_empty() {
+        host_target().into_iter().collect()
+    } else {
+        configured
     }
-    host_target()
 }
 
 /// The rustc host triple, the fallback effective target.
@@ -1272,7 +1259,7 @@ fn host_target() -> Option<String> {
 fn run_metadata(
     root: &Path,
     eff: &Effective,
-    target: Option<&str>,
+    targets: &[String],
 ) -> Result<(Metadata, BTreeMap<String, Vec<ManifestDep>>), String> {
     let members = discover_members(root)?;
     let workspace = crate::context_manifest::ManifestWorkspace::create(root, &members)
@@ -1294,9 +1281,9 @@ fn run_metadata(
         args.push("--features".to_owned());
         args.push(eff.features.join(","));
     }
-    if let Some(target) = target {
+    for target in targets {
         args.push("--filter-platform".to_owned());
-        args.push(target.to_owned());
+        args.push(target.clone());
     }
     // The working directory stays at the original root, so the original cargo
     // config and rustup toolchain are honored.
@@ -2606,6 +2593,29 @@ mod tests {
     }
 
     #[test]
+    fn the_configured_build_targets_select_target_specific_edges() {
+        let dir = tempfile::tempdir().unwrap();
+        let cache = dir.path().join("index");
+        fixture(dir.path());
+        put(
+            dir.path(),
+            ".cargo/config.toml",
+            "[build]\ntarget = [\"x86_64-unknown-linux-gnu\", \"x86_64-pc-windows-gnu\"]\n",
+        );
+        let local = app_records(dir.path());
+        let targets = app_targets(dir.path());
+        let report = run(
+            dir.path(),
+            &local,
+            &targets,
+            &app_options(dir.path(), &cache, 1),
+        );
+        let names = packages(&report);
+        assert!(names.iter().any(|name| name == "winonly"), "{names:?}");
+        assert!(report.coverage.complete, "{:?}", report.coverage.failures);
+    }
+
+    #[test]
     fn cross_member_candidates_keep_other_crate_only() {
         let dir = tempfile::tempdir().unwrap();
         let cache = dir.path().join("index");
@@ -3023,7 +3033,7 @@ mod tests {
                 cdn: format!("{base}/crates"),
             },
             coverage: DependencyCoverage::default(),
-            effective_target: None,
+            effective_targets: Vec::new(),
             cfgs: BTreeMap::new(),
             latest_known: BTreeMap::new(),
         };
@@ -3278,6 +3288,81 @@ mod tests {
         assert!(
             index.is_file(),
             "the resolved index must land in the public cache"
+        );
+    }
+
+    #[test]
+    fn an_unresolved_optional_registry_dependency_is_fetched_from_the_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let ws = dir.path().join("ws");
+        let cache = dir.path().join("index");
+        put(
+            &ws,
+            "app/Cargo.toml",
+            "[package]\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2024\"\n",
+        );
+        put(
+            &ws,
+            "app/src/lib.rs",
+            &format!("pub fn local_match(value: u32) -> u32 {{ {MATCHING_BODY} }}\n"),
+        );
+        let mut metadata: serde_json::Value =
+            serde_json::from_str(&registry_workspace_json(&ws)).unwrap();
+        metadata["packages"][0]["dependencies"][0]["optional"] = serde_json::json!(true);
+        metadata["packages"].as_array_mut().unwrap().truncate(1);
+        metadata["resolve"]["nodes"] = serde_json::json!([{
+            "id": "path+file:///ws/app#0.1.0",
+            "deps": [],
+            "dependencies": [],
+            "features": []
+        }]);
+        let mut routes = BTreeMap::new();
+        routes.insert(
+            "/api/v1/crates/upstream".to_owned(),
+            br#"{"crate":{"max_stable_version":"1.0.0"},"versions":[{"num":"1.0.0"}]}"#.to_vec(),
+        );
+        routes.insert(
+            "/crates/upstream/upstream-1.0.0.crate".to_owned(),
+            crate_archive("upstream", "1.0.0", RESOLVED_LIB),
+        );
+        let server = HttpServer::start(routes);
+        let local = local_records(&ws, "app", &[("app/src/lib.rs", vec![])]);
+        let refs: Vec<&IndexedContext> = local.iter().collect();
+        let metadata: Metadata = serde_json::from_value(metadata).unwrap();
+        let options = DependencySearch {
+            depth: Some(1),
+            all_optional: Some(true),
+            check_latest: Some(false),
+            cache_dir: Some(cache.to_string_lossy().into_owned()),
+            ..DependencySearch::default()
+        };
+        let eff = effective(&options);
+        let mut d = Discovery {
+            graph: build_graph(&metadata, &BTreeMap::new()),
+            index_fingerprint: index_fingerprint(&eff),
+            eff,
+            store: Some(Store::open(&cache).unwrap()),
+            store_root: cache.clone(),
+            registry: Registry {
+                api: format!("{}/api/v1/crates", server.base),
+                cdn: format!("{}/crates", server.base),
+            },
+            coverage: DependencyCoverage::default(),
+            effective_targets: Vec::new(),
+            cfgs: BTreeMap::new(),
+            latest_known: BTreeMap::new(),
+        };
+        let report = analyze_discovery(&mut d, &ws, &single_lib_targets(&ws), &refs, 0);
+        server.stop();
+        assert!(report.coverage.complete, "{:?}", report.coverage.failures);
+        let group = report
+            .groups
+            .iter()
+            .find(|group| group.local.item.contains("local_match"))
+            .unwrap_or_else(|| panic!("no local_match group, got {:?}", report.groups));
+        assert_eq!(
+            assert_candidate(group, "upstream", "1.0.0"),
+            ReuseAction::ReuseApi
         );
     }
 

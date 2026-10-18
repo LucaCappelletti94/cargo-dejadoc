@@ -672,4 +672,177 @@ mod tests {
             }
         }
     }
+
+    #[test]
+    fn human_verbose_prints_code_indented() {
+        let out = human(&report(), true);
+        assert!(out.contains("\n    fn f() {}\n"), "got: {out:?}");
+        assert_eq!(out.matches("fn f() {}").count(), 2);
+    }
+
+    /// A doctest group, a function group and a context group in one report.
+    fn mixed_report() -> Report {
+        Report {
+            total: 2,
+            unique: 1,
+            functions: 2,
+            unique_functions: 1,
+            context_blocks: 5,
+            unique_context_blocks: 2,
+            context_groups: vec![crate::ContextGroup {
+                id: "ctx9".into(),
+                hash: "ctx9".into(),
+                tokens: 13,
+                sites: vec![
+                    context_site(
+                        "src/a.rs",
+                        9,
+                        5,
+                        12,
+                        6,
+                        "m::a",
+                        crate::ContextKind::FunctionBody,
+                    ),
+                    context_site("src/b.rs", 41, 9, 44, 10, "m::b", crate::ContextKind::Block),
+                ],
+            }],
+            groups: vec![
+                Group {
+                    kind: crate::Kind::Doctest,
+                    remedy: None,
+                    id: "dt01".into(),
+                    hash: "dt01".into(),
+                    unparsed: false,
+                    tokens: 5,
+                    sites: vec![
+                        site("src/a.rs", 14, "m::a", "fn f() {}", &["no_run"]),
+                        site("src/b.rs", 97, "m::b", "fn f() {}", &[]),
+                    ],
+                },
+                Group {
+                    kind: crate::Kind::Function,
+                    remedy: Some(Remedy::Delete),
+                    id: "fn02".into(),
+                    hash: "fn02".into(),
+                    unparsed: false,
+                    tokens: 40,
+                    sites: vec![
+                        site("src/a.rs", 3, "m::A::run", "fn run() {}", &[]),
+                        site("src/a.rs", 9, "m::B::run", "fn run() {}", &[]),
+                    ],
+                },
+            ],
+            reuse: None,
+        }
+    }
+
+    #[test]
+    fn human_mixed_report_keeps_the_kinds_separate() {
+        let out = human(&mixed_report(), false);
+        let lines: Vec<&str> = out.lines().collect();
+        let summary = lines[0];
+        assert!(summary.contains("2 doctests (1 unique)"), "{summary}");
+        assert!(summary.contains("2 functions (1 unique)"), "{summary}");
+        assert!(summary.contains("2 duplicated groups"), "{summary}");
+        assert!(
+            summary.contains("5 context blocks (2 unique), 1 approximate groups"),
+            "{summary}"
+        );
+        let headers: Vec<&str> = lines
+            .iter()
+            .copied()
+            .filter(|line| line.starts_with('['))
+            .collect();
+        assert_eq!(headers.len(), 3, "{out}");
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.starts_with("[dt01] 2 sites, 5 tokens") && !h.contains("delete")),
+            "{out}"
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.starts_with("[fn02] 2 functions, 40 tokens,") && h.contains("delete")),
+            "{out}"
+        );
+        assert!(
+            headers
+                .iter()
+                .any(|h| h.starts_with("[ctx9] 2 sites, 13 tokens, approximate")
+                    && !h.contains("delete"),),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/a.rs:14") && l.contains("m::a")),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/a.rs:3") && l.contains("m::A::run")),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/a.rs:9:5-12:6") && l.contains("(function-body)")),
+            "{out}"
+        );
+        assert!(
+            lines
+                .iter()
+                .any(|l| l.contains("src/b.rs:41:9-44:10") && l.contains("(block)")),
+            "{out}"
+        );
+        assert!(out.contains("rust,dejadoc` fence"), "{out}");
+        assert!(out.contains("`// dejadoc: allow`"), "{out}");
+        assert!(
+            lines
+                .iter()
+                .filter(|l| l.contains("src/a.rs:9:5-12:6") || l.contains("src/b.rs:41:9-44:10"))
+                .all(|l| !l.contains("public API") && !l.contains("delete")),
+            "{out}"
+        );
+        let last = lines.last().unwrap();
+        assert!(
+            last.contains("approximate") && !last.contains("dejadoc"),
+            "{out}"
+        );
+        assert_eq!(
+            lines
+                .iter()
+                .filter(|line| line.starts_with('[') && line.contains("delete"))
+                .count(),
+            1,
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn human_summary_and_footers_follow_the_reported_kinds() {
+        for (out, doctest, function, context) in [
+            (human(&report(), false), true, false, false),
+            (
+                human(&function_report(Remedy::Delete), false),
+                false,
+                true,
+                false,
+            ),
+            (human(&context_report(), false), false, false, true),
+        ] {
+            let summary = out.lines().next().unwrap();
+            assert_eq!(summary.contains("context blocks"), context, "{summary}");
+            assert_eq!(out.contains("rust,dejadoc` fence"), doctest, "{out}");
+            assert_eq!(out.contains("`// dejadoc: allow`"), function, "{out}");
+            let last = out.lines().last().unwrap();
+            assert_eq!(
+                last.contains("approximate") && !last.contains("dejadoc"),
+                context,
+                "{out}"
+            );
+        }
+    }
 }

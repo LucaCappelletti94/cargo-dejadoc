@@ -161,6 +161,11 @@ impl Upstream {
             Some(prefix) if !prefix.is_empty() => format!("{prefix}/{file}"),
             _ => file.clone(),
         };
+        if repo_file.starts_with('/') || repo_file.split('/').any(|segment| segment == "..") {
+            return Some(format!(
+                "upstream source path of {file} escapes the repository"
+            ));
+        }
         let path = encode_path(&repo_file);
         let raw_url = format!("{}/{}/{commit}/{path}", self.raw, repo);
         let (status, fetched) = match self.source_hash(&raw_url) {
@@ -1404,6 +1409,41 @@ mod tests {
         assert_eq!(
             candidates[0].source_url.as_deref(),
             Some(format!("https://github.com/o/repo/blob/{SHA}/crates/dep/{FILE}#L1-L4").as_str())
+        );
+    }
+
+    #[test]
+    fn enrich_rejects_a_path_in_vcs_that_leaves_the_repository() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = dir.path().join("dep");
+        std::fs::create_dir_all(&root).unwrap();
+        write_source_file(&root, FILE, BODY);
+        vcs_info_with_path(&root, SHA, "../../../other/repo/main");
+        let cache = dir.path().join("cache");
+        let fixture = Fixture::start();
+        fixture.route(
+            &format!("/raw/o/repo/{SHA}/../../../other/repo/main/{FILE}"),
+            200,
+            BODY.as_bytes(),
+        );
+        fixture.route(
+            "/api/search/issues",
+            200,
+            search_json(&[]).to_string().as_bytes(),
+        );
+        let package = make_package(
+            &root,
+            Some("https://github.com/o/repo"),
+            SOURCE,
+            lib_hashes(),
+        );
+        let mut candidates = vec![candidate(ReuseAction::RequestExtraction, FILE, 1, 4, 9)];
+        let warnings = enrich_owned(&mut upstream(&cache, &fixture), &package, &mut candidates);
+        assert_eq!(candidates[0].source_url, None);
+        assert_eq!(candidates[0].issue_url, None);
+        assert!(
+            warnings.iter().any(|warning| warning.contains("escapes")),
+            "{warnings:?}"
         );
     }
 

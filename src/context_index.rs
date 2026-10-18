@@ -525,10 +525,9 @@ fn render_alternatives(alternatives: &[Vec<String>]) -> Option<String> {
     }
 }
 
-/// The re-exported route of an item, through a bare `pub use` on a visible chain.
+/// The re-exported route of an item, through a bare `pub use` on a visible chain of the item
+/// itself or of a module above it.
 fn reexport_route(model: &CrateModel, path: &str) -> Option<(String, Vec<String>)> {
-    let parent = parent_of(path)?;
-    let name = last_segment(path);
     for (module, bindings) in &model.bindings {
         if !model.module_chain_visible(module) {
             continue;
@@ -540,13 +539,36 @@ fn reexport_route(model: &CrateModel, path: &str) -> Option<(String, Vec<String>
             };
             let route = match binding.alias.as_deref() {
                 Some(alias) if target == path => qualified(module, alias),
-                None if target == parent => qualified(module, name),
-                _ => continue,
+                Some(alias) => match reexported_rest(model, &target, path) {
+                    Some(rest) => qualified(module, &qualified(alias, rest)),
+                    None => continue,
+                },
+                None => match reexported_rest(model, &target, path) {
+                    Some(rest) => qualified(module, rest),
+                    None => continue,
+                },
             };
             return Some(reexport_with_conditions(model, binding, path, route));
         }
     }
     None
+}
+
+/// The part of `path` below the module `target`, when every module in it is visible.
+fn reexported_rest<'a>(model: &CrateModel, target: &str, path: &'a str) -> Option<&'a str> {
+    let rest = path.strip_prefix(target)?.strip_prefix("::")?;
+    if rest.is_empty() || !model.modules.contains_key(target) {
+        return None;
+    }
+    module_segments(rest)
+        .iter()
+        .all(|below| {
+            model
+                .modules
+                .get(&qualified(target, below))
+                .is_some_and(|info| info.visible && info.resolved)
+        })
+        .then_some(rest)
 }
 
 /// A re-export route with the cfg conditions of its declaration and the
@@ -1253,12 +1275,21 @@ impl CrateModel {
             for membership in memberships {
                 for decl in file_decls {
                     let module = join_path(membership.module.iter().chain(decl.module.iter()));
-                    modules.entry(module).or_insert_with(|| ModuleInfo {
-                        visible: decl.visible,
-                        resolved: decl.resolved,
-                        cfg: decl.cfg.clone(),
-                        claims: claim_alternatives(decl, &file_set),
-                    });
+                    match modules.entry(module) {
+                        alloc::collections::btree_map::Entry::Occupied(mut entry) => {
+                            let info: &mut ModuleInfo = entry.get_mut();
+                            info.visible &= decl.visible;
+                            info.resolved &= decl.resolved;
+                        }
+                        alloc::collections::btree_map::Entry::Vacant(entry) => {
+                            entry.insert(ModuleInfo {
+                                visible: decl.visible,
+                                resolved: decl.resolved,
+                                cfg: decl.cfg.clone(),
+                                claims: claim_alternatives(decl, &file_set),
+                            });
+                        }
+                    }
                     if !decl.inline && !decl.resolved {
                         resolved = false;
                     }
@@ -2243,6 +2274,71 @@ mod tests {
         let record = one(&out, "app::inner");
         assert_eq!(record.access, ContextAccess::PublicFunction);
         assert_eq!(record.api_path.as_deref(), Some("app::api::helper"));
+    }
+
+    #[test]
+    fn module_reexports_route_the_items_inside() {
+        let inner = "mod inner { pub mod deep { pub mod sub { pub fn helper(x: u32) -> u32 { x + 1u32 } } } mod hidden { pub fn secret(x: u32) -> u32 { x + 2u32 } } }";
+        for (uses, module, route) in [
+            (
+                "pub use inner::deep;",
+                "app::inner::deep::sub",
+                Some("app::deep::sub::helper"),
+            ),
+            (
+                "pub use inner::deep as alias;",
+                "app::inner::deep::sub",
+                Some("app::alias::sub::helper"),
+            ),
+            (
+                "pub use inner::deep::sub;",
+                "app::inner::deep::sub",
+                Some("app::sub::helper"),
+            ),
+            (
+                "pub use inner::*;",
+                "app::inner::deep::sub",
+                Some("app::deep::sub::helper"),
+            ),
+            (
+                "pub use inner::deep::*;",
+                "app::inner::deep::sub",
+                Some("app::sub::helper"),
+            ),
+            ("pub use inner::*;", "app::inner::hidden", None),
+            ("pub use inner::deep;", "app::inner::hidden", None),
+        ] {
+            let out = records(&format!("{inner}\n{uses}"));
+            let record = one(&out, module);
+            assert_eq!(record.api_path.as_deref(), route, "{uses} {module}");
+            let access = if route.is_some() {
+                ContextAccess::PublicFunction
+            } else {
+                ContextAccess::InternalFunction
+            };
+            assert_eq!(record.access, access, "{uses} {module}");
+        }
+    }
+
+    #[test]
+    fn a_method_on_a_type_in_a_reexported_module_is_public() {
+        let out = records(
+            "mod inner { pub mod deep { pub struct Pack; impl Pack { pub fn size(&self) -> u32 { 1u32 } } } }\npub use inner::deep;",
+        );
+        let record = one(&out, "app::inner::deep");
+        assert_eq!(record.access, ContextAccess::PublicMethod);
+        assert_eq!(record.api_path.as_deref(), Some("app::deep::Pack::size"));
+    }
+
+    #[test]
+    fn a_module_public_under_one_cfg_only_is_not_public() {
+        let out = records(
+            "#[cfg(unix)]\npub mod m { pub fn helper(x: u32) -> u32 { x + 1u32 } }\n#[cfg(not(unix))]\nmod m { pub fn helper(x: u32) -> u32 { x + 2u32 } }",
+        );
+        for record in out.iter().filter(|record| record.module == "app::m") {
+            assert_ne!(record.access, ContextAccess::PublicFunction, "{record:?}");
+            assert_eq!(record.api_path, None, "{record:?}");
+        }
     }
 
     #[test]

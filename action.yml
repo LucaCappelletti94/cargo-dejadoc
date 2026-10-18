@@ -1117,7 +1117,9 @@ runs:
           exit 1
         fi
         posted_state="$(printf '%s' "$resp" | jq -r '.state' 2>/dev/null)" || posted_state=''
-        if [ "$posted_state" != "$review_event" ]; then
+        expected_state='CHANGES_REQUESTED'
+        [ "$review_event" = "COMMENT" ] && expected_state='COMMENTED'
+        if [ "$posted_state" != "$expected_state" ]; then
           echo "dejadoc: the review response is unexpected"
           printf '%s\n' "$resp"
           echo "failed" > "$status"
