@@ -157,36 +157,55 @@ fn copies_selected_by_module_declarations_merge_their_cfgs() {
                 vec!["src/host/other_probe.rs", "src/host/probe.rs"],
                 Some(Remedy::MergeCfg)
             ),
+            (
+                vec!["modcfgws::width::width", "modcfgws::width::width"],
+                vec!["src/fast/width.rs", "src/slow/width.rs"],
+                Some(Remedy::MergeCfg)
+            ),
         ]
     );
 }
 
 #[test]
-fn conditional_module_paths_reach_only_the_context_scope_corpus() {
-    let alternative = |report: &Report| {
-        report
+fn cfg_attr_branch_files_are_reported_and_never_linked_files_are_not() {
+    let files = |report: &Report| -> Vec<String> {
+        let mut files: Vec<String> = report
             .groups
             .iter()
-            .flat_map(|g| g.sites.iter().map(|s| s.file.as_str()))
+            .flat_map(|g| g.sites.iter().map(|s| s.file.clone()))
             .chain(
                 report
                     .context_groups
                     .iter()
-                    .flat_map(|g| g.sites.iter().map(|s| s.file.as_str())),
+                    .flat_map(|g| g.sites.iter().map(|s| s.file.clone())),
             )
-            .any(|file| file.contains("width.rs"))
+            .filter(|file| file.contains("width.rs") || file.contains("tail.rs"))
+            .collect();
+        files.sort();
+        files.dedup();
+        files
     };
     let default = Dejadoc::default()
         .functions()
         .context_blocks()
         .run("tests/fixtures/modcfgws")
         .unwrap();
-    assert!(!alternative(&default), "{:?}", default.groups);
-    let scoped = Dejadoc::default()
-        .context_select(dejadoc::ContextScope::Workspace)
+    assert_eq!(files(&default), ["src/fast/width.rs", "src/slow/width.rs"]);
+    let cache = tempfile::tempdir().unwrap();
+    let dependencies = Dejadoc::default()
+        .context_blocks()
+        .context_dependencies(dejadoc::DependencySearch {
+            depth: Some(1),
+            cache_dir: Some(cache.path().to_string_lossy().into_owned()),
+            check_latest: Some(false),
+            ..dejadoc::DependencySearch::default()
+        })
         .run("tests/fixtures/modcfgws")
         .unwrap();
-    assert!(alternative(&scoped), "{:?}", scoped.context_groups);
+    assert_eq!(
+        dependencies.context_groups, default.context_groups,
+        "dependency mode reports the default local groups"
+    );
 }
 
 #[test]

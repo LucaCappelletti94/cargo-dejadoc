@@ -260,8 +260,6 @@ impl Dejadoc {
         let mut legacy_roots = BTreeSet::new();
         let mut discovery_failures = Vec::new();
         let expand_contexts = scan.context_select.is_some() || scan.context_search.is_some();
-        // Conditional module branches feed only the context scope and dependency features.
-        let keep_alternatives = expand_contexts || scan.context_dependencies.depth.unwrap_or(0) > 0;
         for target in workspace.targets.iter().filter(|target| {
             expand_contexts
                 || scan
@@ -287,11 +285,8 @@ impl Dejadoc {
                         .map(|failure| failure.message),
                 );
             }
-            let (preferred, every) = split_alternatives(
-                discovered.files,
-                &discovered.alternatives,
-                keep_alternatives,
-            );
+            let (linked, every) =
+                split_unlinked(discovered.files, &discovered.unlinked, expand_contexts);
             if let Some(files) = every {
                 context_targets.push(TargetScan {
                     name: target.name.clone(),
@@ -301,7 +296,7 @@ impl Dejadoc {
             }
             targets.push(TargetScan {
                 name: target.name.clone(),
-                files: preferred,
+                files: linked,
                 library: target.library,
             });
         }
@@ -310,7 +305,7 @@ impl Dejadoc {
             &targets,
             Some(&Discovered {
                 legacy_roots: &legacy_roots,
-                context_targets: if keep_alternatives {
+                context_targets: if expand_contexts {
                     &context_targets
                 } else {
                     &targets
@@ -576,7 +571,9 @@ pub struct SourceFile {
     /// Module-path segments from the target root, empty for the root file.
     pub segments: Vec<String>,
     /// The printed `cfg` attributes of the `mod` declarations and enclosing inline modules
-    /// from the target root to this file, outermost first, empty for the root file.
+    /// from the target root to this file, outermost first, empty for the root file. A file a
+    /// `cfg_attr(..., path = ...)` choice links only under some configurations adds that
+    /// condition after its declaration's own attributes.
     pub cfg: Vec<String>,
     /// The parsed file.
     pub parsed: syn::File,
@@ -855,27 +852,27 @@ pub fn group(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report 
     group_here(blocks, threshold, min_tokens)
 }
 
-/// The files of preferred module paths, plus every file when `keep` asks for the conditional
-/// branches too.
+/// The files some configuration links, plus every file when `keep` asks for the never-linked
+/// module paths too.
 #[cfg(feature = "std")]
-fn split_alternatives(
+fn split_unlinked(
     files: Vec<SourceFile>,
-    alternatives: &BTreeSet<String>,
+    unlinked: &BTreeSet<String>,
     keep: bool,
 ) -> (Vec<SourceFile>, Option<Vec<SourceFile>>) {
     if keep {
-        let preferred = files
+        let linked = files
             .iter()
-            .filter(|file| !alternatives.contains(&file.path))
+            .filter(|file| !unlinked.contains(&file.path))
             .cloned()
             .collect();
-        (preferred, Some(files))
+        (linked, Some(files))
     } else {
-        let preferred = files
+        let linked = files
             .into_iter()
-            .filter(|file| !alternatives.contains(&file.path))
+            .filter(|file| !unlinked.contains(&file.path))
             .collect();
-        (preferred, None)
+        (linked, None)
     }
 }
 

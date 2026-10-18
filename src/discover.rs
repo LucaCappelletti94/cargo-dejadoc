@@ -1,6 +1,6 @@
 //! Workspace and module-tree discovery.
 
-use alloc::collections::BTreeSet;
+use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::string::ToString;
 use alloc::vec::Vec;
@@ -101,11 +101,11 @@ fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool 
 }
 
 pub(crate) struct ModuleTree {
-    /// Every discovered file, the alternatives included.
+    /// Every discovered file, those no configuration links included.
     pub(crate) files: Vec<crate::SourceFile>,
-    /// Paths of files reached only through a module path the build does not prefer, such as
-    /// a second `cfg_attr(..., path = ...)` branch.
-    pub(crate) alternatives: BTreeSet<String>,
+    /// Paths of files reached only through a module path no configuration links, such as a
+    /// `cfg_attr(..., path = ...)` after an unconditional `path`.
+    pub(crate) unlinked: BTreeSet<String>,
     pub(crate) failures: Vec<ModuleFailure>,
 }
 
@@ -119,7 +119,7 @@ pub(crate) struct ModuleFailure {
 pub(crate) fn module_tree(target: &Target, boundary: Option<&std::path::Path>) -> ModuleTree {
     let mut tree = ModuleTree {
         files: Vec::new(),
-        alternatives: BTreeSet::new(),
+        unlinked: BTreeSet::new(),
         failures: Vec::new(),
     };
     let root = Child {
@@ -128,7 +128,7 @@ pub(crate) fn module_tree(target: &Target, boundary: Option<&std::path::Path>) -
         cfg: Vec::new(),
         mod_rs: true,
         rustdoc: target.doc,
-        alternative: false,
+        route: Route::Preferred,
     };
     let boundary = match boundary.map(std::fs::canonicalize).transpose() {
         Ok(boundary) => boundary,
@@ -147,11 +147,17 @@ pub(crate) fn module_tree(target: &Target, boundary: Option<&std::path::Path>) -
         visited: BTreeSet::new(),
         off: alloc::collections::VecDeque::new(),
         alternates: alloc::collections::VecDeque::new(),
+        unlinked: alloc::collections::VecDeque::new(),
     };
     walk.collect(root);
-    // A file declared on both sides of a `cfg` must reach rustdoc first, and a preferred
-    // module path before any alternative branch.
-    while let Some(child) = walk.off.pop_front().or_else(|| walk.alternates.pop_front()) {
+    // A file declared on both sides of a `cfg` must reach rustdoc first, a preferred module
+    // path before any alternative branch, and a linked path before one never linked.
+    while let Some(child) = walk
+        .off
+        .pop_front()
+        .or_else(|| walk.alternates.pop_front())
+        .or_else(|| walk.unlinked.pop_front())
+    {
         walk.collect(child);
     }
     tree
@@ -166,6 +172,8 @@ struct Walk<'a> {
     off: alloc::collections::VecDeque<Child>,
     /// Files of module paths the build does not prefer.
     alternates: alloc::collections::VecDeque<Child>,
+    /// Files of module paths no configuration links.
+    unlinked: alloc::collections::VecDeque<Child>,
 }
 
 impl Walk<'_> {
@@ -236,14 +244,14 @@ impl Walk<'_> {
                 segments: &file.segments,
                 cfg: &file.cfg,
                 rustdoc: file.rustdoc,
-                alternative: file.alternative,
+                route: file.route,
             },
             &mut children,
             failures,
         );
         let path = file.path.to_string_lossy().into_owned();
-        if file.alternative {
-            self.tree.alternatives.insert(path.clone());
+        if file.route == Route::Unlinked {
+            self.tree.unlinked.insert(path.clone());
         }
         self.tree.files.push(crate::SourceFile {
             path,
@@ -254,12 +262,11 @@ impl Walk<'_> {
             rustdoc: file.rustdoc,
         });
         for child in children {
-            if child.alternative {
-                self.alternates.push_back(child);
-            } else if child.rustdoc {
-                self.collect(child);
-            } else {
-                self.off.push_back(child);
+            match child.route {
+                Route::Unlinked => self.unlinked.push_back(child),
+                Route::Alternative => self.alternates.push_back(child),
+                Route::Preferred if child.rustdoc => self.collect(child),
+                Route::Preferred => self.off.push_back(child),
             }
         }
     }
@@ -280,7 +287,7 @@ struct Declaring<'a> {
     segments: &'a [String],
     cfg: &'a [String],
     rustdoc: bool,
-    alternative: bool,
+    route: Route,
 }
 
 /// The `mod name;` files at every nesting depth, `dir` resolving `#[path]` and `base` the
@@ -306,18 +313,18 @@ fn mod_decls(
         let mut segments = declaring.segments.to_vec();
         let mut cfg = declaring.cfg.to_vec();
         cfg.extend(crate::cfg::cfgs(&moditem.attrs));
+        let claims = crate::cfg::path_claims(&moditem.attrs, &|pred| {
+            quote::ToTokens::to_token_stream(pred).to_string()
+        });
         if let Some((_, children)) = &moditem.content {
             // A `#[path]` on an inline module names its directory, against the declaring file's.
             let preferred = declared_path(&moditem.attrs)
                 .map_or_else(|| base.join(&name), |path| lexical_join(dir, &path));
             segments.push(moditem.ident.to_string());
-            let mut directories = BTreeSet::new();
-            directories.insert(preferred.clone());
-            let (direct, conditional) = source_paths(&moditem.attrs);
-            directories
-                .insert(direct.map_or_else(|| base.join(&name), |path| lexical_join(dir, &path)));
-            directories.extend(conditional.iter().map(|path| lexical_join(dir, path)));
-            for inner in directories {
+            let implicit = [(base.join(&name), true)];
+            for (inner, (_, conditions)) in candidates(&claims, dir, &implicit) {
+                let mut cfg = cfg.clone();
+                cfg.extend(link_entry(&conditions));
                 mod_decls(
                     children,
                     &inner,
@@ -326,7 +333,9 @@ fn mod_decls(
                         segments: &segments,
                         cfg: &cfg,
                         rustdoc: rustdoc && inner == preferred,
-                        alternative: declaring.alternative || inner != preferred,
+                        route: declaring
+                            .route
+                            .max(Route::of(inner == preferred, linked(&conditions))),
                     },
                     out,
                     failures,
@@ -335,46 +344,30 @@ fn mod_decls(
             continue;
         }
         let preferred = resolve_mod_path(dir, base, &name, &moditem.attrs);
-        let mut paths = BTreeSet::new();
-        paths.insert(preferred.clone());
-        let (direct, conditional) = source_paths(&moditem.attrs);
-        if let Some(path) = direct {
-            paths.insert((lexical_join(dir, &path), true));
-        } else {
-            paths.insert((base.join(format!("{name}.rs")), false));
-            paths.insert((base.join(&name).join("mod.rs"), true));
-        }
-        paths.extend(
-            conditional
-                .iter()
-                .map(|path| (lexical_join(dir, path), true)),
-        );
         segments.push(moditem.ident.to_string());
-        for (path, mod_rs) in paths {
+        let implicit = [
+            (base.join(format!("{name}.rs")), false),
+            (base.join(&name).join("mod.rs"), true),
+        ];
+        for (path, (mod_rs, conditions)) in candidates(&claims, dir, &implicit) {
             let required = rustdoc && path == preferred.0;
-            let alternative = declaring.alternative || path != preferred.0;
-            if path.exists() {
-                out.push(Child {
-                    path,
-                    segments: segments.clone(),
-                    cfg: cfg.clone(),
-                    mod_rs,
-                    rustdoc: required,
-                    alternative,
-                });
+            let route = declaring
+                .route
+                .max(Route::of(path == preferred.0, linked(&conditions)));
+            let mut child = Child {
+                path,
+                segments: segments.clone(),
+                cfg: cfg.clone(),
+                mod_rs,
+                rustdoc: required,
+                route,
+            };
+            child.cfg.extend(link_entry(&conditions));
+            if child.path.exists() {
+                out.push(child);
             } else if required {
-                record_failure(
-                    &Child {
-                        path: path.clone(),
-                        segments: segments.clone(),
-                        cfg: cfg.clone(),
-                        mod_rs,
-                        rustdoc: required,
-                        alternative,
-                    },
-                    format!("missing module file {}", path.display()),
-                    failures,
-                );
+                let message = format!("missing module file {}", child.path.display());
+                record_failure(&child, message, failures);
             }
         }
     }
@@ -389,8 +382,32 @@ struct Child {
     /// A crate root, `mod.rs` or `#[path]` file, whose children sit beside it.
     mod_rs: bool,
     rustdoc: bool,
-    /// Reached only through a module path the build does not prefer.
-    alternative: bool,
+    route: Route,
+}
+
+/// How the build reaches a module file, ordered from the most to the least preferred.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Route {
+    /// The path the doctest model links.
+    Preferred,
+    /// A path other configurations link.
+    Alternative,
+    /// A path no configuration links.
+    Unlinked,
+}
+
+impl Route {
+    /// The route of one candidate, by whether it is the preferred path and whether any
+    /// configuration links it.
+    fn of(preferred: bool, linked: bool) -> Self {
+        if !linked {
+            Self::Unlinked
+        } else if preferred {
+            Self::Preferred
+        } else {
+            Self::Alternative
+        }
+    }
 }
 
 /// The first module path whose expanded attribute applies.
@@ -408,38 +425,60 @@ fn declared_path(attrs: &[syn::Attribute]) -> Option<String> {
     })
 }
 
-fn source_paths(attrs: &[syn::Attribute]) -> (Option<String>, Vec<String>) {
-    fn path(meta: &syn::Meta) -> Option<String> {
-        match meta {
-            syn::Meta::NameValue(value) if value.path.is_ident("path") => {
-                crate::cfg::lit_str(&value.value).map(syn::LitStr::value)
-            }
-            _ => None,
+/// Every file or directory a module declaration can link, each with whether it is a mod-rs
+/// file and the conditions it links under, `implicit` holding the paths used without a `path`.
+fn candidates(
+    claims: &crate::cfg::PathClaims,
+    dir: &std::path::Path,
+    implicit: &[(PathBuf, bool)],
+) -> BTreeMap<PathBuf, (bool, Vec<Vec<String>>)> {
+    let mut out: BTreeMap<PathBuf, (bool, Vec<Vec<String>>)> = BTreeMap::new();
+    let mut add = |path: PathBuf, mod_rs: bool, condition: &[String]| {
+        out.entry(path)
+            .or_insert_with(|| (mod_rs, Vec::new()))
+            .1
+            .push(condition.to_vec());
+    };
+    if let Some(path) = &claims.direct {
+        add(lexical_join(dir, path), true, &claims.direct_pred);
+    } else {
+        for (path, mod_rs) in implicit {
+            add(path.clone(), *mod_rs, &claims.fallback);
         }
     }
-    fn branches(meta: &syn::Meta, out: &mut Vec<String>) {
-        let syn::Meta::List(list) = meta else { return };
-        if !list.path.is_ident("cfg_attr") {
-            return;
-        }
-        let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
-        let Ok(metas) = list.parse_args_with(parser) else {
-            return;
-        };
-        for meta in metas.iter().skip(1) {
-            if let Some(value) = path(meta) {
-                out.push(value);
-            } else {
-                branches(meta, out);
-            }
-        }
+    for (condition, path) in &claims.branches {
+        add(lexical_join(dir, path), true, condition);
     }
-    let direct = attrs.iter().find_map(|attr| path(&attr.meta));
-    let mut conditional = Vec::new();
-    for attr in attrs {
-        branches(&attr.meta, &mut conditional);
+    out
+}
+
+/// Whether some configuration links a candidate, one of its conditions free of `false`.
+fn linked(conditions: &[Vec<String>]) -> bool {
+    conditions
+        .iter()
+        .any(|condition| !condition.iter().any(|part| part == "false"))
+}
+
+/// The printed `cfg` attribute under which a candidate links, `None` when it always links or
+/// never does.
+fn link_entry(conditions: &[Vec<String>]) -> Option<String> {
+    let linkable: Vec<&Vec<String>> = conditions
+        .iter()
+        .filter(|condition| !condition.iter().any(|part| part == "false"))
+        .collect();
+    if linkable.is_empty() || linkable.iter().any(|condition| condition.is_empty()) {
+        return None;
     }
-    (direct, conditional)
+    let rendered: Vec<String> = linkable
+        .iter()
+        .map(|condition| crate::cfg::render_conjunction(condition))
+        .collect();
+    let text = match rendered.as_slice() {
+        [one] => one.clone(),
+        _ => format!("any({})", rendered.join(", ")),
+    };
+    let pred: syn::Meta = syn::parse_str(&text).expect("printed cfg predicates parse back");
+    Some(quote::quote!(#[cfg(#pred)]).to_string())
 }
 
 /// File for `mod name;` and whether it is a mod-rs file. A declared `#[path]` against `dir`,
@@ -1091,6 +1130,104 @@ mod tests {
     }
 
     #[test]
+    fn cfg_attr_paths_record_their_linking_condition() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = "#[cfg_attr(feature = \"a\", path = \"a.rs\")]\n\
+            #[cfg_attr(feature = \"b\", path = \"b.rs\")]\n\
+            mod pick;\n\
+            #[cfg_attr(unix, path = \"u.rs\")]\n\
+            #[path = \"direct.rs\"]\n\
+            mod tail;\n\
+            #[path = \"kept.rs\"]\n\
+            #[cfg_attr(unix, path = \"dead.rs\")]\n\
+            mod gone;\n\
+            #[cfg_attr(unix, cfg_attr(feature = \"n\", path = \"nested.rs\"))]\n\
+            mod deep;\n";
+        std::fs::write(dir.path().join("lib.rs"), lib).unwrap();
+        for file in [
+            "a.rs",
+            "b.rs",
+            "pick.rs",
+            "u.rs",
+            "direct.rs",
+            "kept.rs",
+            "dead.rs",
+            "nested.rs",
+            "deep.rs",
+        ] {
+            std::fs::write(dir.path().join(file), "pub fn f() {}\n").unwrap();
+        }
+        let tree = module_tree(&target(&dir.path().join("lib.rs")), None);
+        let relative = |path: &str| {
+            std::path::Path::new(path)
+                .strip_prefix(dir.path())
+                .unwrap()
+                .to_string_lossy()
+                .into_owned()
+        };
+        let mut got: Vec<(String, Vec<String>)> = tree
+            .files
+            .iter()
+            .filter(|file| !tree.unlinked.contains(&file.path))
+            .map(|file| (relative(&file.path), file.cfg.clone()))
+            .collect();
+        got.sort();
+        let cfg = |text: &str| vec![text.to_string()];
+        assert_eq!(
+            got,
+            [
+                ("a.rs".to_string(), cfg("# [cfg (feature = \"a\")]")),
+                (
+                    "b.rs".to_string(),
+                    cfg("# [cfg (all (feature = \"b\" , not (feature = \"a\")))]")
+                ),
+                (
+                    "deep.rs".to_string(),
+                    cfg("# [cfg (not (all (unix , feature = \"n\")))]")
+                ),
+                ("direct.rs".to_string(), cfg("# [cfg (not (unix))]")),
+                ("kept.rs".to_string(), vec![]),
+                ("lib.rs".to_string(), vec![]),
+                (
+                    "nested.rs".to_string(),
+                    cfg("# [cfg (all (unix , feature = \"n\"))]")
+                ),
+                (
+                    "pick.rs".to_string(),
+                    cfg("# [cfg (all (not (feature = \"a\") , not (feature = \"b\")))]")
+                ),
+                ("u.rs".to_string(), cfg("# [cfg (unix)]")),
+            ]
+        );
+        let unlinked: Vec<String> = tree.unlinked.iter().map(|path| relative(path)).collect();
+        assert_eq!(unlinked, ["dead.rs"]);
+    }
+
+    #[test]
+    fn a_file_named_by_several_branches_links_under_any_of_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let lib = "#[cfg_attr(feature = \"a\", path = \"x.rs\")]\n\
+            #[cfg_attr(feature = \"b\", path = \"y.rs\")]\n\
+            #[cfg_attr(doc, path = \"x.rs\")]\n\
+            mod m;\n";
+        for (file, text) in [("lib.rs", lib), ("x.rs", ""), ("y.rs", ""), ("m.rs", "")] {
+            std::fs::write(dir.path().join(file), text).unwrap();
+        }
+        let tree = module_tree(&target(&dir.path().join("lib.rs")), None);
+        let x = tree
+            .files
+            .iter()
+            .find(|file| file.path.ends_with("x.rs"))
+            .unwrap();
+        assert_eq!(
+            x.cfg,
+            [
+                "# [cfg (any (feature = \"a\" , all (doc , not (feature = \"a\") , not (feature = \"b\"))))]"
+            ]
+        );
+    }
+
+    #[test]
     fn conditional_inline_directories_retain_every_child_source() {
         let mut got = walk(&[
             (
@@ -1176,11 +1313,14 @@ mod tests {
                 .pop()
                 .unwrap()
         };
-        assert_eq!(
-            source_paths(&[attr("#[cfg_attr(x y)]")]),
-            (None, Vec::new())
-        );
+        let atom = |pred: &syn::Meta| quote::ToTokens::to_token_stream(pred).to_string();
+        let broken = crate::cfg::path_claims(&[attr("#[cfg_attr(x y)]")], &atom);
+        assert_eq!((broken.direct, broken.branches), (None, Vec::new()));
         let kept = attr("#[cfg_attr(feature = \"x\", path = \"other.rs\")]");
-        assert_eq!(source_paths(&[kept]), (None, vec!["other.rs".into()]));
+        let kept = crate::cfg::path_claims(&[kept], &atom);
+        assert_eq!(
+            kept.branches,
+            [(vec!["feature = \"x\"".to_string()], "other.rs".to_string())]
+        );
     }
 }
