@@ -119,6 +119,132 @@ fn pair(name: &str, value: &str) -> bool {
     }
 }
 
+/// Source-ordered module path providers with expanded `cfg_attr` conditions, the first
+/// applying provider winning as in rustc.
+pub(crate) struct PathClaims {
+    /// The top-level `#[path]` value, if any.
+    pub(crate) direct: Option<String>,
+    /// The condition under which the top-level path is linked.
+    pub(crate) direct_pred: Vec<String>,
+    /// The `cfg_attr` providers in source order, each with its linking condition.
+    pub(crate) branches: Vec<(Vec<String>, String)>,
+    /// The condition under which the implicit files are linked, every provider failing.
+    pub(crate) fallback: Vec<String>,
+}
+
+/// The path providers of a module declaration's `attrs`, `atom` printing one `cfg_attr`
+/// predicate into a condition.
+pub(crate) fn path_claims(attrs: &[syn::Attribute], atom: &dyn Fn(&Meta) -> String) -> PathClaims {
+    let mut providers: Vec<(Vec<String>, String)> = Vec::new();
+    let mut direct: Option<String> = None;
+    for attr in attrs {
+        if let Some(path) = path_value(&attr.meta) {
+            if direct.is_none() {
+                direct = Some(path.clone());
+            }
+            providers.push((Vec::new(), path));
+            continue;
+        }
+        let Meta::List(list) = &attr.meta else {
+            continue;
+        };
+        if !list.path.is_ident("cfg_attr") {
+            continue;
+        }
+        let Ok(metas) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        else {
+            continue;
+        };
+        let Some(pred) = metas.first() else {
+            continue;
+        };
+        cfg_attr_paths(metas.iter().skip(1), &[atom(pred)], atom, &mut providers);
+    }
+    let mut direct_pred: Vec<String> = Vec::new();
+    let mut branches: Vec<(Vec<String>, String)> = Vec::new();
+    for (index, (own, path)) in providers.iter().enumerate() {
+        let linkable: Vec<String> = own
+            .iter()
+            .cloned()
+            .chain(
+                providers[..index]
+                    .iter()
+                    .map(|(earlier, _)| negate(earlier)),
+            )
+            .collect();
+        if own.is_empty() {
+            direct_pred = linkable;
+        } else {
+            branches.push((linkable, path.clone()));
+        }
+    }
+    let fallback: Vec<String> = providers.iter().map(|(own, _)| negate(own)).collect();
+    PathClaims {
+        direct,
+        direct_pred,
+        branches,
+        fallback,
+    }
+}
+
+/// The `path = "..."` value `meta` is, if any.
+fn path_value(meta: &Meta) -> Option<String> {
+    match meta {
+        Meta::NameValue(nv) if nv.path.is_ident("path") => lit_str(&nv.value).map(LitStr::value),
+        _ => None,
+    }
+}
+
+/// The `path` values of the `cfg_attr` metas, nested levels expanded into the condition chain
+/// in the order declared.
+fn cfg_attr_paths<'a>(
+    metas: impl Iterator<Item = &'a Meta>,
+    chain: &[String],
+    atom: &dyn Fn(&Meta) -> String,
+    out: &mut Vec<(Vec<String>, String)>,
+) {
+    for meta in metas {
+        if let Some(path) = path_value(meta) {
+            out.push((chain.to_vec(), path));
+            continue;
+        }
+        let Meta::List(list) = meta else {
+            continue;
+        };
+        if !list.path.is_ident("cfg_attr") {
+            continue;
+        }
+        let Ok(inner) = list.parse_args_with(Punctuated::<Meta, Token![,]>::parse_terminated)
+        else {
+            continue;
+        };
+        let Some(pred) = inner.first() else {
+            continue;
+        };
+        let mut deep = chain.to_vec();
+        deep.push(atom(pred));
+        cfg_attr_paths(inner.iter().skip(1), &deep, atom, out);
+    }
+}
+
+/// The negation of a provider's own condition, `false` for an unconditional one.
+pub(crate) fn negate(conditions: &[String]) -> String {
+    if conditions.is_empty() {
+        "false".to_string()
+    } else {
+        alloc::format!("not({})", render_conjunction(conditions))
+    }
+}
+
+/// The text of a conjunction of conditions, empty for none.
+pub(crate) fn render_conjunction(conditions: &[String]) -> String {
+    match conditions.len() {
+        0 => String::new(),
+        1 => conditions[0].clone(),
+        _ => alloc::format!("all({})", conditions.join(", ")),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

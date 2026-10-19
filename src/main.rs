@@ -44,6 +44,45 @@ struct Args {
     /// Skip context blocks whose canonical form counts fewer tokens than this (default 30).
     #[arg(long, value_name = "N")]
     context_min_tokens: Option<usize>,
+    /// Local context selection.
+    #[arg(long, value_name = "SCOPE")]
+    context_select: Option<dejadoc::ContextScope>,
+    /// Workspace context comparison corpus.
+    #[arg(long, value_name = "SCOPE")]
+    context_search: Option<dejadoc::ContextScope>,
+    /// Maximum dependency distance for context reuse, zero disables discovery.
+    #[arg(long, value_name = "N")]
+    context_dependency_depth: Option<usize>,
+    /// Include development dependency edges.
+    #[arg(long)]
+    context_dev_dependencies: bool,
+    /// Include build dependency edges.
+    #[arg(long)]
+    context_build_dependencies: bool,
+    /// Explore optional dependency paths outside the configured features.
+    #[arg(long)]
+    context_all_optional_dependencies: bool,
+    /// Cargo features enabled for dependency discovery.
+    #[arg(long, value_delimiter = ',', value_name = "FEATURES")]
+    context_features: Option<Vec<String>>,
+    /// Enable every workspace feature for dependency discovery.
+    #[arg(long)]
+    context_all_features: bool,
+    /// Disable default workspace features for dependency discovery.
+    #[arg(long)]
+    context_no_default_features: bool,
+    /// Target triple used for dependency discovery.
+    #[arg(long, value_name = "TRIPLE")]
+    context_target: Option<String>,
+    /// Persistent dependency index directory.
+    #[arg(long, value_name = "PATH")]
+    context_cache_dir: Option<String>,
+    /// Check the latest published release for reusable APIs, default true.
+    #[arg(long, value_name = "BOOL")]
+    context_check_latest: Option<bool>,
+    /// Include dependency reuse findings in the duplicate gate.
+    #[arg(long)]
+    context_fail_on_reuse: bool,
     /// Explicit `.dejadoc.toml` location.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
@@ -63,7 +102,7 @@ fn main() -> ExitCode {
     if args.get(1).is_some_and(|a| a == "dejadoc") {
         args.remove(1);
     }
-    match run(&Args::parse_from(args)) {
+    match run(Args::parse_from(args)) {
         Ok(code) => code,
         Err(err) => {
             eprintln!("dejadoc: {err}");
@@ -72,9 +111,9 @@ fn main() -> ExitCode {
     }
 }
 
-fn run(args: &Args) -> dejadoc::Result<ExitCode> {
+fn run(args: Args) -> dejadoc::Result<ExitCode> {
     let mut scan = dejadoc::Dejadoc::default();
-    if let Some(package) = &args.package {
+    if let Some(package) = args.package {
         scan = scan.package(package);
     }
     if args.all_targets {
@@ -98,7 +137,26 @@ fn run(args: &Args) -> dejadoc::Result<ExitCode> {
     if let Some(n) = args.context_min_tokens {
         scan = scan.context_min_tokens(n);
     }
-    if let Some(config) = &args.config {
+    if let Some(scope) = args.context_select {
+        scan = scan.context_select(scope);
+    }
+    if let Some(scope) = args.context_search {
+        scan = scan.context_search(scope);
+    }
+    scan = scan.context_dependencies(dejadoc::DependencySearch {
+        depth: args.context_dependency_depth,
+        include_dev: args.context_dev_dependencies.then_some(true),
+        include_build: args.context_build_dependencies.then_some(true),
+        all_optional: args.context_all_optional_dependencies.then_some(true),
+        features: args.context_features,
+        all_features: args.context_all_features.then_some(true),
+        no_default_features: args.context_no_default_features.then_some(true),
+        target: args.context_target,
+        cache_dir: args.context_cache_dir,
+        check_latest: args.context_check_latest,
+        fail_on_findings: args.context_fail_on_reuse.then_some(true),
+    });
+    if let Some(config) = args.config {
         scan = scan.config(config)?;
     }
     let report = scan.run(Path::new("."))?;

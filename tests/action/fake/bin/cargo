@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+# Fixture cargo for the action smoke harness, replaying scenario reports.
+set -uo pipefail
+cmd="${1:-}"
+[ $# -gt 0 ] && shift
+case "$cmd" in
+  dejadoc)
+    if printf '%s\n' "$@" | grep -qx -- '--version'; then
+      exit 0
+    fi
+    { printf 'dejadoc\n'; printf '%s\n' "$@"; } | jq -R . | jq -cs '{cmd: "dejadoc", args: .}' >> "${FAKE_LOG}/cargo.jsonl"
+    json=0
+    for a in "$@"; do [ "$a" = "--json" ] && json=1; done
+    if [ "$json" = "1" ]; then
+      case "$(basename "$PWD")" in
+        dejadoc-base) cat "${SCEN_BASE_JSON:?}" ;;
+        *) cat "${SCEN_JSON:?}" ;;
+      esac
+    else
+      [ -n "${SCEN_HUMAN:-}" ] && cat "$SCEN_HUMAN"
+    fi
+    exit "${SCEN_EXIT:-0}"
+    ;;
+  metadata)
+    jq -cn --arg r "${SCEN_META_ROOT:-$PWD}" '{workspace_root: $r}'
+    ;;
+  install)
+    { printf 'install\n'; printf '%s\n' "$@"; } | jq -R . | jq -cs '{cmd: "install", args: .}' >> "${FAKE_LOG}/cargo.jsonl"
+    ;;
+  *)
+    echo "fake cargo: unhandled command ${cmd:-<none>}" >&2
+    exit 3
+    ;;
+esac

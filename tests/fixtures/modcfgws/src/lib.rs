@@ -16,3 +16,11 @@ mod host {
     #[path = "other_probe.rs"]
     pub mod probe;
 }
+
+#[cfg_attr(feature = "fast", path = "fast/width.rs")]
+#[cfg_attr(not(feature = "fast"), path = "slow/width.rs")]
+mod width;
+
+#[path = "kept/tail.rs"]
+#[cfg_attr(unix, path = "dead/tail.rs")]
+mod tail;
