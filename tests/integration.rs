@@ -404,6 +404,47 @@ fn unknown_package_fails_with_its_name() {
 }
 
 #[test]
+#[cfg(feature = "cli")]
+fn a_bare_organization_flag_scans_the_current_repository_owner() {
+    let dir = tempfile::tempdir().unwrap();
+    let git = |args: &[&str]| {
+        let status = Command::new("git")
+            .current_dir(dir.path())
+            .args(args)
+            .status()
+            .expect("run git");
+        assert!(status.success(), "git {args:?}");
+    };
+    git(&["init", "-q"]);
+    git(&[
+        "remote",
+        "add",
+        "origin",
+        "https://gitlab.com/owner/app.git",
+    ]);
+    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let out = Command::new(bin)
+        .current_dir(dir.path())
+        .env_remove("GITHUB_REPOSITORY_OWNER")
+        .args(["dejadoc", "--organization", "--no-fail"])
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(out.status.code(), Some(2));
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(stderr.contains("is not a GitHub repository"), "{stderr}");
+    // An invalid owner is refused before any request, so no network is needed.
+    let out = Command::new(bin)
+        .current_dir(dir.path())
+        .env("GITHUB_REPOSITORY_OWNER", "../evil")
+        .args(["dejadoc", "--organization", "--no-fail", "--json"])
+        .output()
+        .expect("run dejadoc binary");
+    assert_eq!(out.status.code(), Some(2));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    assert_eq!(report["organization"]["name"], "../evil");
+}
+
+#[test]
 fn file_module_items_carry_module_prefix() {
     // Items in file modules carry their module path, as rustdoc names
     // them (`util::helper`, not `helper`).

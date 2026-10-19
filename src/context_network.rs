@@ -1,5 +1,6 @@
 //! Bounded read-only HTTP with correlated deadlines and credentials restricted to `api.github.com`.
 
+use alloc::borrow::ToOwned;
 use alloc::format;
 use alloc::string::String;
 use alloc::string::ToString;
@@ -130,13 +131,45 @@ fn send(url: &str, deadline: Duration, id: &str) -> Result<Response<Body>, Strin
     })
 }
 
-/// A bounded `GET` returning status, body, request identifier and rate-limit header.
+/// One bounded response with its correlation identifier and paging headers.
+#[derive(Debug)]
+pub(crate) struct RawResponse {
+    /// HTTP status.
+    pub(crate) status: u16,
+    /// Body within the read limit.
+    pub(crate) body: Vec<u8>,
+    /// Correlated request identifier.
+    pub(crate) id: String,
+    /// The `x-ratelimit-remaining` value.
+    pub(crate) rate: Option<u64>,
+    /// The `rel="next"` target of the `Link` header.
+    pub(crate) next: Option<String>,
+}
+
+/// The `rel="next"` target of an RFC 8288 `Link` header.
+fn next_link(header: &str) -> Option<&str> {
+    let mut rest = header;
+    while let Some(start) = rest.find('<') {
+        let (target, tail) = rest[start + 1..].split_once('>')?;
+        let params = tail.split_once('<').map_or(tail, |(params, _)| params);
+        let next = params.split([';', ',']).any(|param| {
+            param.trim().strip_prefix("rel=").is_some_and(|rel| {
+                rel.trim_matches('"')
+                    .split_ascii_whitespace()
+                    .any(|rel| rel.eq_ignore_ascii_case("next"))
+            })
+        });
+        if next {
+            return Some(target);
+        }
+        rest = tail;
+    }
+    None
+}
+
+/// A bounded `GET` returning the response and its correlation identifier.
 #[must_use = "Use the response as the read output"]
-pub(crate) fn get_raw(
-    url: &str,
-    limit: u64,
-    deadline: Duration,
-) -> Result<(u16, Vec<u8>, String, Option<u64>), String> {
+pub(crate) fn get_raw(url: &str, limit: u64, deadline: Duration) -> Result<RawResponse, String> {
     let id = next_id();
     let response = send(url, deadline, &id)?;
     let status = response.status().as_u16();
@@ -145,6 +178,12 @@ pub(crate) fn get_raw(
         .get("x-ratelimit-remaining")
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.parse::<u64>().ok());
+    let next = response
+        .headers()
+        .get("link")
+        .and_then(|value| value.to_str().ok())
+        .and_then(next_link)
+        .map(str::to_owned);
     let mut body = Vec::new();
     response
         .into_body()
@@ -156,7 +195,13 @@ pub(crate) fn get_raw(
     if body_len > limit {
         return Err(fail(&id, url, format!("response exceeds {limit} bytes")));
     }
-    Ok((status, body, id, rate))
+    Ok(RawResponse {
+        status,
+        body,
+        id,
+        rate,
+        next,
+    })
 }
 
 /// Fetch a bounded `JSON` document within the request deadline.
@@ -166,11 +211,12 @@ pub(crate) fn get_raw(
 /// Returns a correlated error for transport, status, size or `JSON` failures.
 #[must_use = "Use the document as the read output"]
 pub fn json(url: &str) -> Result<serde_json::Value, String> {
-    let (status, body, id, _rate) = get_raw(url, READ_LIMIT, REQUEST_DEADLINE)?;
-    if !is_success(status) {
-        return Err(fail(&id, url, format!("HTTP {status}")));
+    let response = get_raw(url, READ_LIMIT, REQUEST_DEADLINE)?;
+    if !is_success(response.status) {
+        return Err(fail(&response.id, url, format!("HTTP {}", response.status)));
     }
-    serde_json::from_slice(&body).map_err(|err| fail(&id, url, format!("invalid JSON {err}")))
+    serde_json::from_slice(&response.body)
+        .map_err(|err| fail(&response.id, url, format!("invalid JSON {err}")))
 }
 
 /// Download within `ARCHIVE_LIMIT` and atomically publish the complete file.
@@ -262,8 +308,10 @@ pub(crate) mod tests {
     #[derive(Clone)]
     enum Route {
         Bytes(u16, BodySpec),
+        Page(u16, BodySpec, Option<String>),
         Slow(u64, u16, BodySpec),
         RateLimited,
+        Redirect(u16, String),
     }
 
     #[derive(Default)]
@@ -367,11 +415,26 @@ pub(crate) mod tests {
                 .insert(path.to_string(), Route::RateLimited);
         }
 
+        /// Serve one exact-path route redirecting to `location`.
+        pub(crate) fn redirect_route(&self, path: &str, status: u16, location: &str) {
+            self.log.lock().unwrap().routes.insert(
+                path.to_string(),
+                Route::Redirect(status, location.to_string()),
+            );
+        }
+
         /// Serve queued responses in order for one exact path.
         pub(crate) fn page_route(&self, path: &str, responses: Vec<(u16, Vec<u8>)>) {
+            let count = responses.len();
             let routes = responses
                 .into_iter()
-                .map(|(status, body)| Route::Bytes(status, BodySpec::Bytes(body)))
+                .enumerate()
+                .map(|(index, (status, body))| {
+                    let next = (index + 1 < count).then(|| {
+                        format!("http://{}{path}?per_page=100&page={}", self.addr, index + 2)
+                    });
+                    Route::Page(status, BodySpec::Bytes(body), next)
+                })
                 .collect();
             self.log
                 .lock()
@@ -471,22 +534,42 @@ pub(crate) mod tests {
                 404,
                 &BodySpec::Bytes(Vec::new()),
                 false,
+                None,
+                None,
                 deadline,
             );
         };
-        let (status, body, ratelimited) = match route {
-            Route::Bytes(status, body) => (status, body, false),
+        let (status, body, ratelimited, location, next) = match route {
+            Route::Bytes(status, body) => (status, body, false, None, None),
+            Route::Page(status, body, next) => (status, body, false, None, next),
             Route::Slow(sleep, status, body) => {
                 thread::sleep(Duration::from_millis(sleep).min(remaining(deadline)?));
-                (status, body, false)
+                (status, body, false, None, None)
             }
             Route::RateLimited => (
                 403,
                 BodySpec::Bytes(b"{\"message\": \"rate limit exceeded\"}".to_vec()),
                 true,
+                None,
+                None,
+            ),
+            Route::Redirect(status, location) => (
+                status,
+                BodySpec::Bytes(Vec::new()),
+                false,
+                Some(location),
+                None,
             ),
         };
-        write_response(&mut stream, status, &body, ratelimited, deadline)
+        write_response(
+            &mut stream,
+            status,
+            &body,
+            ratelimited,
+            location.as_deref(),
+            next.as_deref(),
+            deadline,
+        )
     }
 
     /// The value of one request header, case-insensitive.
@@ -502,6 +585,8 @@ pub(crate) mod tests {
         status: u16,
         body: &BodySpec,
         ratelimited: bool,
+        location: Option<&str>,
+        next: Option<&str>,
         deadline: Instant,
     ) -> io::Result<()> {
         let (declared, total) = match body {
@@ -518,6 +603,16 @@ pub(crate) mod tests {
         );
         if ratelimited {
             head.push_str("x-ratelimit-remaining: 0\r\n");
+        }
+        if let Some(location) = location {
+            head.push_str("location: ");
+            head.push_str(location);
+            head.push_str("\r\n");
+        }
+        if let Some(next) = next {
+            head.push_str("link: <");
+            head.push_str(next);
+            head.push_str(">; rel=\"next\"\r\n");
         }
         head.push_str("connection: close\r\n\r\n");
         write_before(stream, head.as_bytes(), deadline)?;

@@ -14,12 +14,20 @@ use std::process::ExitCode;
     name = "dejadoc",
     bin_name = "cargo dejadoc",
     version,
-    about = "Find duplicated Rust doctests, functions and context blocks across a workspace"
+    about = "Find duplicated Rust doctests, functions and context blocks across a workspace or GitHub organization"
 )]
 struct Args {
-    /// Restrict to one workspace member by name.
+    /// Restrict to one package by name.
     #[arg(short, long)]
     package: Option<String>,
+    /// Scan crates in every accessible repository of a GitHub organization or user, by default
+    /// the owner of the current repository.
+    #[arg(long, value_name = "ORG", num_args = 0..=1)]
+    #[expect(
+        clippy::option_option,
+        reason = "clap encodes a flag whose value may be omitted as nested options"
+    )]
+    organization: Option<Option<String>>,
     /// Scan bin and example doctests in addition to lib doctests.
     #[arg(long)]
     all_targets: bool,
@@ -74,7 +82,7 @@ struct Args {
     /// Target triple used for dependency discovery.
     #[arg(long, value_name = "TRIPLE")]
     context_target: Option<String>,
-    /// Persistent dependency index directory.
+    /// Persistent analysis cache directory.
     #[arg(long, value_name = "PATH")]
     context_cache_dir: Option<String>,
     /// Check the latest published release for reusable APIs, default true.
@@ -159,7 +167,11 @@ fn run(args: Args) -> dejadoc::Result<ExitCode> {
     if let Some(config) = args.config {
         scan = scan.config(config)?;
     }
-    let report = scan.run(Path::new("."))?;
+    let report = match args.organization {
+        Some(Some(organization)) => scan.run_organization(&organization)?,
+        Some(None) => scan.run_organization(&dejadoc::repository_owner(".")?)?,
+        None => scan.run(Path::new("."))?,
+    };
     let out = if args.json {
         dejadoc::json(&report)
     } else {

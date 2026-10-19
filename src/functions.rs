@@ -13,18 +13,19 @@ use crate::{DocTest, Remedy, SourceFile};
 pub(crate) struct FnSite {
     /// The reported site.
     pub(crate) site: DocTest,
-    /// Crate root file and module path, since two crates may share a target name.
-    pub(crate) scope: String,
     /// The declaration's finished canonical form in its original context.
     pub(crate) form: syn_canon::CanonicalForm,
-    /// What decides whether a copy can be deleted.
+    /// The original scope and what decides whether a copy can be deleted.
     pub(crate) context: Context,
 }
 
-/// Where a function is defined, whether it exports a symbol, and under which `cfg`, all of
-/// which the comparison ignores.
+/// The original scope, where a function is defined, whether it exports a symbol, and under
+/// which `cfg`, the last two of which the comparison ignores.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct Context {
+    /// The crate root file and module path, part of the local hash and the organization
+    /// owner identity.
+    pub(crate) scope: String,
     owner: Owner,
     exported: bool,
     /// The printed `cfg` attributes, sorted, since their order carries no meaning.
@@ -64,6 +65,28 @@ pub(crate) fn remedy(sites: &[(DocTest, Context)]) -> Remedy {
         Remedy::MergeCfg
     } else {
         Remedy::Delete
+    }
+}
+
+/// Cross-scope copies require extraction or generic sharing.
+pub(crate) fn remedy_organization(sites: &[(DocTest, Context)]) -> Remedy {
+    let crosses_scopes = sites
+        .windows(2)
+        .any(|pair| pair[0].1.scope != pair[1].1.scope);
+    if !crosses_scopes {
+        return remedy(sites);
+    }
+    let Some(((first, _), rest)) = sites.split_first() else {
+        return Remedy::Delete;
+    };
+    if first.self_type.is_some()
+        && rest
+            .iter()
+            .any(|(site, _)| site.self_type != first.self_type)
+    {
+        Remedy::GenericOrMacro
+    } else {
+        Remedy::HelperOrMacro
     }
 }
 
@@ -231,6 +254,7 @@ impl Walk<'_> {
             .get(line.saturating_sub(1)..end.min(self.lines.len()))
             .unwrap_or_default()
             .join("\n");
+        let scope = format!("{}\n{module}", self.crate_root);
         self.out.push(FnSite {
             site: DocTest {
                 file: self.path.to_string(),
@@ -243,13 +267,13 @@ impl Walk<'_> {
                 self_type: self_type.map(ToString::to_string),
                 public: self.library && matches!(vis, syn::Visibility::Public(_)),
             },
-            scope: format!("{}\n{module}", self.crate_root),
             form: self
                 .context
                 .function(sig, block)
                 .expect("the site's declaration is indexed in the source context")
                 .canonicalize(),
             context: Context {
+                scope,
                 owner,
                 exported: attrs.iter().any(|a| exports(&a.meta)),
                 cfg,

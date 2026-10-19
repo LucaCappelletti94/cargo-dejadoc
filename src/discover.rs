@@ -61,15 +61,7 @@ pub(crate) fn workspace(
                 package: package.name.to_string(),
                 src: target.src_path.clone().into(),
                 doc: scan_target(&target.kind, all_targets),
-                library: target.kind.iter().any(|kind| {
-                    matches!(
-                        kind,
-                        cargo_metadata::TargetKind::Lib
-                            | cargo_metadata::TargetKind::RLib
-                            | cargo_metadata::TargetKind::DyLib
-                            | cargo_metadata::TargetKind::ProcMacro
-                    )
-                }),
+                library: library_target(&target.kind),
             });
         }
     }
@@ -85,7 +77,7 @@ pub(crate) fn workspace(
 }
 
 /// Whether a cargo target's doctests are scanned, from its kind list.
-fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool {
+pub(crate) fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool {
     use cargo_metadata::TargetKind as CargoTargetKind;
 
     if kinds
@@ -98,6 +90,19 @@ fn scan_target(kinds: &[cargo_metadata::TargetKind], all_targets: bool) -> bool 
         && kinds
             .iter()
             .any(|k| matches!(k, CargoTargetKind::Bin | CargoTargetKind::Example))
+}
+
+/// Whether a target exposes a library API.
+pub(crate) fn library_target(kinds: &[cargo_metadata::TargetKind]) -> bool {
+    kinds.iter().any(|kind| {
+        matches!(
+            kind,
+            cargo_metadata::TargetKind::Lib
+                | cargo_metadata::TargetKind::RLib
+                | cargo_metadata::TargetKind::DyLib
+                | cargo_metadata::TargetKind::ProcMacro
+        )
+    })
 }
 
 pub(crate) struct ModuleTree {

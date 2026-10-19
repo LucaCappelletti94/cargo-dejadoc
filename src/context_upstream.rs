@@ -209,7 +209,11 @@ impl Upstream {
                     context_network::READ_LIMIT,
                     context_network::REQUEST_DEADLINE,
                 )
-                .map(|(status, body, _id, rate)| Response { status, body, rate }),
+                .map(|response| Response {
+                    status: response.status,
+                    body: response.body,
+                    rate: response.rate,
+                }),
             ),
         };
         match stored {
@@ -234,10 +238,10 @@ impl Upstream {
             context_network::REQUEST_DEADLINE,
         ) {
             Err(err) => Err(err),
-            Ok((status, body, _id, _rate)) => {
-                let hash = context_network::is_success(status)
-                    .then(|| blake3::hash(&body).to_hex().to_string());
-                Ok((status, hash))
+            Ok(response) => {
+                let hash = context_network::is_success(response.status)
+                    .then(|| blake3::hash(&response.body).to_hex().to_string());
+                Ok((response.status, hash))
             }
         };
         self.source.insert(url.to_string(), result.clone());
@@ -499,7 +503,7 @@ pub(crate) fn range_fragment(line: u32, end: u32, end_column: usize) -> Option<S
 }
 
 /// The percent-encoding of `value`, leaving unreserved bytes bare.
-fn percent_encode(value: &str) -> String {
+pub(crate) fn percent_encode(value: &str) -> String {
     encode(value, false)
 }
 
@@ -523,7 +527,7 @@ fn encode(value: &str, preserve_slashes: bool) -> String {
 
 /// The percent-encoded path segments of `path`, joined with `/`.
 #[must_use]
-fn encode_path(path: &str) -> String {
+pub(crate) fn encode_path(path: &str) -> String {
     encode(path, true)
 }
 

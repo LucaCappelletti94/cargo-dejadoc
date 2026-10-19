@@ -2,6 +2,7 @@
 
 use crate::{Kind, Remedy, Report, ReuseAction};
 
+use alloc::collections::BTreeSet;
 use alloc::format;
 use alloc::string::String;
 use core::fmt::Write;
@@ -36,7 +37,7 @@ pub fn human(report: &Report, verbose: bool) -> String {
             reuse.coverage.packages
         );
     }
-    let _ = writeln!(&mut out);
+    organization_human(&mut out, report);
     if report.groups.is_empty() && report.context_groups.is_empty() && report.reuse.is_none() {
         return out;
     }
@@ -101,6 +102,50 @@ pub fn human(report: &Report, verbose: bool) -> String {
         );
     }
     out
+}
+
+/// The organization summary suffix, then the package provenance and coverage lines.
+fn organization_human(out: &mut String, report: &Report) {
+    let Some(organization) = &report.organization else {
+        let _ = writeln!(out);
+        return;
+    };
+    let _ = writeln!(
+        out,
+        ", organization {} ({} accessible repositories, {} packages)",
+        organization.name,
+        organization.repositories.len(),
+        organization.packages.len()
+    );
+    let packages: BTreeSet<_> = organization
+        .file_packages
+        .values()
+        .flatten()
+        .copied()
+        .collect();
+    for index in packages {
+        let Some(package) = organization.packages.get(index) else {
+            continue;
+        };
+        let Some(repository) = organization.repositories.get(package.repository) else {
+            continue;
+        };
+        if let Some(commit) = &repository.commit {
+            let _ = writeln!(
+                out,
+                "source {}@{} package {} ({})",
+                repository.name, commit, package.name, package.manifest
+            );
+        }
+    }
+    if !organization.coverage.complete {
+        if organization.coverage.failures.is_empty() {
+            let _ = writeln!(out, "dejadoc: incomplete organization analysis");
+        }
+        for failure in &organization.coverage.failures {
+            let _ = writeln!(out, "dejadoc: incomplete organization analysis, {failure}");
+        }
+    }
 }
 
 /// The advice for a copy other crates may call, which deleting would break.
@@ -308,7 +353,31 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             );
         }
     }
+    organization_annotations(&mut out, report);
     out
+}
+
+/// One error annotation per organization coverage failure.
+fn organization_annotations(out: &mut String, report: &Report) {
+    let Some(organization) = &report.organization else {
+        return;
+    };
+    if organization.coverage.complete {
+        return;
+    }
+    if organization.coverage.failures.is_empty() {
+        let _ = writeln!(
+            out,
+            "::error title=dejadoc::Incomplete organization analysis"
+        );
+    }
+    for failure in &organization.coverage.failures {
+        let _ = writeln!(
+            out,
+            "::error title=dejadoc::Incomplete organization analysis, {}",
+            escape(failure)
+        );
+    }
 }
 
 /// A workflow command message, with the characters that would end it
@@ -356,6 +425,7 @@ mod tests {
             unique_context_blocks: 0,
             context_groups: Vec::new(),
             reuse: None,
+            organization: None,
             groups: vec![Group {
                 kind: crate::Kind::Doctest,
                 remedy: None,
@@ -410,6 +480,7 @@ mod tests {
             unique_context_blocks: 0,
             context_groups: Vec::new(),
             reuse: None,
+            organization: None,
             groups: vec![Group {
                 kind: crate::Kind::Function,
                 id: "cd34ef56".into(),
@@ -503,9 +574,44 @@ mod tests {
             unique_context_blocks: 0,
             context_groups: Vec::new(),
             reuse: None,
+            organization: None,
             groups: Vec::new(),
         };
         assert_eq!(annotations(&clean, false), "");
+    }
+
+    #[test]
+    fn only_incomplete_organization_coverage_is_reported() {
+        let failure = "org/app: archive link \"x\" cannot be resolved";
+        let mut report = report();
+        for complete in [true, false] {
+            report.organization = Some(crate::OrganizationReport {
+                name: String::from("org"),
+                coverage: crate::OrganizationCoverage {
+                    complete,
+                    failures: if complete {
+                        Vec::new()
+                    } else {
+                        vec![failure.to_string()]
+                    },
+                },
+                ..Default::default()
+            });
+            let human = human(&report, false);
+            let annotations = annotations(&report, true);
+            assert_eq!(
+                human.contains(&format!(
+                    "dejadoc: incomplete organization analysis, {failure}"
+                )),
+                !complete
+            );
+            assert_eq!(
+                annotations.contains(&format!(
+                    "::error title=dejadoc::Incomplete organization analysis, {failure}"
+                )),
+                !complete
+            );
+        }
     }
 
     #[test]
@@ -558,6 +664,7 @@ mod tests {
             unique_functions: 0,
             groups: Vec::new(),
             reuse: None,
+            organization: None,
             context_blocks: 5,
             unique_context_blocks: 2,
             context_groups: vec![crate::ContextGroup {
@@ -733,6 +840,7 @@ mod tests {
                 },
             ],
             reuse: None,
+            organization: None,
         }
     }
 
@@ -934,6 +1042,7 @@ mod tests {
             unique_context_blocks: 0,
             context_groups: Vec::new(),
             reuse: None,
+            organization: None,
             groups: Vec::new(),
         };
         report.reuse = Some(crate::ReuseReport {
