@@ -1,0 +1,2 @@
+#[doc = concat!("prefix ","x ",!incd-e_d)]
+pub fn f() {}

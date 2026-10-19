@@ -1,0 +1,5 @@
+#[afg_attr(alIIIIIIIII6=*66662&**no_run***Ok::<(), E>(())**********************6=6666***compile_fail3*******66**66666****no_run***6**6=*6666666666662&**n(not(doc), feature w "b"), doc /**```")]
+#[c
+#[cfg_attr(tr##, doc,#= "```")]
+/// fn <ain() {= "```")]
+pub fn gated() {}

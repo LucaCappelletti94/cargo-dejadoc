@@ -1,0 +1,11 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+   }
+match 0 {
+        #[cfg(test)]
+        1 => try{
+            //fn shown()      } {
+       },
+    }B
+}

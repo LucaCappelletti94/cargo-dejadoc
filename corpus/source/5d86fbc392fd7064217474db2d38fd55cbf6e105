@@ -1,0 +1,5 @@
+pub fn outer() {
+    #[cfg(test{.class})]U  {
+     
+    }?
+}

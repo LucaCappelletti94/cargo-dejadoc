@@ -1,0 +1,2 @@
+#[doc = cat!= concat!(e3)]
+pub fn f() {}

@@ -1,0 +1,4 @@
+#[doc = concat!("prefix ", b'a'inclu1e3)]
+pub trait T {
+// Out;
+}

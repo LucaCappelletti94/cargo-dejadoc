@@ -1,0 +1,14 @@
+pub fn outer() {fn inner() {}
+    let _ = || {
+ /// ```
+        /// let b = 2;
+        /// ```
+ ep;
+    };
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+//!``,-,(f, ,,,		 	,,<,/rust<<![<,<<t() {}
+    }
+}

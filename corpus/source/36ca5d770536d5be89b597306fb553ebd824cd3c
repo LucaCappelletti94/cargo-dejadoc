@@ -1,0 +1,3 @@
+#[cattr(alIII@I$I)]
+#[cfg_attr()]
+ fn gated() {}

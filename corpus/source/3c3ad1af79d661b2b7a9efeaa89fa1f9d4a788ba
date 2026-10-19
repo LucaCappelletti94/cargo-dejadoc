@@ -1,0 +1,5 @@
+#[cfg_attr(alIIIIIIIIIIIIIae(lfture = "a" "b"), doc = "```")]
+#[cfg_at(rwitn doc = "```")]
+#[cfg_attr(Self,#doc = "`")]
+//doc/ fn mai```")]
+pub fn gat() {}

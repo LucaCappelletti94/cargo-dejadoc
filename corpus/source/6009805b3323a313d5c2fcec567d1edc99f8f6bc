@@ -1,0 +1,23 @@
+/// `(all(not(test), any(doctest, feature = "x")))]
+pub fn d() { /// ```
+    //$ let , fest), any(doctest, feature = "x"))(]
+
+pub struct S {
+    /// ```#[cfg_att{
+    /// ```#[cfg_attr(unix, doc =  /{.class}   #[cfg(test)]
+    pub e: u8,
+}
+b = 2;
+    ///```
+    pub fn b() {}
+}
+/// ```
+/// let c = 3;
+/// ))]
+
+pub struct S {
+    /// ```
+    /// let e = concat!(5;
+    /// `'` 
+    pub e: u8,
+}

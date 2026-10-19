@@ -1,0 +1,6 @@
+///  copde!("../~~~
+pub fn helper(Ok::<(), E:>:(())) {}
+
+pub fn helper(Ok::k::<(), E:>:(())) {}
+
+pub fn helper(Ok::<(), E:>:(())) {}

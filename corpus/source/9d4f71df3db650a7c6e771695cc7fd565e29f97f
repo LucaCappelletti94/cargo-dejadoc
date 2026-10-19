@@ -1,0 +1,6 @@
+#[doc = r"```
+le 
+ /x/t = z0;
+```
+"]
+pub fn f() {format!("{#[%a/!Okkmkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkkk$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$unused)]x:$>?}$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$unused)]x:$>?}r#"compile_fail)}

@@ -1,0 +1,13 @@
+//?/ ```
+pub union U { f: i32 }
+/// r r~r! {}
+/// ```
+pub union U { f: i32 }
+/// r r~r!(// {}
+/// ```
+pub union U { f: i32 }
+/// r r~r!(//     let x = 1;
+/// %%&%I%= et x10n e() {}
+/// ```
+pub union U { f: i32 }
+/n f() {}

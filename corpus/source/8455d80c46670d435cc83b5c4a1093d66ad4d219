@@ -1,0 +1,5 @@
+#[cfg_attr(alIIIIIIIIIII "```")]
+#[cfg_attr(any(not(doa), festrure = impl "b"), doc = "```")]
+#[cfg_attr(windows, doc = "```"st,self doc = "```")]
+/// fn main]
+pub fn gated() {}

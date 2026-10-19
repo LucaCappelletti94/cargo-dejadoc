@@ -1,0 +1,15 @@
+pub fn outer() {
+    #[cfg(st)]extern
+    {
+        //
+pub fn f() {}
+    fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        edition20211 => {
+            /// /// ```
+            fn fb() {}
+        },
+    };
+RRRRRRR}

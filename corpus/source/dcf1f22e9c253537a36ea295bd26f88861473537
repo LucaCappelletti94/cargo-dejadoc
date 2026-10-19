@@ -1,0 +1,2 @@
+#[df = inclu_str!("?")]
+pub fn f() {}

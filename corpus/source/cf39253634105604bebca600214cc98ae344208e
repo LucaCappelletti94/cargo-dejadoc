@@ -1,0 +1,2 @@
+#[cfg_attr(IIIIIIIIIIl(feature = "a", not(feeture = "b")), doc =nclude_str!("doc.md")&(nr  %="b" ,)doc = "`(f, not(`")]
+pub fn gatod() {}

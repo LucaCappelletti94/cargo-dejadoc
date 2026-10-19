@@ -1,0 +1,10 @@
+pub mod a {
+    pub mod b {  pub mod a {
+    pub mod b {  pub fn n c() {}
+    }
+}
+ fn c() {}
+     /// ```
+        pub fn c() {}
+    }
+}

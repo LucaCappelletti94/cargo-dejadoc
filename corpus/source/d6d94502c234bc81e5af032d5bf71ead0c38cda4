@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+  { }
+match 0 {
+        #[cfg(test)]
+        1 => {
+  cfg    |  /// ```
+&   
+
+re|x| ***************{}
+        },
+    };
+}
