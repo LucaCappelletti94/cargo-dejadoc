@@ -2,6 +2,11 @@
 
 use dejadoc::{Dejadoc, DocTest, Group, Kind, Report, SourceFile, TargetScan, group};
 
+#[path = "support/group_members.rs"]
+mod group_members;
+
+use group_members::members;
+
 const DOCTEST_TOKENS: usize = 50;
 
 fn pick<'a>(module: &'a syn::ItemMod, name: &str) -> &'a syn::ItemFn {
@@ -47,19 +52,6 @@ fn scan(text: &str, fn_min_tokens: usize, min_tokens: usize, threshold: usize) -
         .run_targets("", std::slice::from_ref(&target(text)), &|_, _| None)
 }
 
-fn members(groups: &[Group]) -> Vec<Vec<&str>> {
-    let mut out: Vec<Vec<&str>> = groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    out.sort_unstable();
-    out
-}
-
 fn function_groups(report: &Report) -> Vec<Group> {
     report
         .groups
@@ -76,7 +68,7 @@ fn helper_ws_fixture_preserves_exact_function_and_doctest_members() {
         let report = scan(text, fn_min_tokens, 0, 2);
         let groups = function_groups(&report);
         assert_eq!(
-            members(&groups),
+            members(groups.iter()),
             [
                 vec!["helperws::left::first", "helperws::left::same"],
                 vec!["helperws::right::first", "helperws::right::same"],

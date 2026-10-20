@@ -3,15 +3,13 @@
 use dejadoc::{Dejadoc, Kind, SourceFile, TargetScan};
 use syn_canon::SourceContext;
 
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
-}
+#[path = "support/function.rs"]
+mod functions;
+#[path = "support/group_members.rs"]
+mod group_members;
+
+use functions::function;
+use group_members::members;
 
 fn file(path: &str, segments: &[&str], code: &str) -> SourceFile {
     SourceFile {
@@ -52,16 +50,12 @@ fn original_module_files_supply_primitive_alias_facts() {
             .functions()
             .fn_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);
-    let groups: Vec<_> = report
-        .groups
-        .iter()
-        .filter(|group| group.kind == Kind::Function)
-        .map(|group| {
-            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            members.sort_unstable();
-            members
-        })
-        .collect();
+    let groups = members(
+        report
+            .groups
+            .iter()
+            .filter(|group| group.kind == Kind::Function),
+    );
     assert_eq!(
         groups,
         vec![vec!["sample::child::original", "sample::child::scheduled"]]
@@ -172,16 +166,12 @@ fn inline_modules_resolve_their_own_imported_aliases() {
             .functions()
             .fn_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);
-    let groups: Vec<_> = report
-        .groups
-        .iter()
-        .filter(|group| group.kind == Kind::Function)
-        .map(|group| {
-            let mut members: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            members.sort_unstable();
-            members
-        })
-        .collect();
+    let groups = members(
+        report
+            .groups
+            .iter()
+            .filter(|group| group.kind == Kind::Function),
+    );
     assert_eq!(
         groups,
         vec![vec!["sample::child::original", "sample::child::scheduled"]]

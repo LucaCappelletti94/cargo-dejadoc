@@ -2295,21 +2295,25 @@ fn assign_palette<C: Ord>(sigs: &[Sig<C>]) -> Vec<Color> {
     colors
 }
 
-/// Preserve current identities when remapping future references.
-fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
+/// Substitute the future references of `lbl`, `map_future` building each
+/// `Future` leaf.
+fn future_substitute<F>(lbl: &Lbl, map_future: &F) -> Lbl
+where
+    F: Fn(usize, Option<PrimTy>) -> Lbl,
+{
     match lbl {
-        Lbl::Future(index, prim) => Lbl::Future(ranks[*index], *prim),
-        Lbl::Not(inner) => Lbl::Not(Box::new(future_rank_substitute(inner, ranks))),
+        Lbl::Future(index, prim) => map_future(*index, *prim),
+        Lbl::Not(inner) => Lbl::Not(Box::new(future_substitute(inner, map_future))),
         Lbl::Op(op, left, right, prim) => Lbl::Op(
             *op,
-            Box::new(future_rank_substitute(left, ranks)),
-            Box::new(future_rank_substitute(right, ranks)),
+            Box::new(future_substitute(left, map_future)),
+            Box::new(future_substitute(right, map_future)),
             *prim,
         ),
         Lbl::Flat(op, leaves, prim) => {
             let mut leaves = leaves
                 .iter()
-                .map(|leaf| future_rank_substitute(leaf, ranks))
+                .map(|leaf| future_substitute(leaf, map_future))
                 .collect::<Vec<_>>();
             leaves.sort();
             Lbl::Flat(*op, leaves, *prim)
@@ -2318,13 +2322,13 @@ fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
             kind.clone(),
             children
                 .iter()
-                .map(|child| future_rank_substitute(child, ranks))
+                .map(|child| future_substitute(child, map_future))
                 .collect(),
         ),
         Lbl::Call(callee, args, prim) => Lbl::Call(
-            Box::new(future_rank_substitute(callee, ranks)),
+            Box::new(future_substitute(callee, map_future)),
             args.iter()
-                .map(|arg| future_rank_substitute(arg, ranks))
+                .map(|arg| future_substitute(arg, map_future))
                 .collect(),
             *prim,
         ),
@@ -2332,42 +2336,15 @@ fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
     }
 }
 
+/// Preserve current identities when remapping future references.
+fn future_rank_substitute(lbl: &Lbl, ranks: &[usize]) -> Lbl {
+    future_substitute(lbl, &|index, prim| Lbl::Future(ranks[index], prim))
+}
+
 /// Replace the future references of `lbl` with the referenced futures'
 /// previous-round colors.
 fn future_color_substitute(lbl: &Lbl, colors: &[Color]) -> Lbl {
-    match lbl {
-        Lbl::Future(index, _) => color_node(colors[*index]),
-        Lbl::Not(inner) => Lbl::Not(Box::new(future_color_substitute(inner, colors))),
-        Lbl::Op(op, left, right, prim) => Lbl::Op(
-            *op,
-            Box::new(future_color_substitute(left, colors)),
-            Box::new(future_color_substitute(right, colors)),
-            *prim,
-        ),
-        Lbl::Flat(op, leaves, prim) => {
-            let mut leaves = leaves
-                .iter()
-                .map(|leaf| future_color_substitute(leaf, colors))
-                .collect::<Vec<_>>();
-            leaves.sort();
-            Lbl::Flat(*op, leaves, *prim)
-        }
-        Lbl::Other(kind, children) => Lbl::Other(
-            kind.clone(),
-            children
-                .iter()
-                .map(|child| future_color_substitute(child, colors))
-                .collect(),
-        ),
-        Lbl::Call(callee, args, prim) => Lbl::Call(
-            Box::new(future_color_substitute(callee, colors)),
-            args.iter()
-                .map(|arg| future_color_substitute(arg, colors))
-                .collect(),
-            *prim,
-        ),
-        other => other.clone(),
-    }
+    future_substitute(lbl, &|index, _| color_node(colors[index]))
 }
 
 fn future_refs(lbl: &Lbl, visit: &mut impl FnMut(usize)) {

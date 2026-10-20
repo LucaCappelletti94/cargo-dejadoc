@@ -1,17 +1,15 @@
 //! Public contextual views of the value folds' original sources.
 
+#[path = "support/function.rs"]
+mod functions;
+#[path = "support/impl_item.rs"]
+mod impl_item;
+
+use functions::function;
+use impl_item::impl_method;
+
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_str(source).unwrap())
-}
-
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
 }
 
 fn module_function<'a>(file: &'a syn::File, module: &str, name: &str) -> &'a syn::ItemFn {
@@ -26,20 +24,6 @@ fn module_function<'a>(file: &'a syn::File, module: &str, name: &str) -> &'a syn
                     })
                 })
             }
-            _ => None,
-        })
-        .unwrap()
-}
-
-fn impl_method<'a>(source: &'a syn::File, name: &str) -> &'a syn::ImplItemFn {
-    source
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Impl(item) => item.items.iter().find_map(|member| match member {
-                syn::ImplItem::Fn(function) if function.sig.ident == name => Some(function),
-                _ => None,
-            }),
             _ => None,
         })
         .unwrap()

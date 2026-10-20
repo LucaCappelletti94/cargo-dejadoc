@@ -6,6 +6,11 @@ use serde_json::Value;
 use std::path::Path;
 mod support;
 
+#[path = "support/context_scan.rs"]
+mod context_scan;
+
+use context_scan::{group_items, scan};
+
 fn put(root: &Path, path: &str, text: &str) {
     let file = root.join(path);
     std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -70,44 +75,6 @@ fn fixture() -> tempfile::TempDir {
         );
     }
     dir
-}
-
-fn scan(root: &Path, args: &[&str]) -> Value {
-    let mut options = vec![
-        "--context-blocks",
-        "--context-min-tokens",
-        "0",
-        "--no-fail",
-        "--json",
-    ];
-    options.extend_from_slice(args);
-    let output = support::run_cli(root, &options);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    serde_json::from_slice(&output.stdout).unwrap()
-}
-
-fn group_items(report: &Value) -> Vec<Vec<String>> {
-    let mut groups: Vec<Vec<String>> = report["context_groups"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|group| {
-            let mut items: Vec<String> = group["sites"]
-                .as_array()
-                .unwrap()
-                .iter()
-                .map(|site| site["item"].as_str().unwrap().to_owned())
-                .collect();
-            items.sort();
-            items
-        })
-        .collect();
-    groups.sort();
-    groups
 }
 
 fn packages(report: &Value) -> Vec<String> {

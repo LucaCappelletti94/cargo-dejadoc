@@ -2,30 +2,19 @@
 
 use dejadoc::{Dejadoc, DocTest, Kind, Report, SourceFile, TargetScan, group};
 
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
+#[path = "support/doc_blocks.rs"]
+mod doc_blocks;
+#[path = "support/function_ids.rs"]
+mod functions;
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/public_sites.rs"]
+mod public_sites;
 
-fn function_ids(report: &Report) -> Vec<&str> {
-    let mut ids: Vec<&str> = report
-        .groups
-        .iter()
-        .filter(|group| group.kind == Kind::Function)
-        .map(|group| group.id.as_str())
-        .collect();
-    ids.sort_unstable();
-    ids
-}
+use doc_blocks::doc_blocks;
+use functions::function_ids;
+use group_members::members;
+use public_sites::assert_public_sites;
 
 fn target(text: &str) -> TargetScan {
     TargetScan {
@@ -42,40 +31,13 @@ fn target(text: &str) -> TargetScan {
     }
 }
 
-fn doc_blocks(text: &str) -> Vec<String> {
-    let mut blocks: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
-    for raw in text.lines() {
-        let line = raw.strip_prefix("//!").unwrap_or(raw);
-        if line.trim_start().starts_with("```") {
-            if let Some(block) = current.take() {
-                blocks.push(block);
-            } else {
-                current = Some(String::new());
-            }
-        } else if let Some(block) = current.as_mut() {
-            block.push_str(line);
-            block.push('\n');
-        }
-    }
-    blocks
-}
-
 fn assert_function_groups(report: &Report) {
     let function_groups: Vec<_> = report
         .groups
         .iter()
         .filter(|group| group.kind == Kind::Function)
         .collect();
-    let mut function_members: Vec<Vec<_>> = function_groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    function_members.sort_unstable();
+    let function_members = members(function_groups.iter().copied());
     assert_eq!(
         function_members,
         [
@@ -85,12 +47,7 @@ fn assert_function_groups(report: &Report) {
         ]
     );
     assert!(function_groups.iter().all(|group| group.tokens >= 30));
-    for group in &function_groups {
-        assert!(group.remedy.is_some());
-        assert!(group.sites.iter().all(|site| {
-            site.file == "src/lib.rs" && site.line > 0 && site.end.is_some() && site.public
-        }));
-    }
+    assert_public_sites(&function_groups);
 }
 
 #[test]
@@ -253,7 +210,7 @@ fn item_cli_fixture_boundaries_and_reversed_sites() {
     let included = group(&doctest_sites, 1, 0);
     let reversed = group(&reversed_sites, 1, 0);
     assert_eq!(included.groups.len(), 2);
-    assert_eq!(members(&included), members(&reversed));
+    assert_eq!(members(&included.groups), members(&reversed.groups));
     let included_ids: Vec<&str> = included
         .groups
         .iter()

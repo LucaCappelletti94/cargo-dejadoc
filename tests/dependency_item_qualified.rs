@@ -1,5 +1,10 @@
 //! Qualified owners, import-target aliases, and crate-root proof regressions.
 
+#[path = "support/method_form.rs"]
+mod method_form;
+
+use method_form::method_form;
+
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_file(source).unwrap())
 }
@@ -209,29 +214,6 @@ fn crate_root_owner_does_not_merge_with_a_lexically_shadowing_owner() {
         "struct S; mod m { pub struct S; impl crate::S { fn one() -> u32 { 1 } } impl S { fn two() -> u32 { 2 } } }",
         "struct S; mod m { pub struct S; impl S { fn one() -> u32 { 1 } fn two() -> u32 { 2 } } }",
     );
-}
-
-fn method_form(
-    context: &syn_canon::SourceContext<'_>,
-    source: &syn::File,
-    name: &str,
-) -> syn_canon::CanonicalForm {
-    source
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Impl(impl_item) => impl_item.items.iter().find_map(|member| match member {
-                syn::ImplItem::Fn(function) if function.sig.ident == name => Some(
-                    context
-                        .function(&function.sig, &function.block)
-                        .unwrap()
-                        .canonicalize(),
-                ),
-                _ => None,
-            }),
-            _ => None,
-        })
-        .unwrap()
 }
 
 #[test]

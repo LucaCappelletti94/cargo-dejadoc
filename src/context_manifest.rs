@@ -297,17 +297,7 @@ fn remap_patch_entry(
         let Some(deps) = value.as_table_mut() else {
             continue;
         };
-        let Some(path) = deps.get("path").and_then(toml::Value::as_str) else {
-            continue;
-        };
-        deps.insert(
-            "path".to_owned(),
-            toml::Value::String(
-                mirrored_dep_path(manifest_dir, path, destinations)
-                    .to_string_lossy()
-                    .into_owned(),
-            ),
-        );
+        remap_dep_table(deps, manifest_dir, destinations);
     }
 }
 
@@ -435,23 +425,10 @@ pub(crate) fn remap_value(
     original_root: &str,
 ) -> serde_json::Value {
     let mut value = value;
-    let mut replace = |field: &str, remap: &dyn Fn(&str) -> String| {
-        let current = value
-            .get(field)
-            .and_then(serde_json::Value::as_str)
-            .map(str::to_owned);
-        let Some(current) = current else {
-            return;
-        };
-        let remapped = remap(&current);
-        if remapped != current {
-            value[field] = serde_json::Value::String(remapped);
-        }
-    };
-    replace("workspace_root", &|s| {
+    replace_package_field(&mut value, "workspace_root", &|s| {
         remap_path_str(s, temp_root, original_root)
     });
-    replace("target_directory", &|s| {
+    replace_package_field(&mut value, "target_directory", &|s| {
         remap_path_str(s, temp_root, original_root)
     });
     if let Some(members) = value

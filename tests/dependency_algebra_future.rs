@@ -3,27 +3,12 @@
 use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
+#[path = "support/permutations.rs"]
+mod permutations;
+use permutations::permutations;
+
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_str(source).unwrap())
-}
-
-fn permutations(n: usize) -> Vec<Vec<usize>> {
-    fn extend(n: usize, prefix: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-        if prefix.len() == n {
-            out.push(prefix.clone());
-            return;
-        }
-        for next in 0..n {
-            if !prefix.contains(&next) {
-                prefix.push(next);
-                extend(n, prefix, out);
-                prefix.pop();
-            }
-        }
-    }
-    let mut out = Vec::new();
-    extend(n, &mut Vec::new(), &mut out);
-    out
 }
 
 fn source(

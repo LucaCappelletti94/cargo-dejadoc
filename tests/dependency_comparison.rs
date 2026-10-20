@@ -4,6 +4,10 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 use dejadoc::{DocTest, group};
 use syn_canon::{ContextKind, SourceContext};
 
+#[path = "support/function.rs"]
+mod functions;
+use functions::function;
+
 fn site(item: &str, code: &str) -> DocTest {
     DocTest {
         file: format!("{item}.rs"),
@@ -16,16 +20,6 @@ fn site(item: &str, code: &str) -> DocTest {
         self_type: None,
         public: false,
     }
-}
-
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
 }
 
 fn context_form(file: &syn::File, kind: ContextKind) -> syn_canon::CanonicalForm {

@@ -7,6 +7,10 @@ use std::fmt::Write as _;
 mod value_oracle;
 use value_oracle::{Value, operation};
 
+#[path = "support/permutations.rs"]
+mod permutations;
+use permutations::permutations;
+
 const OPS: [char; 3] = ['&', '|', '^'];
 
 #[derive(Clone, Copy)]
@@ -20,25 +24,6 @@ enum Producer {
     LitLeft(char, usize, u8, u8),
     LitRight(char, usize, u8, u8),
     Copy(usize),
-}
-
-fn permutations(n: usize) -> Vec<Vec<usize>> {
-    fn extend(n: usize, prefix: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-        if prefix.len() == n {
-            out.push(prefix.clone());
-            return;
-        }
-        for next in 0..n {
-            if !prefix.contains(&next) {
-                prefix.push(next);
-                extend(n, prefix, out);
-                prefix.pop();
-            }
-        }
-    }
-    let mut out = Vec::new();
-    extend(n, &mut Vec::new(), &mut out);
-    out
 }
 
 fn choices(available: usize) -> Vec<Producer> {
@@ -440,16 +425,9 @@ fn operand_text(operand: &Operand, names: &[String]) -> String {
     }
 }
 
-fn cross_source(
-    cells: &[Cell],
-    order0: &[usize],
-    order1: &[usize],
-    obs: Option<[usize; 2]>,
-    roots: [usize; 2],
-    names: &[String],
-) -> String {
-    let mut text = "fn compute(first: u32, second: u32) -> (u32, u32) {".to_owned();
-    for &index in order0 {
+/// The ordered let statements of one source, from the given cell order.
+fn write_cells(text: &mut String, cells: &[Cell], order: &[usize], names: &[String]) {
+    for &index in order {
         let cell = &cells[index];
         write!(
             text,
@@ -461,6 +439,17 @@ fn cross_source(
         )
         .unwrap();
     }
+}
+fn cross_source(
+    cells: &[Cell],
+    order0: &[usize],
+    order1: &[usize],
+    obs: Option<[usize; 2]>,
+    roots: [usize; 2],
+    names: &[String],
+) -> String {
+    let mut text = "fn compute(first: u32, second: u32) -> (u32, u32) {".to_owned();
+    write_cells(&mut text, cells, order0, names);
     if let Some(obs) = obs {
         write!(
             text,
@@ -471,18 +460,7 @@ fn cross_source(
     } else {
         text.push_str("println!(\"barrier\");");
     }
-    for &index in order1 {
-        let cell = &cells[index];
-        write!(
-            text,
-            "let {} = {} {} {};",
-            names[index],
-            operand_text(&cell.lhs, names),
-            cell.op,
-            operand_text(&cell.rhs, names)
-        )
-        .unwrap();
-    }
+    write_cells(&mut text, cells, order1, names);
     write!(text, "({}, {})}}", names[roots[0]], names[roots[1]]).unwrap();
     text
 }

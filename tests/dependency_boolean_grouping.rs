@@ -3,35 +3,23 @@
 #[path = "support/dependency.rs"]
 mod support;
 
-use dejadoc::{Dejadoc, DocTest, Report, SourceFile, TargetScan, group};
+#[path = "support/function.rs"]
+mod functions;
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/impl_item.rs"]
+mod impl_item;
+#[path = "support/public_sites.rs"]
+mod public_sites;
+#[path = "support/site_src.rs"]
+mod site_src;
 
-fn site(item: &str, code: &str, info: &[&str]) -> DocTest {
-    DocTest {
-        file: format!("src/{item}.rs"),
-        line: 7,
-        end: Some(11),
-        item: item.to_owned(),
-        info: info.iter().map(|tag| (*tag).to_owned()).collect(),
-        code: code.to_owned(),
-        allow: false,
-        self_type: None,
-        public: false,
-    }
-}
-
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
+use dejadoc::{Dejadoc, SourceFile, TargetScan, group};
+use functions::function;
+use group_members::members;
+use impl_item::impl_method;
+use public_sites::assert_public_sites;
+use site_src::site;
 
 const DOMAINS: [(&str, &str); 6] = [
     (
@@ -71,7 +59,7 @@ fn boolean_grouping_keeps_exact_passing_members_and_excludes_failing_variants() 
         ];
         let report = group(&sites, 2, 0);
         assert_eq!(
-            members(&report),
+            members(&report.groups),
             [vec!["pass_a", "pass_b"]],
             "{left}\n{right}"
         );
@@ -101,7 +89,7 @@ fn boolean_inherited_negatives_keep_four_singletons() {
         ];
         let report = group(&sites, 1, 0);
         assert_eq!(
-            members(&report),
+            members(&report.groups),
             [
                 vec!["fail_a"],
                 vec!["fail_b"],
@@ -129,7 +117,7 @@ fn boolean_later_batch_controls_stay_separate_in_groups() {
         let sites = [site("first", left, &[]), site("second", right, &[])];
         let report = group(&sites, 1, 0);
         assert_eq!(
-            members(&report),
+            members(&report.groups),
             [vec!["first"], vec!["second"]],
             "{left}\n{right}"
         );
@@ -159,36 +147,12 @@ fn boolean_threshold_uses_one_canonical_size_in_both_site_orders() {
         let reversed = [site("second", right, &[]), site("first", left, &[])];
         let included = group(&sites, 2, a.leaf_tokens());
         let reversed_report = group(&reversed, 2, a.leaf_tokens());
-        assert_eq!(members(&included), [vec!["first", "second"]]);
-        assert_eq!(members(&reversed_report), members(&included));
+        assert_eq!(members(&included.groups), [vec!["first", "second"]]);
+        assert_eq!(members(&reversed_report.groups), members(&included.groups));
         assert_eq!(included.groups[0].id, reversed_report.groups[0].id);
         assert_eq!(included.groups[0].tokens, a.leaf_tokens());
         assert_eq!(group(&sites, 2, a.leaf_tokens() + 1).groups.len(), 0);
     }
-}
-
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
-}
-
-fn impl_method<'a>(source: &'a syn::File, name: &str) -> &'a syn::ImplItemFn {
-    source
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Impl(item) => item.items.iter().find_map(|member| match member {
-                syn::ImplItem::Fn(function) if function.sig.ident == name => Some(function),
-                _ => None,
-            }),
-            _ => None,
-        })
-        .unwrap()
 }
 
 #[test]
@@ -339,15 +303,7 @@ fn boolean_cli_fixture_preserves_exact_function_and_doctest_members() {
             .iter()
             .filter(|group| group.kind == dejadoc::Kind::Function)
             .collect();
-        let mut function_members: Vec<Vec<_>> = function_groups
-            .iter()
-            .map(|group| {
-                let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-                items.sort_unstable();
-                items
-            })
-            .collect();
-        function_members.sort_unstable();
+        let function_members = members(function_groups.iter().copied());
         assert_eq!(
             function_members,
             [
@@ -357,12 +313,7 @@ fn boolean_cli_fixture_preserves_exact_function_and_doctest_members() {
             ]
         );
         assert!(function_groups.iter().all(|group| group.tokens >= 30));
-        for group in &function_groups {
-            assert!(group.remedy.is_some());
-            assert!(group.sites.iter().all(|site| {
-                site.file == "src/lib.rs" && site.line > 0 && site.end.is_some() && site.public
-            }));
-        }
+        assert_public_sites(&function_groups);
         let doctest_groups: Vec<_> = report
             .groups
             .iter()

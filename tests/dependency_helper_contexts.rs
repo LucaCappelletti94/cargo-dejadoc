@@ -1,5 +1,9 @@
 //! Public contextual resolution of local helper calls through original views.
 
+#[path = "support/spans.rs"]
+mod spans;
+
+use spans::reset_spans;
 fn context(file: &syn::File) -> syn_canon::SourceContext<'_> {
     syn_canon::SourceContext::new(core::iter::once((&[][..], file)))
 }
@@ -265,26 +269,11 @@ fn detached_reporting_keeps_unresolved_helper_order() {
 
 #[test]
 fn constructed_helper_origins_ignore_shared_spans() {
-    fn shared(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        stream
-            .into_iter()
-            .map(|mut token| {
-                if let proc_macro2::TokenTree::Group(group) = token {
-                    token = proc_macro2::TokenTree::Group(proc_macro2::Group::new(
-                        group.delimiter(),
-                        shared(group.stream()),
-                    ));
-                }
-                token.set_span(proc_macro2::Span::call_site());
-                token
-            })
-            .collect()
-    }
     let helpers = "fn low(x:u32)->u32{x&15u32}fn high(x:u32)->u32{x>>4}";
     let source = format!(
         "{helpers}fn first(x:u32)->(u32,u32){{let a=low(x);let b=high(x);(a,b)}}fn same(x:u32)->(u32,u32){{let b=high(x);let a=low(x);(a,b)}}fn changed(x:u32)->(u32,u32){{let a=low(x);let b=low(x);(a,b)}}"
     );
-    let file: syn::File = syn::parse2(shared(source.parse().unwrap())).unwrap();
+    let file: syn::File = syn::parse2(reset_spans(source.parse().unwrap())).unwrap();
     let context = context(&file);
     let view = |name: &str| {
         let declaration = function(&file, None, name);

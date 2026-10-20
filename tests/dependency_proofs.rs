@@ -405,6 +405,10 @@ fn form(source: &str) -> CanonicalForm {
 }
 
 fn alias_chain(count: usize) -> String {
+    format!("{} fn f(x: a0) -> a0 {{ x }}", alias_types(count))
+}
+
+fn alias_types(count: usize) -> String {
     let mut out = String::new();
     for hop in 0..count {
         let name = format!("a{hop}");
@@ -415,20 +419,11 @@ fn alias_chain(count: usize) -> String {
         };
         write!(out, "type {name} = {target};").unwrap();
     }
-    format!("{out} fn f(x: a0) -> a0 {{ x }}")
+    out
 }
 
 fn chained_alias_swap_source(count: usize, swapped: bool) -> String {
-    let mut out = String::new();
-    for hop in 0..count {
-        let name = format!("a{hop}");
-        let target = if hop + 1 == count {
-            "u32".to_owned()
-        } else {
-            format!("a{}", hop + 1)
-        };
-        write!(out, "type {name} = {target};").unwrap();
-    }
+    let out = alias_types(count);
     let body = if swapped {
         "let high = x >> 4; let low = x & 15u32; (low, high)"
     } else {
@@ -581,6 +576,22 @@ fn cfg_attribution_blocks_alias_primitives() {
     );
 }
 
+fn prefix_distinguishes(prefix: &str, plain_form: &CanonicalForm) {
+    let prefixed: syn::File = syn::parse_str(&format!(
+        "{prefix} type Word = u32; fn f(x: Word) -> Word {{ x }}"
+    ))
+    .unwrap();
+    let prefixed_context = SourceContext::new(core::iter::once((&[][..], &prefixed)));
+    let prefixed_fn = function(&prefixed, "f");
+    assert_ne!(
+        prefixed_context
+            .function(&prefixed_fn.sig, &prefixed_fn.block)
+            .unwrap()
+            .canonicalize(),
+        *plain_form,
+    );
+}
+
 #[test]
 fn forward_type_shadows_block_alias_primitives() {
     let plain: syn::File = syn::parse_str("type Word = u32; fn f(x: Word) -> Word { x }").unwrap();
@@ -591,19 +602,7 @@ fn forward_type_shadows_block_alias_primitives() {
         .unwrap()
         .canonicalize();
     for shadow in ["struct u32;", "enum u32 { V }", "union u32 { v: usize }"] {
-        let shadowed: syn::File = syn::parse_str(&format!(
-            "{shadow} type Word = u32; fn f(x: Word) -> Word {{ x }}"
-        ))
-        .unwrap();
-        let shadowed_context = SourceContext::new(core::iter::once((&[][..], &shadowed)));
-        let shadowed_fn = function(&shadowed, "f");
-        assert_ne!(
-            shadowed_context
-                .function(&shadowed_fn.sig, &shadowed_fn.block)
-                .unwrap()
-                .canonicalize(),
-            plain_form,
-        );
+        prefix_distinguishes(shadow, &plain_form);
     }
 }
 
@@ -644,19 +643,7 @@ fn imports_claiming_the_target_block_alias_primitives() {
         "mod m { pub struct u32; } use m::{u32};",
         "mod m { pub struct other; } use m::other as u32;",
     ] {
-        let claimed: syn::File = syn::parse_str(&format!(
-            "{import} type Word = u32; fn f(x: Word) -> Word {{ x }}"
-        ))
-        .unwrap();
-        let claimed_context = SourceContext::new(core::iter::once((&[][..], &claimed)));
-        let claimed_fn = function(&claimed, "f");
-        assert_ne!(
-            claimed_context
-                .function(&claimed_fn.sig, &claimed_fn.block)
-                .unwrap()
-                .canonicalize(),
-            plain_form,
-        );
+        prefix_distinguishes(import, &plain_form);
     }
 }
 

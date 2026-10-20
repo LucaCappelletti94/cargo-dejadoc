@@ -1,15 +1,8 @@
 //! Local helper composition in borrowed function views.
 
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
-}
-
+#[path = "support/function.rs"]
+mod functions;
+use functions::function;
 #[test]
 fn borrowed_views_compose_local_helpers_with_parameter_copies() {
     let source: syn::File = syn::parse_str(

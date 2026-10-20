@@ -7,30 +7,15 @@ use std::fmt::Write as _;
 mod value_oracle;
 use value_oracle::{Value, operation};
 
+#[path = "support/permutations.rs"]
+mod permutations;
+use permutations::permutations;
+
 #[derive(Clone, Copy)]
 enum Producer {
     Argument(usize),
     Previous(usize),
     Pair(usize, usize),
-}
-
-fn permutations(n: usize) -> Vec<Vec<usize>> {
-    fn extend(n: usize, prefix: &mut Vec<usize>, out: &mut Vec<Vec<usize>>) {
-        if prefix.len() == n {
-            out.push(prefix.clone());
-            return;
-        }
-        for next in 0..n {
-            if !prefix.contains(&next) {
-                prefix.push(next);
-                extend(n, prefix, out);
-                prefix.pop();
-            }
-        }
-    }
-    let mut out = Vec::new();
-    extend(n, &mut Vec::new(), &mut out);
-    out
 }
 
 fn models(n: usize) -> Vec<Vec<Producer>> {

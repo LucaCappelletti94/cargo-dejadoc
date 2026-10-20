@@ -3,35 +3,20 @@
 #[path = "support/dependency.rs"]
 mod support;
 
-use dejadoc::{Dejadoc, DocTest, Report, SourceFile, TargetScan, group};
+#[path = "support/fixture_group.rs"]
+mod fixture_group;
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/public_sites.rs"]
+mod public_sites;
+#[path = "support/site_src.rs"]
+mod site_src;
 
-fn site(item: &str, code: &str, info: &[&str]) -> DocTest {
-    DocTest {
-        file: format!("src/{item}.rs"),
-        line: 7,
-        end: Some(11),
-        item: item.to_owned(),
-        info: info.iter().map(|tag| (*tag).to_owned()).collect(),
-        code: code.to_owned(),
-        allow: false,
-        self_type: None,
-        public: false,
-    }
-}
-
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
+use dejadoc::{Dejadoc, SourceFile, TargetScan, group};
+use fixture_group::assert_fixture_group;
+use group_members::members;
+use public_sites::assert_public_sites;
+use site_src::site;
 
 #[test]
 fn algebra_grouping_preserves_exact_fixture_members_and_failing_flags() {
@@ -46,17 +31,7 @@ fn algebra_grouping_preserves_exact_fixture_members_and_failing_flags() {
             ]
             .contains(&case.id.as_str())
     }) {
-        let sites = [
-            site("pass_a", &case.a, &[]),
-            site("pass_b", &case.b, &[]),
-            site("fail_a", &case.a, &["compile_fail"]),
-            site("fail_b", &case.b, &["compile_fail"]),
-        ];
-        let report = group(&sites, 2, 0);
-        assert_eq!(members(&report), [vec!["pass_a", "pass_b"]], "{}", case.id);
-        assert!(report.groups[0].sites.iter().all(|member| {
-            member.line == 7 && member.end == Some(11) && member.info.is_empty()
-        }));
+        assert_fixture_group(case);
     }
 }
 
@@ -80,8 +55,8 @@ fn algebra_threshold_uses_one_canonical_size_in_both_site_orders() {
         let reversed = [sites[1].clone(), sites[0].clone()];
         let included = group(&sites, 2, a.leaf_tokens());
         let reversed_report = group(&reversed, 2, a.leaf_tokens());
-        assert_eq!(members(&included), [vec!["first", "second"]]);
-        assert_eq!(members(&reversed_report), members(&included));
+        assert_eq!(members(&included.groups), [vec!["first", "second"]]);
+        assert_eq!(members(&reversed_report.groups), members(&included.groups));
         assert_eq!(included.groups[0].id, reversed_report.groups[0].id);
         assert_eq!(included.groups[0].tokens, a.leaf_tokens());
         assert_eq!(group(&sites, 2, a.leaf_tokens() + 1).groups.len(), 0);
@@ -117,15 +92,7 @@ fn algebra_contextual_function_groups_preserve_modules_owners_and_neighbours() {
             .iter()
             .filter(|group| group.kind == dejadoc::Kind::Function)
             .collect();
-        let mut function_members: Vec<Vec<_>> = function_groups
-            .iter()
-            .map(|group| {
-                let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-                items.sort_unstable();
-                items
-            })
-            .collect();
-        function_members.sort_unstable();
+        let function_members = members(function_groups.iter().copied());
         assert_eq!(
             function_members,
             [
@@ -135,11 +102,6 @@ fn algebra_contextual_function_groups_preserve_modules_owners_and_neighbours() {
             ]
         );
         assert!(function_groups.iter().all(|group| group.tokens == 10));
-        for group in function_groups {
-            assert!(group.remedy.is_some());
-            assert!(group.sites.iter().all(|site| {
-                site.file == "src/lib.rs" && site.line > 0 && site.end.is_some() && site.public
-            }));
-        }
+        assert_public_sites(&function_groups);
     }
 }

@@ -3,35 +3,15 @@
 #[path = "support/dependency.rs"]
 mod support;
 
-use dejadoc::{DocTest, Report, group};
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/site_file.rs"]
+mod site_file;
 
-fn site(item: &str, code: &str, info: &[&str]) -> DocTest {
-    DocTest {
-        file: format!("{item}.rs"),
-        line: 1,
-        end: None,
-        item: item.to_owned(),
-        info: info.iter().map(|tag| (*tag).to_owned()).collect(),
-        code: code.to_owned(),
-        allow: false,
-        self_type: None,
-        public: false,
-    }
-}
+use group_members::members;
+use site_file::site;
 
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<&str> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
+use dejadoc::{DocTest, group};
 
 fn a09() -> &'static support::Case {
     support::cases()
@@ -63,7 +43,7 @@ fn constant_grouping_joins_the_folded_a09_pair() {
     {
         let sites = [site("folded", &case.a, &[]), site("literal", &case.b, &[])];
         assert_eq!(
-            members(&group(&sites, 1, 0)),
+            members(group(&sites, 1, 0).groups.iter()),
             vec![vec!["folded", "literal"]],
             "{}",
             case.id
@@ -82,7 +62,7 @@ fn constant_grouping_keeps_neighbours_outside_the_group() {
         width,
     ];
     assert_eq!(
-        members(&group(&sites, 1, 0)),
+        members(group(&sites, 1, 0).groups.iter()),
         vec![vec!["folded", "literal"], vec!["value"], vec!["width"]]
     );
 }
@@ -97,7 +77,7 @@ fn constant_grouping_separates_compile_fail_forms() {
         site("fail_literal", &case.b, &["compile_fail"]),
     ];
     assert_eq!(
-        members(&group(&sites, 2, 0)),
+        members(group(&sites, 2, 0).groups.iter()),
         vec![vec!["pass_folded", "pass_literal"]]
     );
 }
@@ -107,21 +87,24 @@ fn constant_grouping_threshold_and_canonical_size_boundary() {
     let case = a09();
     let sites = [site("folded", &case.a, &[]), site("literal", &case.b, &[])];
     assert_eq!(
-        members(&group(&sites, 1, 0)),
+        members(group(&sites, 1, 0).groups.iter()),
         vec![vec!["folded", "literal"]]
     );
     assert_eq!(
-        members(&group(&sites, 2, 0)),
+        members(group(&sites, 2, 0).groups.iter()),
         vec![vec!["folded", "literal"]]
     );
-    assert_eq!(members(&group(&sites, 3, 0)), Vec::<Vec<&str>>::new());
+    assert_eq!(
+        members(group(&sites, 3, 0).groups.iter()),
+        Vec::<Vec<&str>>::new()
+    );
     let size = group(&sites, 2, 0).groups[0].tokens;
     assert_eq!(
-        members(&group(&sites, 2, size)),
+        members(group(&sites, 2, size).groups.iter()),
         vec![vec!["folded", "literal"]]
     );
     assert_eq!(
-        members(&group(&sites, 2, size + 1)),
+        members(group(&sites, 2, size + 1).groups.iter()),
         Vec::<Vec<&str>>::new()
     );
     let unfolded = syn_canon::canonicalize(syn::parse_str(&case.a).unwrap());
@@ -144,7 +127,7 @@ fn constant_grouping_identity_is_independent_of_site_enumeration() {
     ];
     let reversed: Vec<DocTest> = sites.iter().rev().cloned().collect();
     assert_eq!(
-        members(&group(&sites, 1, 0)),
-        members(&group(&reversed, 1, 0))
+        members(group(&sites, 1, 0).groups.iter()),
+        members(group(&reversed, 1, 0).groups.iter())
     );
 }
