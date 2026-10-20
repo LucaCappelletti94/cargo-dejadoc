@@ -433,15 +433,20 @@ fn a_bare_organization_flag_scans_the_current_repository_owner() {
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("is not a GitHub repository"), "{stderr}");
     // An invalid owner is refused before any request, so no network is needed.
-    let out = Command::new(bin)
-        .current_dir(dir.path())
-        .env("GITHUB_REPOSITORY_OWNER", "../evil")
-        .args(["dejadoc", "--organization", "--no-fail", "--json"])
-        .output()
-        .expect("run dejadoc binary");
-    assert_eq!(out.status.code(), Some(2));
-    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
-    assert_eq!(report["organization"]["name"], "../evil");
+    for args in [
+        ["dejadoc", "--organization", "--no-fail", "--json"],
+        ["dejadoc", "--organization=../evil", "--no-fail", "--json"],
+    ] {
+        let out = Command::new(bin)
+            .current_dir(dir.path())
+            .env("GITHUB_REPOSITORY_OWNER", "../evil")
+            .args(args)
+            .output()
+            .expect("run dejadoc binary");
+        assert_eq!(out.status.code(), Some(2), "{args:?}");
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert_eq!(report["organization"]["name"], "../evil", "{args:?}");
+    }
 }
 
 #[test]

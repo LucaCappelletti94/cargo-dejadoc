@@ -476,19 +476,19 @@ impl Dejadoc {
             return Err(Error::UnknownOrganizationPackage(name.to_string()));
         }
         let expand_contexts = self.context_select.is_some() || self.context_search.is_some();
-        let (repo_names, repo_roots, mut failures) = organization_roots(&corpus);
-        let repo_lookup: BTreeMap<String, usize> = repo_names
+        let repo_lookup: BTreeMap<&str, usize> = corpus
+            .report
+            .repositories
             .iter()
             .enumerate()
-            .map(|(index, name)| (name.to_string(), index))
+            .map(|(index, repo)| (repo.name.as_str(), index))
             .collect();
         let OrganizationTargets {
             targets,
             context_targets,
             mut ownership,
-            failures: target_failures,
-        } = organization_targets(&self, &corpus, &repo_names, &repo_roots, expand_contexts);
-        failures.extend(target_failures);
+            mut failures,
+        } = organization_targets(&self, &corpus, expand_contexts);
         let include_failures = core::cell::RefCell::new(Vec::new());
         let include_edges = core::cell::RefCell::new(Vec::new());
         let legacy_roots: BTreeSet<String> = targets
@@ -496,8 +496,12 @@ impl Dejadoc {
             .filter_map(|target| target.files.first().map(|file| file.path.clone()))
             .collect();
         let mut report = {
-            let read =
-                organization_read(&repo_lookup, &repo_roots, &include_failures, &include_edges);
+            let read = organization_read(
+                &repo_lookup,
+                &corpus.roots,
+                &include_failures,
+                &include_edges,
+            );
             self.scan(
                 "",
                 &targets,
@@ -517,9 +521,10 @@ impl Dejadoc {
         failures.extend(include_failures.into_inner());
         let mut contributions: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
         for (containing, included) in include_edges.into_inner() {
-            if let Some(owners) = ownership.get(&containing) {
-                contributions.entry(included).or_default().extend(owners);
-            }
+            contributions
+                .entry(included)
+                .or_default()
+                .extend(&ownership[&containing]);
         }
         for (included, mut owners) in contributions {
             ownership.entry(included).or_default().append(&mut owners);
@@ -1220,39 +1225,20 @@ fn owner_roles_conflict(members: &[functions::FnSite]) -> bool {
     })
 }
 
-/// A repository snapshot root as recorded and canonicalized, absent when unavailable.
+/// The path of a module file inside the canonical snapshot `root`, through its canonical
+/// form when the written path reaches the snapshot through an outside alias.
 #[cfg(feature = "std")]
-type RepoRoot = Option<(PathBuf, PathBuf)>;
-
-/// The repository names, canonicalized snapshot roots and coverage failures of `corpus`.
-#[cfg(feature = "std")]
-fn organization_roots(
-    corpus: &organization_source::Corpus,
-) -> (Vec<&str>, Vec<RepoRoot>, Vec<String>) {
-    let repo_names: Vec<&str> = corpus
-        .report
-        .repositories
-        .iter()
-        .map(|repo| repo.name.as_str())
-        .collect();
-    let mut failures = Vec::new();
-    let mut repo_roots = Vec::with_capacity(corpus.roots.len());
-    for (index, root) in corpus.roots.iter().enumerate() {
-        let Some(root) = root else {
-            repo_roots.push(None);
-            continue;
-        };
-        if let Ok(canonical) = std::fs::canonicalize(root) {
-            repo_roots.push(Some((root.clone(), canonical)));
-        } else {
-            failures.push(format!(
-                "{}: cannot establish the repository snapshot",
-                repo_names[index]
-            ));
-            repo_roots.push(None);
-        }
+fn snapshot_relative(path: &Path, root: &Path) -> Option<PathBuf> {
+    match path.strip_prefix(root) {
+        Ok(relative) => Some(relative.to_path_buf()),
+        Err(_) => Some(
+            std::fs::canonicalize(path)
+                .ok()?
+                .strip_prefix(root)
+                .ok()?
+                .to_path_buf(),
+        ),
     }
-    (repo_names, repo_roots, failures)
 }
 
 /// The organization scan inputs prepared from a corpus.
@@ -1274,8 +1260,6 @@ struct OrganizationTargets {
 fn organization_targets(
     dejadoc: &Dejadoc,
     corpus: &organization_source::Corpus,
-    repo_names: &[&str],
-    repo_roots: &[RepoRoot],
     expand_contexts: bool,
 ) -> OrganizationTargets {
     let mut failures = Vec::new();
@@ -1284,14 +1268,10 @@ fn organization_targets(
     let mut ownership: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
     for source in &corpus.packages {
         let record = &corpus.report.packages[source.package];
-        let repo_name = repo_names[record.repository];
-        let Some((root, _)) = &repo_roots[record.repository] else {
-            failures.push(format!(
-                "{repo_name}: the snapshot is unavailable for package {}",
-                record.name
-            ));
-            continue;
-        };
+        let repo_name = corpus.report.repositories[record.repository].name.as_str();
+        let root = corpus.roots[record.repository]
+            .as_deref()
+            .expect("packages come from repositories with snapshots");
         let selected = dejadoc
             .package
             .as_deref()
@@ -1312,9 +1292,10 @@ fn organization_targets(
                 files
                     .into_iter()
                     .map(|mut file| {
-                        if let Ok(rel) = Path::new(&file.path).strip_prefix(root) {
-                            file.path = format!("{repo_name}/{}", organization::path_label(rel));
-                        }
+                        let relative = snapshot_relative(Path::new(&file.path), root);
+                        file.path = relative.map_or(file.path, |relative| {
+                            format!("{repo_name}/{}", organization::path_label(&relative))
+                        });
                         ownership
                             .entry(file.path.clone())
                             .or_default()
@@ -1351,27 +1332,18 @@ fn organization_targets(
 /// the owning repository snapshot and recording failures and provenance edges.
 #[cfg(feature = "std")]
 fn organization_read<'a>(
-    repo_lookup: &'a BTreeMap<String, usize>,
-    repo_roots: &'a [RepoRoot],
+    repo_lookup: &'a BTreeMap<&str, usize>,
+    repo_roots: &'a [Option<PathBuf>],
     include_failures: &'a core::cell::RefCell<Vec<String>>,
     include_edges: &'a core::cell::RefCell<Vec<(String, String)>>,
 ) -> impl Fn(&str, &str) -> Option<(String, String)> + 'a {
     move |file: &str, written: &str| -> Option<(String, String)> {
-        let Some((separator, _)) = file.match_indices('/').nth(1) else {
-            include_failures.borrow_mut().push(format!(
-                "{file}: doc include {written} names no repository file"
-            ));
-            return None;
-        };
-        let (repo_name, relative) = file.split_at(separator);
-        let relative = &relative[1..];
-        let Some(&index) = repo_lookup.get(repo_name) else {
-            include_failures
-                .borrow_mut()
-                .push(format!("{file}: doc include {written} names no repository"));
-            return None;
-        };
-        let Some((root, canonical_root)) = &repo_roots[index] else {
+        let snapshot = file.match_indices('/').nth(1).and_then(|(separator, _)| {
+            let (repo_name, relative) = file.split_at(separator);
+            let root = repo_roots[*repo_lookup.get(repo_name)?].as_deref()?;
+            Some((repo_name, &relative[1..], root))
+        });
+        let Some((repo_name, relative, root)) = snapshot else {
             include_failures.borrow_mut().push(format!(
                 "{file}: doc include {written} has no repository snapshot"
             ));
@@ -1392,12 +1364,12 @@ fn organization_read<'a>(
                 return None;
             }
         };
-        if !canonical.starts_with(canonical_root) {
+        let Ok(rel) = canonical.strip_prefix(root) else {
             include_failures.borrow_mut().push(format!(
                 "{file}: doc include {written} escapes the repository snapshot"
             ));
             return None;
-        }
+        };
         let text = match std::fs::read_to_string(&canonical) {
             Ok(text) => text,
             Err(err) => {
@@ -1407,9 +1379,6 @@ fn organization_read<'a>(
                 return None;
             }
         };
-        let rel = canonical
-            .strip_prefix(canonical_root)
-            .expect("the canonical include path is inside the root");
         let qualified = format!("{repo_name}/{}", organization::path_label(rel));
         include_edges
             .borrow_mut()

@@ -76,13 +76,6 @@ pub(crate) fn discover(commit: &Path, all_targets: bool) -> Discovery {
             return discovery;
         }
     };
-    let isolation = match Isolation::new(home) {
-        Ok(isolation) => isolation,
-        Err(failure) => {
-            discovery.failures.push(failure);
-            return discovery;
-        }
-    };
     let mut visited = BTreeSet::new();
     let mut manifests = BTreeSet::new();
     visited.insert(root.clone());
@@ -99,7 +92,7 @@ pub(crate) fn discover(commit: &Path, all_targets: bool) -> Discovery {
         if covered_manifests.contains(&manifest) || covered_roots.contains(&manifest) {
             continue;
         }
-        let metadata = match invoke_metadata(&isolation, &manifest) {
+        let metadata = match invoke_metadata(&home, &manifest) {
             Ok(metadata) => metadata,
             Err(error) => {
                 discovery
@@ -108,22 +101,17 @@ pub(crate) fn discover(commit: &Path, all_targets: bool) -> Discovery {
                 continue;
             }
         };
-        let Ok(workspace_root) = std::fs::canonicalize(&metadata.workspace_root) else {
-            discovery.failures.push(qualify(
-                &root,
-                &manifest,
-                "the workspace root cannot be resolved",
-            ));
-            continue;
-        };
-        if !workspace_root.starts_with(&root) {
+        let Some(workspace_root) = std::fs::canonicalize(&metadata.workspace_root)
+            .ok()
+            .filter(|workspace_root| workspace_root.starts_with(&root))
+        else {
             discovery.failures.push(qualify(
                 &root,
                 &manifest,
                 "the workspace root resolves outside the snapshot",
             ));
             continue;
-        }
+        };
         covered_roots.insert(workspace_root.join("Cargo.toml"));
         for package in &metadata.packages {
             let Some(package) = package_targets(
@@ -142,41 +130,6 @@ pub(crate) fn discover(commit: &Path, all_targets: bool) -> Discovery {
     discovery
 }
 
-/// The directories cargo runs with, none of which another user or the snapshot controls.
-struct Isolation {
-    /// The commit directory, `CARGO_HOME`.
-    home: PathBuf,
-    /// A private working directory, absent where the root-owned `/` serves.
-    working: Option<tempfile::TempDir>,
-    /// The isolated `CARGO_TARGET_DIR`.
-    target: tempfile::TempDir,
-}
-
-impl Isolation {
-    /// Create the private directories, or the coverage failure naming the one that failed.
-    fn new(home: PathBuf) -> Result<Self, String> {
-        let make = |what: &str| {
-            tempfile::tempdir().map_err(|error| format!(".: the {what} cannot be created {error}"))
-        };
-        Ok(Self {
-            home,
-            working: if cfg!(unix) {
-                None
-            } else {
-                Some(make("private working directory")?)
-            },
-            target: make("isolated cargo target directory")?,
-        })
-    }
-
-    /// The working directory, whose ancestors supply no cargo or rustup configuration.
-    fn working(&self) -> &Path {
-        self.working
-            .as_ref()
-            .map_or(Path::new("/"), tempfile::TempDir::path)
-    }
-}
-
 /// The confined targets of one metadata package, recording a failure for every escape.
 fn package_targets(
     root: &Path,
@@ -186,25 +139,20 @@ fn package_targets(
     covered_manifests: &mut BTreeSet<PathBuf>,
     failures: &mut Vec<String>,
 ) -> Option<PackageTargets> {
-    let Ok(manifest_path) = manifest_identity(package.manifest_path.as_std_path()) else {
-        failures.push(qualify(
-            root,
-            manifest,
-            "a package manifest cannot be resolved",
-        ));
-        return None;
-    };
-    covered_manifests.insert(manifest_path.clone());
     let confined = std::fs::canonicalize(package.manifest_path.as_std_path())
         .is_ok_and(|target| target.starts_with(root));
-    if !manifest_path.starts_with(root) || !confined {
+    let Some(manifest_path) = manifest_identity(package.manifest_path.as_std_path())
+        .ok()
+        .filter(|identity| confined && identity.starts_with(root))
+    else {
         failures.push(qualify(
             root,
             manifest,
             "a workspace member resolves outside the snapshot",
         ));
         return None;
-    }
+    };
+    covered_manifests.insert(manifest_path.clone());
     let mut targets = Vec::new();
     for target in &package.targets {
         match std::fs::canonicalize(&target.src_path) {
@@ -232,15 +180,13 @@ fn package_targets(
 /// The `Cargo.toml` spelling inside its canonical owning directory, the path Cargo accepts
 /// and the identity that deduplicates aliases.
 fn manifest_identity(manifest: &Path) -> std::io::Result<PathBuf> {
-    let parent = manifest
-        .parent()
-        .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::NotFound))?;
-    Ok(std::fs::canonicalize(parent)?.join("Cargo.toml"))
+    Ok(std::fs::canonicalize(manifest.parent().unwrap_or(manifest))?.join("Cargo.toml"))
 }
 
-/// Run the bounded offline cargo metadata job for one manifest.
+/// Run the bounded offline cargo metadata job for one manifest, `home` serving as both
+/// `CARGO_HOME` and the parent of an unused `CARGO_TARGET_DIR`.
 fn invoke_metadata(
-    isolation: &Isolation,
+    home: &Path,
     manifest: &Path,
 ) -> Result<cargo_metadata::Metadata, ManifestError> {
     let mut command = std::process::Command::new("cargo");
@@ -254,18 +200,21 @@ fn invoke_metadata(
             "--manifest-path",
         ])
         .arg(manifest)
-        .current_dir(isolation.working())
         .env_clear()
-        .env("CARGO_HOME", &isolation.home)
-        .env("CARGO_TARGET_DIR", isolation.target.path());
+        .env("CARGO_HOME", home)
+        .env("CARGO_TARGET_DIR", home.join("target"));
+    // Ancestors of the working directory supply cargo and rustup configuration.
+    #[cfg(unix)]
+    command.current_dir("/");
+    #[cfg(not(unix))]
+    command.current_dir(home);
     for key in TRUSTED_ENVIRONMENT {
         if let Some(value) = std::env::var_os(key) {
             command.env(key, value);
         }
     }
     let id = crate::dependencies::next_proc_id();
-    let output = crate::dependencies::run_bounded(&mut command, METADATA_DEADLINE, &id)
-        .map_err(|source| ManifestError::Process { source })?;
+    let output = crate::dependencies::run_bounded(&mut command, METADATA_DEADLINE, &id)?;
     if !output.status.success() {
         return Err(ManifestError::Status {
             status: output.status,
@@ -281,7 +230,7 @@ enum ManifestError {
     /// The bounded subprocess itself failed.
     #[error("{source}")]
     Process {
-        #[source]
+        #[from]
         source: crate::dependencies::ProcessError,
     },
     /// cargo finished with a nonzero status, for a malformed manifest or an
@@ -309,7 +258,7 @@ fn walk_snapshot(
     manifests: &mut BTreeSet<PathBuf>,
     failures: &mut Vec<String>,
 ) {
-    let entries = match std::fs::read_dir(dir) {
+    let entries = match directory_entries(dir) {
         Ok(entries) => entries,
         Err(error) => {
             failures.push(qualify(
@@ -320,30 +269,7 @@ fn walk_snapshot(
             return;
         }
     };
-    for entry in entries {
-        let entry = match entry {
-            Ok(entry) => entry,
-            Err(error) => {
-                failures.push(qualify(
-                    root,
-                    dir,
-                    &format!("an entry cannot be read {error}"),
-                ));
-                continue;
-            }
-        };
-        let path = entry.path();
-        let file_type = match entry.file_type() {
-            Ok(file_type) => file_type,
-            Err(error) => {
-                failures.push(qualify(
-                    root,
-                    &path,
-                    &format!("the entry type cannot be read {error}"),
-                ));
-                continue;
-            }
-        };
+    for (path, name, file_type) in entries {
         if file_type.is_symlink() {
             let target = match std::fs::canonicalize(&path) {
                 Ok(target) => target,
@@ -364,8 +290,8 @@ fn walk_snapshot(
                 ));
                 continue;
             }
-            if entry.file_name() == "Cargo.toml" && !target.is_dir() {
-                queue_manifest(root, &path, manifests, failures);
+            if name == "Cargo.toml" && !target.is_dir() {
+                manifests.insert(dir.join("Cargo.toml"));
             } else if target.is_dir() && visited.insert(target.clone()) {
                 walk_snapshot(root, &target, visited, manifests, failures);
             }
@@ -374,8 +300,8 @@ fn walk_snapshot(
                 walk_snapshot(root, &path, visited, manifests, failures);
             }
         } else if file_type.is_file() {
-            if entry.file_name() == "Cargo.toml" {
-                queue_manifest(root, &path, manifests, failures);
+            if name == "Cargo.toml" {
+                manifests.insert(dir.join("Cargo.toml"));
             }
         } else {
             failures.push(qualify(
@@ -387,23 +313,16 @@ fn walk_snapshot(
     }
 }
 
-/// Queue one manifest by its identity, recording a failure when its directory is unresolvable.
-fn queue_manifest(
-    root: &Path,
-    manifest: &Path,
-    manifests: &mut BTreeSet<PathBuf>,
-    failures: &mut Vec<String>,
-) {
-    match manifest_identity(manifest) {
-        Ok(identity) => {
-            manifests.insert(identity);
-        }
-        Err(error) => failures.push(qualify(
-            root,
-            manifest,
-            &format!("the manifest cannot be resolved {error}"),
-        )),
-    }
+/// The path, name and type of every entry of `dir`.
+fn directory_entries(
+    dir: &Path,
+) -> std::io::Result<Vec<(PathBuf, std::ffi::OsString, std::fs::FileType)>> {
+    std::fs::read_dir(dir)?
+        .map(|entry| {
+            let entry = entry?;
+            Ok((entry.path(), entry.file_name(), entry.file_type()?))
+        })
+        .collect()
 }
 
 /// One coverage failure entry, anchored at the snapshot-relative manifest.
@@ -932,6 +851,68 @@ mod tests {
                 .any(|failure| failure.starts_with("Cargo.toml: ")
                     && failure.contains("outside the snapshot")),
             "{:#?}",
+            discovery.failures
+        );
+    }
+
+    #[test]
+    fn a_commit_without_its_tree_is_one_root_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let discovery = discover(dir.path(), false);
+        assert!(discovery.packages.is_empty());
+        assert_eq!(discovery.failures.len(), 1);
+        assert!(
+            discovery.failures[0].starts_with(".: the snapshot root cannot be resolved "),
+            "{:?}",
+            discovery.failures
+        );
+    }
+
+    #[test]
+    fn an_explicit_workspace_above_the_snapshot_is_rejected() {
+        let dir = tempfile::tempdir().unwrap();
+        let commit = dir.path();
+        write(
+            &commit.join("Cargo.toml"),
+            &format!("[workspace]\nmembers = [\"{SNAPSHOT_TREE}/crate\"]\n"),
+        );
+        write(
+            &commit.join(SNAPSHOT_TREE).join("crate/Cargo.toml"),
+            "[package]\nname = \"climber\"\nversion = \"0.1.0\"\nedition = \"2021\"\nworkspace = \"../..\"\n",
+        );
+        write(
+            &commit.join(SNAPSHOT_TREE).join("crate/src/lib.rs"),
+            "pub fn f() {}\n",
+        );
+        let discovery = discover(commit, false);
+        assert!(discovery.packages.is_empty());
+        assert_eq!(
+            discovery.failures,
+            ["crate/Cargo.toml: the workspace root resolves outside the snapshot"]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn an_unreadable_directory_is_reported_beside_a_healthy_package() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let root = &dir.path().join(SNAPSHOT_TREE);
+        standalone(&root.join("pkg"), "healthy");
+        let sealed = root.join("sealed");
+        std::fs::create_dir(&sealed).unwrap();
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o000)).unwrap();
+        let readable = std::fs::read_dir(&sealed).is_ok();
+        let discovery = discover(dir.path(), false);
+        std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
+        if readable {
+            return;
+        }
+        assert_eq!(discovery.packages.len(), 1);
+        assert_eq!(discovery.failures.len(), 1);
+        assert!(
+            discovery.failures[0].starts_with("sealed: the directory cannot be enumerated "),
+            "{:?}",
             discovery.failures
         );
     }

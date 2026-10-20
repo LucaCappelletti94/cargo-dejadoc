@@ -1454,13 +1454,6 @@ pub(crate) enum ProcessError {
     },
     #[error("{id} {program} output exceeds the {OUTPUT_LIMIT} byte limit")]
     OutputLimit { id: String, program: String },
-    #[error("{id} {program} output size cannot be represented")]
-    Size {
-        id: String,
-        program: String,
-        #[source]
-        source: core::num::TryFromIntError,
-    },
 }
 
 impl ProcessError {
@@ -1489,37 +1482,24 @@ pub(crate) fn run_bounded(
     deadline: std::time::Duration,
     id: &str,
 ) -> Result<ProcOutput, ProcessError> {
-    let dir = tempfile::tempdir().map_err(|error| {
-        ProcessError::io(
-            id,
-            &command.get_program().to_string_lossy(),
-            "tempdir",
-            error,
-        )
-    })?;
+    let program = command.get_program().to_string_lossy().into_owned();
+    let name = program.as_str();
+    let io = |operation: &'static str| move |error| ProcessError::io(id, name, operation, error);
+    let dir = tempfile::tempdir().map_err(io("tempdir"))?;
     let stdout_path = dir.path().join("stdout");
     let stderr_path = dir.path().join("stderr");
-    let (stdout, stderr) = {
-        let program = command.get_program().to_string_lossy();
-        let stdout = std::fs::File::create(&stdout_path)
-            .map_err(|error| ProcessError::io(id, &program, "stdout file", error))?;
-        let stderr = std::fs::File::create(&stderr_path)
-            .map_err(|error| ProcessError::io(id, &program, "stderr file", error))?;
-        (stdout, stderr)
-    };
+    let stdout = std::fs::File::create(&stdout_path).map_err(io("stdout file"))?;
+    let stderr = std::fs::File::create(&stderr_path).map_err(io("stderr file"))?;
     command.stdout(stdout).stderr(stderr);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
         command.process_group(0);
     }
-    let mut child = Process(command.spawn().map_err(|error| {
-        ProcessError::io(id, &command.get_program().to_string_lossy(), "spawn", error)
-    })?);
-    let program = command.get_program().to_string_lossy();
+    let mut child = Process(command.spawn().map_err(io("spawn"))?);
     let started = std::time::Instant::now();
     loop {
-        match child.0.try_wait() {
+        let outcome = match child.0.try_wait().map_err(io("wait")) {
             Ok(Some(status)) => {
                 let stdout = capture_output(&stdout_path, &program, id)?;
                 let stderr = capture_output(&stderr_path, &program, id)?;
@@ -1529,59 +1509,33 @@ pub(crate) fn run_bounded(
                     stderr,
                 });
             }
-            Ok(None) => {
-                if started.elapsed() >= deadline {
-                    let group = child.0.id();
-                    let _ = child.0.kill();
-                    kill_process_group(group);
-                    let _ = reap_bounded(&mut child.0, REAP_DEADLINE);
-                    return Err(ProcessError::Deadline {
-                        id: id.to_owned(),
-                        program: program.into_owned(),
-                        deadline,
-                    });
-                }
-            }
-            Err(err) => {
-                let group = child.0.id();
-                let _ = child.0.kill();
-                kill_process_group(group);
-                return Err(ProcessError::io(id, &program, "wait", err));
-            }
+            Ok(None) if started.elapsed() < deadline => None,
+            Ok(None) => Some(ProcessError::Deadline {
+                id: id.to_owned(),
+                program: program.clone(),
+                deadline,
+            }),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = outcome {
+            let group = child.0.id();
+            let _ = child.0.kill();
+            kill_process_group(group);
+            let _ = reap_bounded(&mut child.0, REAP_DEADLINE);
+            return Err(error);
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
-/// Read one captured output file, after checking its size against the limit.
+/// Read one captured output file, refusing one longer than the limit.
 fn capture_output(path: &Path, program: &str, id: &str) -> Result<Vec<u8>, ProcessError> {
     use std::io::Read as _;
-    let size = std::fs::metadata(path)
-        .map_err(|error| ProcessError::io(id, program, "stat output", error))?
-        .len();
-    if size > OUTPUT_LIMIT {
-        return Err(ProcessError::OutputLimit {
-            id: id.to_owned(),
-            program: program.to_owned(),
-        });
-    }
-    let mut bytes =
-        Vec::with_capacity(usize::try_from(size).map_err(|source| ProcessError::Size {
-            id: id.to_owned(),
-            program: program.to_owned(),
-            source,
-        })?);
+    let mut bytes = Vec::new();
     std::fs::File::open(path)
-        .map_err(|error| ProcessError::io(id, program, "open output", error))?
-        .take(OUTPUT_LIMIT + 1)
-        .read_to_end(&mut bytes)
+        .and_then(|file| file.take(OUTPUT_LIMIT + 1).read_to_end(&mut bytes))
         .map_err(|error| ProcessError::io(id, program, "read output", error))?;
-    let length = u64::try_from(bytes.len()).map_err(|source| ProcessError::Size {
-        id: id.to_owned(),
-        program: program.to_owned(),
-        source,
-    })?;
-    if length > OUTPUT_LIMIT {
+    if !u64::try_from(bytes.len()).is_ok_and(|length| length <= OUTPUT_LIMIT) {
         return Err(ProcessError::OutputLimit {
             id: id.to_owned(),
             program: program.to_owned(),
@@ -4144,6 +4098,34 @@ iota = { version = "4", optional = true }
         )
         .expect("output at the limit is kept");
         assert_eq!(u64::try_from(output.stdout.len()).unwrap(), OUTPUT_LIMIT);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_capture_file_the_child_removes_or_replaces_is_a_read_failure() {
+        for script in [
+            r#"rm "$(readlink /proc/$$/fd/1)""#,
+            r#"out="$(readlink /proc/$$/fd/1)"; rm "$out"; mkdir "$out""#,
+        ] {
+            let id = next_proc_id();
+            let args = ["-c", script].map(str::to_owned);
+            let error = run_bounded(
+                std::process::Command::new("sh").args(&args),
+                std::time::Duration::from_secs(30),
+                &id,
+            )
+            .expect_err(script);
+            assert!(
+                matches!(
+                    &error,
+                    ProcessError::Io {
+                        operation: "read output",
+                        ..
+                    }
+                ),
+                "{script}: {error}"
+            );
+        }
     }
 
     #[test]

@@ -70,23 +70,23 @@ pub(crate) fn remedy(sites: &[(DocTest, Context)]) -> Remedy {
 
 /// Cross-scope copies require extraction or generic sharing.
 pub(crate) fn remedy_organization(sites: &[(DocTest, Context)]) -> Remedy {
-    let crosses_scopes = sites
-        .windows(2)
-        .any(|pair| pair[0].1.scope != pair[1].1.scope);
-    if !crosses_scopes {
-        return remedy(sites);
-    }
-    let Some(((first, _), rest)) = sites.split_first() else {
-        return Remedy::Delete;
-    };
-    if first.self_type.is_some()
-        && rest
-            .iter()
-            .any(|(site, _)| site.self_type != first.self_type)
-    {
-        Remedy::GenericOrMacro
-    } else {
-        Remedy::HelperOrMacro
+    match sites.split_first() {
+        Some(((first, first_context), rest))
+            if rest
+                .iter()
+                .any(|(_, context)| context.scope != first_context.scope) =>
+        {
+            if first.self_type.is_some()
+                && rest
+                    .iter()
+                    .any(|(site, _)| site.self_type != first.self_type)
+            {
+                Remedy::GenericOrMacro
+            } else {
+                Remedy::HelperOrMacro
+            }
+        }
+        _ => remedy(sites),
     }
 }
 

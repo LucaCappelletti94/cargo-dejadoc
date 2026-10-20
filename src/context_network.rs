@@ -443,6 +443,14 @@ pub(crate) mod tests {
                 .insert(path.to_string(), routes);
         }
 
+        /// Serve one exact-path route whose `Link` header names `next` as the next page.
+        pub(crate) fn next_route(&self, path: &str, body: &[u8], next: &str) {
+            self.log.lock().unwrap().routes.insert(
+                path.to_string(),
+                Route::Page(200, BodySpec::Bytes(body.to_vec()), Some(next.to_string())),
+            );
+        }
+
         /// The recorded request count for one path.
         #[must_use]
         pub(crate) fn hits(&self, path: &str) -> u32 {
@@ -898,5 +906,23 @@ pub(crate) mod tests {
         fixture.fill_route("/raw/any", 200, 16);
         let err = download(&format!("{}/any", fixture.raw_base()), Path::new("/")).unwrap_err();
         assert!(err.contains("destination has no file name"), "{err}");
+    }
+
+    #[test]
+    fn the_next_relation_is_found_among_the_other_links() {
+        assert_eq!(
+            next_link(r#"<https://a/1>; rel="prev", <https://a/3>; rel="next""#),
+            Some("https://a/3")
+        );
+        assert_eq!(next_link(r#"<https://a/9>; rel="last""#), None);
+        assert_eq!(next_link("no links"), None);
+    }
+
+    #[test]
+    fn a_document_that_is_not_json_is_refused() {
+        let fixture = Fixture::start();
+        fixture.route("/api/garbled", 200, b"not json");
+        let err = json(&format!("{}/garbled", fixture.api_base())).unwrap_err();
+        assert!(err.contains("invalid JSON"), "{err}");
     }
 }

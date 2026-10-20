@@ -56,12 +56,10 @@ fn snapshot(dir: &Path, repo: &RepoSpec) -> PathBuf {
     let root = dir.join(repo.name.replace('/', std::path::MAIN_SEPARATOR_STR));
     for (rel, text) in &repo.files {
         let path = root.join(rel);
-        if let Some(parent) = path.parent() {
-            std::fs::create_dir_all(parent).unwrap();
-        }
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
         std::fs::write(path, text).unwrap();
     }
-    root
+    std::fs::canonicalize(root).unwrap()
 }
 
 /// The prepared corpus of `repos`, every snapshot written under `dir`.
@@ -512,6 +510,58 @@ fn a_module_file_shared_by_two_crate_roots_is_one_function_occurrence() {
     );
 }
 
+#[cfg(unix)]
+#[test]
+fn a_module_reached_through_an_outside_alias_is_qualified_by_its_repository() {
+    let dir = tempfile::tempdir().unwrap();
+    let aliases = tempfile::tempdir().unwrap();
+    let alias = aliases.path().join("alpha");
+    std::os::unix::fs::symlink(dir.path().join("org/alpha"), &alias).unwrap();
+    let alpha = RepoSpec {
+        name: "org/alpha",
+        commit: Some("0123456789abcdef0123456789abcdef01234567"),
+        files: vec![
+            (
+                String::from("src/lib.rs"),
+                format!("#[path = \"{}/src/m.rs\"]\nmod m;\n", alias.display()),
+            ),
+            (
+                String::from("src/m.rs"),
+                format!("#[doc = include_str!(\"guide.md\")]\npub fn shared{BODY}\n"),
+            ),
+            (String::from("src/guide.md"), format!("```\n{BLOCK}```\n")),
+        ],
+        packages: vec![(
+            String::from("alpha"),
+            vec![(String::from("alpha"), String::from("src/lib.rs"))],
+        )],
+    };
+    let beta = lib_repo(
+        "org/beta",
+        "beta",
+        &format!("/// ```\n{BLOCK_DOC}/// ```\npub fn shared{BODY}\n"),
+    );
+    let report = Dejadoc::default()
+        .run_organization_corpus(corpus(dir.path(), "org", &[alpha, beta]))
+        .unwrap();
+    let org = report.organization.as_ref().unwrap();
+    assert!(org.coverage.complete, "{:?}", org.coverage.failures);
+    let groups = doctest_groups(&report);
+    assert_eq!(groups.len(), 1);
+    assert_eq!(
+        groups[0]
+            .sites
+            .iter()
+            .map(|site| site.file.as_str())
+            .collect::<Vec<_>>(),
+        ["org/alpha/src/guide.md", "org/beta/src/lib.rs"]
+    );
+    assert_eq!(
+        org.file_packages.get("org/alpha/src/guide.md"),
+        Some(&vec![0])
+    );
+}
+
 #[test]
 fn the_package_selector_restricts_the_organization_scan() {
     let dir = tempfile::tempdir().unwrap();
@@ -851,9 +901,14 @@ fn a_doc_include_escaping_the_snapshot_marks_coverage_incomplete() {
     let escape = lib_repo(
         "org/escape",
         "escape",
-        "#[doc = include_str!(\"../../outside.md\")]\npub fn shared() {}\n",
+        "#[doc = include_str!(\"../../../outside.md\")]\npub fn shared() {}\n",
     );
     std::fs::write(dir.path().join("outside.md"), "```\nlet x = 1;\n```\n").unwrap();
+    let folder = lib_repo(
+        "org/folder",
+        "folder",
+        "#[doc = include_str!(\"../src\")]\npub fn shared() {}\n",
+    );
     let good = lib_repo(
         "org/good",
         "good",
@@ -864,7 +919,7 @@ fn a_doc_include_escaping_the_snapshot_marks_coverage_incomplete() {
         "keep",
         &format!("{DOC_LIB}pub fn shared() {{}}\n"),
     );
-    let corpus = corpus(dir.path(), "org", &[missing, escape, good, keep]);
+    let corpus = corpus(dir.path(), "org", &[missing, escape, folder, good, keep]);
     let report = Dejadoc::default().run_organization_corpus(corpus).unwrap();
     let org = report.organization.as_ref().unwrap();
     assert!(
@@ -873,7 +928,7 @@ fn a_doc_include_escaping_the_snapshot_marks_coverage_incomplete() {
     );
     assert_eq!(
         org.coverage.failures.len(),
-        2,
+        3,
         "{:?}",
         org.coverage.failures
     );
@@ -882,10 +937,14 @@ fn a_doc_include_escaping_the_snapshot_marks_coverage_incomplete() {
             .failures
             .iter()
             .find(|failure| failure.starts_with(repo))
-            .unwrap_or_else(|| panic!("no {repo} failure in {:?}", org.coverage.failures))
+            .expect("the repository records a failure")
     };
-    assert!(failure("org/missing/src/lib.rs").contains("docs/nope.md"));
-    assert!(failure("org/escape/src/lib.rs").contains("../../outside.md"));
+    assert!(failure("org/missing/src/lib.rs").contains("cannot read doc include docs/nope.md"));
+    assert!(
+        failure("org/escape/src/lib.rs")
+            .ends_with("doc include ../../../outside.md escapes the repository snapshot")
+    );
+    assert!(failure("org/folder/src/lib.rs").contains("cannot read doc include ../src"));
     assert_eq!(
         doctest_groups(&report).len(),
         1,
@@ -894,7 +953,9 @@ fn a_doc_include_escaping_the_snapshot_marks_coverage_incomplete() {
     for group in &report.groups {
         for site in &group.sites {
             assert!(
-                !site.file.starts_with("org/escape") && !site.file.starts_with("org/missing"),
+                !["org/escape", "org/missing", "org/folder"]
+                    .iter()
+                    .any(|repo| site.file.starts_with(repo)),
                 "{:?}",
                 site.file
             );
@@ -1031,4 +1092,27 @@ fn organization_incomplete_coverage_exits_two_even_with_no_fail() {
         crate::exit_code(&report, false),
         std::process::ExitCode::from(2)
     );
+}
+
+#[test]
+fn a_doc_include_without_a_repository_snapshot_is_a_failure() {
+    let lookup = BTreeMap::from([("org/empty", 0)]);
+    let roots = [None];
+    let failures = core::cell::RefCell::new(Vec::new());
+    let edges = core::cell::RefCell::new(Vec::new());
+    {
+        let read = crate::organization_read(&lookup, &roots, &failures, &edges);
+        for file in ["lib.rs", "org/other/src/lib.rs", "org/empty/src/lib.rs"] {
+            assert_eq!(read(file, "guide.md"), None, "{file}");
+        }
+    }
+    assert_eq!(
+        failures.into_inner(),
+        [
+            "lib.rs: doc include guide.md has no repository snapshot",
+            "org/other/src/lib.rs: doc include guide.md has no repository snapshot",
+            "org/empty/src/lib.rs: doc include guide.md has no repository snapshot",
+        ]
+    );
+    assert_eq!(edges.into_inner(), Vec::<(String, String)>::new());
 }

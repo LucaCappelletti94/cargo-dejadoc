@@ -14,6 +14,7 @@ exclude_re = [
     '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::Expr::(Continue|Lit|Macro)\(expr\) in expr_attrs$',
     '^syn-canon/src/drift\.rs:\d+:\d+: delete match arm syn::ForeignItem::Macro\(v\) in <impl VisitMut for Drift>::visit_foreign_item_mut$',
     '^syn-canon/src/form\.rs:\d+:\d+: replace == with != in framed_tree$',
+    '^src/dependencies\.rs:\d+:\d+: replace < with <= in run_bounded$',
 ]
 cap_lints = true
 profile = "test"

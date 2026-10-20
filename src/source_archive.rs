@@ -148,9 +148,11 @@ pub(crate) fn extract_archive(
             track_github_root(&path, &mut top)?;
         }
         let location = temp.join(&path);
-        if let Some(parent) = location.parent() {
-            fs::create_dir_all(parent)?;
-        }
+        fs::create_dir_all(
+            location
+                .parent()
+                .expect("an entry joined to the stage has a parent"),
+        )?;
         if let EntryRole::Link { symbolic } = role {
             let target = entry
                 .link_name()?
@@ -178,15 +180,12 @@ pub(crate) fn extract_archive(
             track_top(&path, &mut top);
         }
     }
-    if tar.into_inner().limit() == 0 {
-        return Err(ArchiveError::Oversized);
-    }
     let root = temp.join(top.ok_or(ArchiveError::SingleRoot)?);
     if !root.is_dir() {
         return Err(ArchiveError::SingleRoot);
     }
     let skipped = if kind == ArchiveKind::GitHub {
-        resolve_confined_links(&root, pending)?
+        resolve_confined_links(&root, pending, LINK_DEADLINE)?
     } else {
         Vec::new()
     };
@@ -298,11 +297,12 @@ fn track_top(path: &Path, top: &mut Option<OsString>) {
     }
 }
 
-/// Create the deferred links that stay inside the root lexically and physically, returning
-/// the skipped ones.
+/// Create the deferred links that stay inside the root lexically and physically within
+/// `deadline`, returning the skipped ones.
 fn resolve_confined_links(
     root: &Path,
     links: Vec<PendingLink>,
+    deadline: std::time::Duration,
 ) -> Result<Vec<SkippedLink>, ArchiveError> {
     let mut skipped = Vec::new();
     if links.is_empty() {
@@ -321,7 +321,7 @@ fn resolve_confined_links(
     }
     let mut deferred = 0usize;
     while let Some(link) = queue.pop_front() {
-        if started.elapsed() >= LINK_DEADLINE {
+        if started.elapsed() >= deadline {
             return Err(ArchiveError::LinkDeadline);
         }
         // Any resolution failure means the target does not exist inside the stage yet.
@@ -1139,5 +1139,83 @@ pub(crate) mod tests {
             Err(ArchiveError::Oversized)
         ));
         assert!(!destination.exists());
+    }
+
+    #[test]
+    fn skipped_links_name_their_reason() {
+        let link = |reason| SkippedLink {
+            path: PathBuf::from("a/b"),
+            reason,
+        };
+        assert_eq!(
+            link(LinkSkip::Escapes).to_string(),
+            "archive link \"a/b\" escapes the snapshot"
+        );
+        assert_eq!(
+            link(LinkSkip::Unresolved).to_string(),
+            "archive link \"a/b\" cannot be resolved"
+        );
+    }
+
+    #[test]
+    fn a_link_without_a_target_is_unsafe() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive_file(
+            dir.path(),
+            "nameless.tar.gz",
+            &packed(vec![
+                (b'5', "top/".into(), String::new(), Vec::new()),
+                (b'2', "top/link".into(), String::new(), Vec::new()),
+            ]),
+        );
+        let destination = dir.path().join("snapshot");
+        assert!(matches!(
+            extract_archive(&archive, &destination, ArchiveKind::GitHub),
+            Err(ArchiveError::UnsafeEntry(path)) if path == "top/link"
+        ));
+        assert!(!destination.exists());
+    }
+
+    #[test]
+    fn current_directory_prefixes_keep_the_github_root() {
+        let dir = tempfile::tempdir().unwrap();
+        let archive = archive_file(
+            dir.path(),
+            "dotted.tar.gz",
+            &packed(vec![
+                (b'5', "./top/".into(), String::new(), Vec::new()),
+                (
+                    0,
+                    "./top/lib.rs".into(),
+                    String::new(),
+                    b"pub fn f() {}\n".to_vec(),
+                ),
+            ]),
+        );
+        let destination = dir.path().join("snapshot");
+        extract_archive(&archive, &destination, ArchiveKind::GitHub).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(destination.join("lib.rs")).unwrap(),
+            "pub fn f() {}\n"
+        );
+    }
+
+    #[test]
+    fn link_resolution_past_its_deadline_fails() {
+        let dir = tempfile::tempdir().unwrap();
+        let root = std::fs::canonicalize(dir.path()).unwrap();
+        std::fs::write(root.join("file"), "content").unwrap();
+        let link = PendingLink {
+            path: PathBuf::from("top/link"),
+            target: PathBuf::from("file"),
+            symbolic: true,
+            location: root.join("link"),
+            candidate: root.join("file"),
+        };
+        assert!(matches!(
+            resolve_confined_links(&root, vec![link], std::time::Duration::ZERO),
+            Err(ArchiveError::LinkDeadline)
+        ));
+        assert!(std::fs::symlink_metadata(root.join("link")).is_err());
     }
 }

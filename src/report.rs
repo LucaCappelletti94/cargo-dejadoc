@@ -123,20 +123,21 @@ fn organization_human(out: &mut String, report: &Report) {
         .flatten()
         .copied()
         .collect();
-    for index in packages {
-        let Some(package) = organization.packages.get(index) else {
-            continue;
-        };
-        let Some(repository) = organization.repositories.get(package.repository) else {
-            continue;
-        };
-        if let Some(commit) = &repository.commit {
-            let _ = writeln!(
-                out,
-                "source {}@{} package {} ({})",
-                repository.name, commit, package.name, package.manifest
-            );
-        }
+    let sources = packages.into_iter().filter_map(|index| {
+        let package = organization.packages.get(index)?;
+        let repository = organization.repositories.get(package.repository)?;
+        Some((
+            repository.name.as_str(),
+            repository.commit.as_deref()?,
+            package,
+        ))
+    });
+    for (repository, commit, package) in sources {
+        let _ = writeln!(
+            out,
+            "source {repository}@{commit} package {} ({})",
+            package.name, package.manifest
+        );
     }
     if !organization.coverage.complete {
         if organization.coverage.failures.is_empty() {
@@ -612,6 +613,53 @@ mod tests {
                 !complete
             );
         }
+    }
+
+    #[test]
+    fn organization_provenance_names_only_pinned_known_packages() {
+        let mut report = report();
+        let repository = |name: &str, commit: Option<&str>| crate::OrganizationRepository {
+            name: name.to_string(),
+            commit: commit.map(str::to_string),
+        };
+        let package = |repository: usize, name: &str| crate::OrganizationPackage {
+            repository,
+            name: name.to_string(),
+            manifest: String::from("Cargo.toml"),
+        };
+        report.organization = Some(crate::OrganizationReport {
+            name: String::from("org"),
+            repositories: vec![
+                repository("org/app", Some("abc")),
+                repository("org/notes", None),
+            ],
+            packages: vec![package(0, "app"), package(1, "notes"), package(7, "lost")],
+            file_packages: [(String::from("org/app/src/lib.rs"), vec![0, 1, 2, 9])]
+                .into_iter()
+                .collect(),
+            coverage: crate::OrganizationCoverage {
+                complete: false,
+                failures: Vec::new(),
+            },
+        });
+        let human = human(&report, false);
+        let sources: Vec<&str> = human
+            .lines()
+            .filter(|line| line.starts_with("source "))
+            .collect();
+        assert_eq!(sources, ["source org/app@abc package app (Cargo.toml)"]);
+        assert!(human.contains(", organization org (2 accessible repositories, 3 packages)\n"));
+        assert!(
+            human
+                .lines()
+                .any(|line| line == "dejadoc: incomplete organization analysis"),
+            "{human}"
+        );
+        assert!(
+            annotations(&report, true)
+                .lines()
+                .any(|line| line == "::error title=dejadoc::Incomplete organization analysis")
+        );
     }
 
     #[test]

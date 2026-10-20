@@ -149,7 +149,7 @@ fn load_with_bases(organization: &str, api: &str, cache: &Path, all_targets: boo
     let mut repos: Vec<RepoRef> = Vec::new();
     let mut failures: Vec<String> = Vec::new();
     if is_github_login(organization) {
-        enumerate_repos(api, organization, &mut repos, &mut failures);
+        enumerate_repos(api, organization, MAX_PAGES, &mut repos, &mut failures);
     } else {
         failures.push(format!(
             "{organization}: the organization login is not a valid GitHub login"
@@ -317,11 +317,12 @@ fn api_json(url: &str) -> Result<serde_json::Value, String> {
         .map_err(|error| format!("{} GET {url} invalid JSON {error}", response.id))
 }
 
-/// List every accessible repository of `organization`, following next-page links and
-/// retaining the repositories already listed when a page fails.
+/// List every accessible repository of `organization` within `max_pages`, following
+/// next-page links and retaining the repositories already listed when a page fails.
 fn enumerate_repos(
     api: &str,
     organization: &str,
+    max_pages: u32,
     repos: &mut Vec<RepoRef>,
     failures: &mut Vec<String>,
 ) {
@@ -330,7 +331,7 @@ fn enumerate_repos(
     };
     let api_prefix = format!("{api}/");
     let mut seen: BTreeSet<String> = BTreeSet::new();
-    for _ in 0..MAX_PAGES {
+    for _ in 0..max_pages {
         let crate::context_network::RawResponse {
             status,
             body,
@@ -352,15 +353,7 @@ fn enumerate_repos(
             failures.push(format!("{organization}: {id} GET {url} HTTP {status}"));
             return;
         }
-        let value: serde_json::Value = if let Ok(value) = serde_json::from_slice(&body) {
-            value
-        } else {
-            failures.push(format!(
-                "{organization}: the repository listing is not a JSON array"
-            ));
-            return;
-        };
-        let serde_json::Value::Array(entries) = value else {
+        let Ok(serde_json::Value::Array(entries)) = serde_json::from_slice(&body) else {
             failures.push(format!(
                 "{organization}: the repository listing is not a JSON array"
             ));
@@ -416,7 +409,7 @@ fn enumerate_repos(
         url = next;
     }
     failures.push(format!(
-        "{organization}: the listing exceeds {MAX_PAGES} pages"
+        "{organization}: the listing exceeds {max_pages} pages"
     ));
 }
 
@@ -540,7 +533,7 @@ fn acquire_snapshot(
         std::fs::remove_file(&archive).ok();
     }
     let report = std::fs::read_to_string(commit.join(LINK_REPORT)).map_err(SourceError::Storage)?;
-    let root = root(&commit.join(SNAPSHOT_TREE));
+    let root = std::fs::canonicalize(commit.join(SNAPSHOT_TREE)).map_err(SourceError::Storage)?;
     Ok((Snapshot { commit, root }, report))
 }
 
@@ -598,13 +591,6 @@ fn private_base(cache: &Path, name: &str) -> Result<PathBuf, SourceError> {
 fn shield_archive(archive: &Path) {
     use std::os::unix::fs::PermissionsExt;
     std::fs::set_permissions(archive, std::fs::Permissions::from_mode(0o600)).ok();
-}
-
-/// The canonical snapshot path, falling back to the given path.
-fn root(snapshot: &Path) -> PathBuf {
-    snapshot
-        .canonicalize()
-        .unwrap_or_else(|_| snapshot.to_path_buf())
 }
 
 /// The discovered packages of one snapshot, with their organization provenance.
@@ -810,7 +796,7 @@ mod tests {
     #[test]
     fn the_actions_owner_precedes_the_origin_remote() {
         let remote = || Ok(String::from("git@github.com:remote/app.git"));
-        let unread = || -> Result<String, OwnerError> { unreachable!("the variable decides") };
+        let unread = || Err(OwnerError::NoOrigin(String::from("the variable decides")));
         assert_eq!(resolve_owner(Some("from-env"), unread).unwrap(), "from-env");
         assert_eq!(resolve_owner(Some(""), remote).unwrap(), "remote");
         assert_eq!(resolve_owner(None, remote).unwrap(), "remote");
@@ -1479,5 +1465,201 @@ mod tests {
             std::fs::metadata(archive).unwrap().permissions().mode() & 0o777,
             0o600
         );
+    }
+
+    #[test]
+    fn an_unreachable_token_owner_leaves_the_public_listing_incomplete() {
+        let fixture = Fixture::start();
+        account(&fixture, "u", "User");
+        fixture.short_route("/api/user", 64);
+        fixture.page_route("/api/users/u/repos", vec![listing(&[entry("u/app")])]);
+        empty_pins(&fixture, &["u/app"]);
+        let dir = tempfile::tempdir().unwrap();
+        let corpus = load_with_bases("u", fixture.api_base().as_str(), dir.path(), false);
+        assert_eq!(corpus.report.coverage.failures.len(), 1);
+        assert!(corpus.report.coverage.failures[0].starts_with("u: "));
+        assert_eq!(names(&corpus), ["u/app"]);
+    }
+
+    #[test]
+    fn unusable_listing_pages_are_recorded() {
+        let malformed = serde_json::to_vec(&[serde_json::json!({ "default_branch": "main" })]);
+        for (setup, expected) in [
+            (Some(b"not json".to_vec()), "is not a JSON array"),
+            (Some(b"{}".to_vec()), "is not a JSON array"),
+            (Some(malformed.unwrap()), "entry 0 has no full_name"),
+            (None, "o: "),
+        ] {
+            let fixture = organization_fixture();
+            match setup {
+                Some(body) => fixture.route("/api/orgs/o/repos", 200, &body),
+                None => fixture.short_route("/api/orgs/o/repos", 64),
+            }
+            let dir = tempfile::tempdir().unwrap();
+            let corpus = load_with_bases("o", fixture.api_base().as_str(), dir.path(), false);
+            assert_eq!(corpus.report.repositories.len(), 0, "{expected}");
+            assert_eq!(corpus.report.coverage.failures.len(), 1, "{expected}");
+            assert!(
+                corpus.report.coverage.failures[0].starts_with("o: ")
+                    && corpus.report.coverage.failures[0].contains(expected),
+                "{:?}",
+                corpus.report.coverage.failures
+            );
+        }
+    }
+
+    #[test]
+    fn a_next_page_outside_the_api_is_not_followed() {
+        let fixture = organization_fixture();
+        let page = serde_json::to_vec(&[entry("o/app")]).unwrap();
+        fixture.next_route(
+            "/api/orgs/o/repos",
+            &page,
+            "http://evil.example/api/orgs/o/repos",
+        );
+        empty_pins(&fixture, &["o/app"]);
+        let dir = tempfile::tempdir().unwrap();
+        let corpus = load_with_bases("o", fixture.api_base().as_str(), dir.path(), false);
+        assert_eq!(names(&corpus), ["o/app"]);
+        assert_eq!(corpus.report.coverage.failures.len(), 1);
+        assert!(
+            corpus.report.coverage.failures[0]
+                .ends_with("next page http://evil.example/api/orgs/o/repos leaves the API")
+        );
+    }
+
+    #[test]
+    fn a_listing_past_the_page_cap_is_incomplete() {
+        let fixture = organization_fixture();
+        let api = fixture.api_base();
+        let page = serde_json::to_vec(&[entry("o/app")]).unwrap();
+        fixture.next_route("/api/orgs/o/repos", &page, &format!("{api}/orgs/o/repos"));
+        let mut repos = Vec::new();
+        let mut failures = Vec::new();
+        enumerate_repos(&api, "o", 2, &mut repos, &mut failures);
+        assert_eq!(fixture.hits("/api/orgs/o/repos"), 2);
+        assert_eq!(repos.len(), 1);
+        assert_eq!(failures, ["o: the listing exceeds 2 pages"]);
+    }
+
+    #[test]
+    fn a_repository_without_a_default_branch_is_listed_unpinned() {
+        let fixture = organization_fixture();
+        fixture.page_route(
+            "/api/orgs/o/repos",
+            vec![listing(&[serde_json::json!({ "full_name": "o/app" })])],
+        );
+        let dir = tempfile::tempdir().unwrap();
+        let corpus = load_with_bases("o", fixture.api_base().as_str(), dir.path(), false);
+        assert_eq!(names(&corpus), ["o/app"]);
+        assert_eq!(
+            corpus.report.coverage.failures,
+            ["o/app: the default branch is unknown"]
+        );
+        assert_eq!(corpus.roots, [None]);
+    }
+
+    #[test]
+    fn a_pin_failure_other_than_an_empty_repository_is_recorded() {
+        for status in [409, 500] {
+            let fixture = organization_fixture();
+            fixture.page_route("/api/orgs/o/repos", vec![listing(&[entry("o/app")])]);
+            fixture.route(
+                "/api/repos/o/app/git/ref/heads/main",
+                status,
+                b"{\"message\": \"Conflict\"}",
+            );
+            let dir = tempfile::tempdir().unwrap();
+            let corpus = load_with_bases("o", fixture.api_base().as_str(), dir.path(), false);
+            let failures = &corpus.report.coverage.failures;
+            assert_eq!(failures.len(), 1, "{status}");
+            assert!(failures[0].starts_with("o/app: "), "{failures:?}");
+            assert!(
+                failures[0].ends_with(&format!("HTTP {status}")),
+                "{failures:?}"
+            );
+        }
+    }
+
+    /// A fixture listing `o/app` pinned at `sha`, its tarball answering `tarball`.
+    fn pinned_fixture(sha: &str, tarball: (u16, &[u8])) -> Fixture {
+        let fixture = organization_fixture();
+        fixture.route("/api/orgs/o/repos", 200, &listing(&[entry("o/app")]).1);
+        fixture.route(
+            "/api/repos/o/app/git/ref/heads/main",
+            200,
+            &pin_response(sha).1,
+        );
+        fixture.route(
+            &format!("/api/repos/o/app/tarball/{sha}"),
+            tarball.0,
+            tarball.1,
+        );
+        fixture
+    }
+
+    #[test]
+    fn a_kept_archive_is_extracted_without_a_second_download() {
+        let sha = "e".repeat(40);
+        let fixture = pinned_fixture(&sha, (200, b"not a gzip stream"));
+        let cache = tempfile::tempdir().unwrap();
+        let api = fixture.api_base();
+        load_with_bases("o", &api, cache.path(), false);
+        let archive = private_base(cache.path(), "o/app")
+            .unwrap()
+            .join(format!("{sha}.tar.gz"));
+        std::fs::write(&archive, package_archive("o-app-e")).unwrap();
+        let corpus = load_with_bases("o", &api, cache.path(), false);
+        assert_eq!(corpus.report.coverage.failures, Vec::<String>::new());
+        assert_eq!(fixture.hits(&format!("/api/repos/o/app/tarball/{sha}")), 1);
+        assert_eq!(corpus.report.packages.len(), 1);
+        assert!(!archive.exists());
+    }
+
+    #[test]
+    fn a_published_commit_without_its_tree_is_a_storage_failure() {
+        let sha = "d".repeat(40);
+        let fixture = pinned_fixture(&sha, (500, b""));
+        let cache = tempfile::tempdir().unwrap();
+        let commit = private_base(cache.path(), "o/app").unwrap().join(&sha);
+        std::fs::create_dir(&commit).unwrap();
+        std::fs::write(commit.join(LINK_REPORT), "").unwrap();
+        let corpus = load_with_bases("o", fixture.api_base().as_str(), cache.path(), false);
+        assert_eq!(corpus.report.coverage.failures.len(), 1);
+        assert!(corpus.report.coverage.failures[0].starts_with("o/app: "));
+        assert_eq!(corpus.roots, [None]);
+        assert_eq!(
+            corpus.report.repositories[0].commit.as_deref(),
+            Some(sha.as_str())
+        );
+        assert_eq!(fixture.hits(&format!("/api/repos/o/app/tarball/{sha}")), 0);
+    }
+
+    #[test]
+    fn a_snapshot_discovery_failure_is_qualified_by_the_repository() {
+        let sha = "c".repeat(40);
+        let archive = packed(vec![
+            (b'5', "o-app-c/".into(), String::new(), Vec::new()),
+            (
+                0,
+                "o-app-c/Cargo.toml".into(),
+                String::new(),
+                b"[package\n".to_vec(),
+            ),
+        ]);
+        let fixture = pinned_fixture(&sha, (200, &archive));
+        let cache = tempfile::tempdir().unwrap();
+        let corpus = load_with_bases("o", fixture.api_base().as_str(), cache.path(), false);
+        assert_eq!(corpus.report.coverage.failures.len(), 1);
+        assert!(
+            corpus.report.coverage.failures[0].starts_with("o/app: Cargo.toml: "),
+            "{:?}",
+            corpus.report.coverage.failures
+        );
+        assert_eq!(
+            corpus.report.packages,
+            Vec::<crate::organization::OrganizationPackage>::new()
+        );
+        assert!(corpus.roots[0].is_some());
     }
 }
