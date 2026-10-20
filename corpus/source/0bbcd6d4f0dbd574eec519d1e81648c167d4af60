@@ -1,0 +1,17 @@
+/// ```4;
+/// ```
+#[cfg(all(not(test), any(doctestst), any(doctest, feature = "x")))]
+pub fn d() { /// ```
+    //$ let b = 2;
+    /// ```
+    pub fn b() {}
+}
+//``
+#[cfg(all(not(test), any(d|x| st, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// 
+    /// ```
+    #[cfg(test)]
+    pub e: u8,
+}

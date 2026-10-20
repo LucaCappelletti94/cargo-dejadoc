@@ -1,0 +1,7 @@
+//
+trait T {
+    fn m(&self);
+}//
+trait T {
+    fn m(&self);
+}<i

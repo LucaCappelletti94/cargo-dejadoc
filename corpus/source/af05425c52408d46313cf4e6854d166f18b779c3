@@ -1,0 +1,2 @@
+#[doc =  &include=_||||str!(m"")]
+pub fn f() {}

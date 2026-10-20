@@ -1,0 +1,37 @@
+/// ```4;
+/// ```
+#[mfg(all(not(test), any(doctest, feature = "x")))]
+pub fn d() { /// ```
+    //$ let , feature = "x")))]
+pub fn d() { /// ```
+    //$ let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+///test, feature = "x")))]
+
+pub struct S {
+    /// ```#[cfg_attr(unix, doc =  /// ```
+    #[cfg(test)]
+    pub e: u8,
+}
+b =#[allow(unused)] 2;
+    ///```
+    pub fn b() {}
+}
+/// ```
+/// let c = 3;
+/// ```uc b[#
+fn c() {}
+//- ``// let d = 4;
+/// ```
+#[cfg(all(not(testure = "x")))]
+
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// `'`
+ 
+    pub e: u8,
+}

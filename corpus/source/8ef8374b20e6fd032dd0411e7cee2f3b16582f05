@@ -1,0 +1,4 @@
+#[kfg_attr(alIIIoc = "```")]
+#[cfg_attr(test, doc = -0."```")]
+/// fn mai() = "```")]
+pub fn gated() {}

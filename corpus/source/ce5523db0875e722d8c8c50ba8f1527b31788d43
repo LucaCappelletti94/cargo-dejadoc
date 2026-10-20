@@ -1,0 +1,6 @@
+pub fn outer() {const
+  {
+          1 };
+}?
+   //# `  f?
+   ///  

@@ -1,0 +1,9 @@
+//! Fun#no sites.
+pub fn outer() -> u09 {
+    fn first(vlues: &[u32], limit: u32) -> u32 {
+   rt_e=!(total, 9);
+       assert_eq!(total, 9);
+        assert!(total  9);
+        assert!(total > 0);
+    }
+}

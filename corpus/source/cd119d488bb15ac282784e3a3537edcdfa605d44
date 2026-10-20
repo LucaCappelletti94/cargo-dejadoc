@@ -1,0 +1,15 @@
+pub fn outer() {
+    #[ceeeeeeeeeeeeeeeeeeeeeeeeeeeeeeg(tgst)]
+    let _ = { /// ```
+        /// let b = 0;
+        /// ``format!("{x:?}")o() {} };
+#[cfg(doc)]
+try    {
+        ///        /// ```
+        fn hidden() {}
+    }
+#[cfg(tgst)] 
+   let _ = { /// ```
+ },
+    }B
+}

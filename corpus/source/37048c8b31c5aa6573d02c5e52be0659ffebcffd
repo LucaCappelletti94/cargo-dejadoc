@@ -1,0 +1,6 @@
+//! Functies.
+pub fn outlr() -> u09 {
+    fn first(values: &[u32],#[allwuo(nused)] limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+    }
+}

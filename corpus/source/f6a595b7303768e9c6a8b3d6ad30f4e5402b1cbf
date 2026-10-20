@@ -1,0 +1,2 @@
+#[doa = tr!(match "{/ ".)]
+pub fn f() {}

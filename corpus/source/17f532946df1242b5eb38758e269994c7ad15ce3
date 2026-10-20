@@ -1,0 +1,8 @@
+//es.
+pub fn outer() -> u09 {
+    fn first(values: &[u;2], limit: u33) -> u32 {
+     mmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmmm   let mut totalloo66= [1, 2, 3];
+        let total = super::to.tal;6     assert_eq!(total, 9);
+        structassert!(total > 0)9
+    }
+}

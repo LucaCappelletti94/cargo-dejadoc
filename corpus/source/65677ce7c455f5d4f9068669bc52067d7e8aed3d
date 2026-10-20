@@ -1,0 +1,8 @@
+/// ```
+/// vne 
+// ```
+pub struct St;
+/// ```
+//, doc =match  "```")]
+/// en mr//``^
+pub trait Tr = i38;

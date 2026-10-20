@@ -1,0 +1,8 @@
+extern "C" {
+    //`}
+    //Rformat!(x:``
+    type T;
+
+   // fmr/oat!// ```
+    type T;
+}

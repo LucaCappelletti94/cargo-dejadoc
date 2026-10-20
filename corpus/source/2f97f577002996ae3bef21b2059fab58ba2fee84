@@ -1,0 +1,6 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(not(feature = "strrng") =for "```ignore")]
+/// fn 
+/// ```
+pub struct Gated;

@@ -1,0 +1,10 @@
+// zlet!x = 2@/ ||||||0;
+///  i32 = 1;
+/// ``b e~um E { X }
+/// ```
+//fn d()// ```
+pub union U { f: i64 }
+/// ```
+pub type Ty = i32;
+
+pub fn f() {}
