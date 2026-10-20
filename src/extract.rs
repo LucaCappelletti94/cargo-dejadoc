@@ -1769,7 +1769,9 @@ pub fn raw() {}
 #[cfg(test)]\nmod t {\n    /// ```\n    /// let b = 2;\n    /// ```\n    pub fn b() {}\n}\n\
 /// ```\n/// let c = 3;\n/// ```\n#[cfg(not(doc))]\npub fn c() {}\n\
 /// ```\n/// let d = 4;\n/// ```\n#[cfg(all(not(test), any(doctest, feature = \"x\")))]\npub fn d() {}\n\
-pub struct S {\n    /// ```\n    /// let e = 5;\n    /// ```\n    #[cfg(test)]\n    pub e: u8,\n}\n";
+pub struct S {\n    /// ```\n    /// let e = 5;\n    /// ```\n    #[cfg(test)]\n    pub e: u8,\n}\n\
+#[cfg(test)]\npub struct H {\n    /// ```\n    /// let f = 6;\n    /// ```\n    pub f: u8,\n}\n\
+pub enum E {\n    #[cfg(test)]\n    V {\n        /// ```\n        /// let g = 7;\n        /// ```\n        g: u8,\n    },\n}\n";
         assert_eq!(
             run(src),
             vec![dt("src/lib.rs", 18, "mycrate::d", &[], "let d = 4;", false)]

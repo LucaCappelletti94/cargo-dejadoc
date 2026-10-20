@@ -66,4 +66,4 @@ The GitHub action comments on each copy to remove with a removal suggestion and 
 
 ## Library
 
-`dejadoc = { version = "0.5", default-features = false, features = ["std"] }`, then `dejadoc::Dejadoc::default().functions().run(".")?` returns the same `Report`, and `run_organization("org")` scans an organization.
+`dejadoc = { version = "0.6", default-features = false, features = ["std"] }`, then `dejadoc::Dejadoc::default().functions().run(".")?` returns the same `Report`, and `run_organization("org")` scans an organization.
