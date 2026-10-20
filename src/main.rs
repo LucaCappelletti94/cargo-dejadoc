@@ -1,4 +1,4 @@
-//! CLI argument parsing and exit codes for the cargo-dejadoc binary.
+//! CLI argument parsing and exit codes for the cargo-echoes binary.
 
 use clap::Parser;
 use std::path::{Path, PathBuf};
@@ -11,8 +11,8 @@ use std::process::ExitCode;
     reason = "the bools are clap CLI flags, not an accumulating design"
 )]
 #[command(
-    name = "dejadoc",
-    bin_name = "cargo dejadoc",
+    name = "echoes",
+    bin_name = "cargo echoes",
     version,
     about = "Find duplicated Rust doctests, functions and context blocks across a workspace or GitHub organization"
 )]
@@ -54,10 +54,10 @@ struct Args {
     context_min_tokens: Option<usize>,
     /// Local context selection.
     #[arg(long, value_name = "SCOPE")]
-    context_select: Option<dejadoc::ContextScope>,
+    context_select: Option<echoes::ContextScope>,
     /// Workspace context comparison corpus.
     #[arg(long, value_name = "SCOPE")]
-    context_search: Option<dejadoc::ContextScope>,
+    context_search: Option<echoes::ContextScope>,
     /// Maximum dependency distance for context reuse, zero disables discovery.
     #[arg(long, value_name = "N")]
     context_dependency_depth: Option<usize>,
@@ -91,7 +91,7 @@ struct Args {
     /// Include dependency reuse findings in the duplicate gate.
     #[arg(long)]
     context_fail_on_reuse: bool,
-    /// Explicit `.dejadoc.toml` location.
+    /// Explicit `.echoes.toml` location.
     #[arg(long, value_name = "PATH")]
     config: Option<PathBuf>,
     /// Exit 0 even when duplicates are found.
@@ -107,20 +107,20 @@ struct Args {
 
 fn main() -> ExitCode {
     let mut args: Vec<String> = std::env::args().collect();
-    if args.get(1).is_some_and(|a| a == "dejadoc") {
+    if args.get(1).is_some_and(|a| a == "echoes") {
         args.remove(1);
     }
     match run(Args::parse_from(args)) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("dejadoc: {err}");
+            eprintln!("echoes: {err}");
             ExitCode::from(2)
         }
     }
 }
 
-fn run(args: Args) -> dejadoc::Result<ExitCode> {
-    let mut scan = dejadoc::Dejadoc::default();
+fn run(args: Args) -> echoes::Result<ExitCode> {
+    let mut scan = echoes::Echoes::default();
     if let Some(package) = args.package {
         scan = scan.package(package);
     }
@@ -151,7 +151,7 @@ fn run(args: Args) -> dejadoc::Result<ExitCode> {
     if let Some(scope) = args.context_search {
         scan = scan.context_search(scope);
     }
-    scan = scan.context_dependencies(dejadoc::DependencySearch {
+    scan = scan.context_dependencies(echoes::DependencySearch {
         depth: args.context_dependency_depth,
         include_dev: args.context_dev_dependencies.then_some(true),
         include_build: args.context_build_dependencies.then_some(true),
@@ -169,19 +169,19 @@ fn run(args: Args) -> dejadoc::Result<ExitCode> {
     }
     let report = match args.organization {
         Some(Some(organization)) => scan.run_organization(&organization)?,
-        Some(None) => scan.run_organization(&dejadoc::repository_owner(".")?)?,
+        Some(None) => scan.run_organization(&echoes::repository_owner(".")?)?,
         None => scan.run(Path::new("."))?,
     };
     let out = if args.json {
-        dejadoc::json(&report)
+        echoes::json(&report)
     } else {
-        let mut out = dejadoc::human(&report, args.verbose);
+        let mut out = echoes::human(&report, args.verbose);
         if args.github {
             out.push('\n');
-            out.push_str(&dejadoc::annotations(&report, args.no_fail));
+            out.push_str(&echoes::annotations(&report, args.no_fail));
         }
         out
     };
     println!("{out}");
-    Ok(dejadoc::exit_code(&report, args.no_fail))
+    Ok(echoes::exit_code(&report, args.no_fail))
 }

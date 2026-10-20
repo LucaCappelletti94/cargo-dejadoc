@@ -2,14 +2,14 @@
 
 #![cfg(feature = "std")]
 
-use dejadoc::{
+use echoes::{
     ContextAccess, ContextKind, ContextSite, DependencyCandidate, DependencyCoverage, ReuseAction,
     ReuseGroup, ReuseReport,
 };
 use std::process::ExitCode;
 
-fn report() -> dejadoc::Report {
-    let mut report = dejadoc::group(&[], 2, 0);
+fn report() -> echoes::Report {
+    let mut report = echoes::group(&[], 2, 0);
     report.reuse = Some(ReuseReport {
         groups: vec![ReuseGroup {
             hash: "match".into(),
@@ -58,10 +58,10 @@ fn report() -> dejadoc::Report {
 #[test]
 fn dependency_findings_are_advisory_until_explicitly_gated() {
     let mut report = report();
-    assert_eq!(dejadoc::exit_code(&report, false), ExitCode::SUCCESS);
+    assert_eq!(echoes::exit_code(&report, false), ExitCode::SUCCESS);
     report.reuse.as_mut().unwrap().fail_on_findings = true;
-    assert_eq!(dejadoc::exit_code(&report, false), ExitCode::FAILURE);
-    assert_eq!(dejadoc::exit_code(&report, true), ExitCode::SUCCESS);
+    assert_eq!(echoes::exit_code(&report, false), ExitCode::FAILURE);
+    assert_eq!(echoes::exit_code(&report, true), ExitCode::SUCCESS);
 }
 
 #[test]
@@ -72,8 +72,8 @@ fn incomplete_dependency_analysis_fails_even_under_no_fail() {
     coverage
         .failures
         .push("dependency source unavailable".into());
-    assert_eq!(dejadoc::exit_code(&report, false), ExitCode::from(2));
-    assert_eq!(dejadoc::exit_code(&report, true), ExitCode::from(2));
+    assert_eq!(echoes::exit_code(&report, false), ExitCode::from(2));
+    assert_eq!(echoes::exit_code(&report, true), ExitCode::from(2));
 }
 
 #[test]
@@ -84,12 +84,12 @@ fn reuse_gate_does_not_change_existing_local_duplicate_policy() {
     other.line = 12;
     other.end = 14;
     other.item = "consumer::other".into();
-    report.context_groups.push(dejadoc::ContextGroup {
+    report.context_groups.push(echoes::ContextGroup {
         id: "local".into(),
         hash: "local".into(),
         tokens: 40,
         sites: vec![local, other],
     });
-    assert_eq!(dejadoc::exit_code(&report, false), ExitCode::FAILURE);
-    assert_eq!(dejadoc::exit_code(&report, true), ExitCode::SUCCESS);
+    assert_eq!(echoes::exit_code(&report, false), ExitCode::FAILURE);
+    assert_eq!(echoes::exit_code(&report, true), ExitCode::SUCCESS);
 }

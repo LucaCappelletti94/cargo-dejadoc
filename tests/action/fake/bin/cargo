@@ -4,16 +4,16 @@ set -uo pipefail
 cmd="${1:-}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
-  dejadoc)
+  echoes)
     if printf '%s\n' "$@" | grep -qx -- '--version'; then
       exit 0
     fi
-    { printf 'dejadoc\n'; printf '%s\n' "$@"; } | jq -R . | jq -cs '{cmd: "dejadoc", args: .}' >> "${FAKE_LOG}/cargo.jsonl"
+    { printf 'echoes\n'; printf '%s\n' "$@"; } | jq -R . | jq -cs '{cmd: "echoes", args: .}' >> "${FAKE_LOG}/cargo.jsonl"
     json=0
     for a in "$@"; do [ "$a" = "--json" ] && json=1; done
     if [ "$json" = "1" ]; then
       case "$(basename "$PWD")" in
-        dejadoc-base) cat "${SCEN_BASE_JSON:?}" ;;
+        echoes-base) cat "${SCEN_BASE_JSON:?}" ;;
         *) cat "${SCEN_JSON:?}" ;;
       esac
     else

@@ -1,5 +1,5 @@
 name: Wrong review
-description: A dejadoc review comment is wrong or a duplicate was missed
+description: A echoes review comment is wrong or a duplicate was missed
 title: "Wrong review"
 body:
   - type: dropdown
@@ -16,7 +16,7 @@ body:
   - type: input
     id: version
     attributes:
-      label: dejadoc version
+      label: echoes version
     validations:
       required: true
   - type: input

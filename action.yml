@@ -1,7 +1,7 @@
-name: dejadoc
+name: cargo-echoes
 description: >-
-  Dejadoc scans and canonicalizes your workspace's doctests and functions,
-  reporting any duplicates. Use it in your GitHub CI!
+  cargo-echoes finds duplicated Rust doctests, functions and code blocks in
+  your workspace and reviews the copies a pull request adds.
 
 branding:
   icon: 'copy'
@@ -92,11 +92,11 @@ inputs:
     required: false
     default: ''
   version:
-    description: The dejadoc version to install, empty for the latest
+    description: The echoes version to install, empty for the latest
     required: false
     default: ''
   install:
-    description: Install dejadoc, false uses the cargo dejadoc already on the path
+    description: Install echoes, false uses the cargo echoes already on the path
     required: false
     default: 'true'
   cwd:
@@ -131,7 +131,7 @@ inputs:
 runs:
   using: 'composite'
   steps:
-    - name: Install dejadoc
+    - name: Install echoes
       if: ${{ inputs.mode != 'post' && inputs.install == 'true' }}
       shell: bash
       env:
@@ -139,7 +139,7 @@ runs:
         VERSION: ${{ inputs.version }}
       run: |
         set -euo pipefail
-        repo="LucaCappelletti94/cargo-dejadoc"
+        repo="LucaCappelletti94/cargo-echoes"
         tag=''
         [ -n "$VERSION" ] && tag="v$VERSION"
 
@@ -154,8 +154,8 @@ runs:
         esac
 
         if [ -n "$target" ]; then
-          asset="cargo-dejadoc-$target.tar.gz"
-          dest="$RUNNER_TEMP/dejadoc-bin"
+          asset="cargo-echoes-$target.tar.gz"
+          dest="$RUNNER_TEMP/echoes-bin"
           mkdir -p "$dest"
           # Action series releases carry no binaries and GitHub marks the newest one Latest,
           # so resolve the newest release that actually ships the asset instead of trusting Latest.
@@ -166,21 +166,21 @@ runs:
           args=(--repo "$repo" --pattern "$asset" --dir "$dest" --clobber)
           [ -n "$tag" ] && args=("$tag" "${args[@]}")
           if err="$(gh release download "${args[@]}" 2>&1)"; then
-            bin=cargo-dejadoc
-            [ "$RUNNER_OS" = Windows ] && bin=cargo-dejadoc.exe
+            bin=cargo-echoes
+            [ "$RUNNER_OS" = Windows ] && bin=cargo-echoes.exe
             tar -xzf "$dest/$asset" -C "$dest"
             chmod +x "$dest/$bin" 2>/dev/null || true
             echo "$dest" >> "$GITHUB_PATH"
-            echo "dejadoc: installed the prebuilt $asset from $tag"
+            echo "echoes: installed the prebuilt $asset from $tag"
             exit 0
           fi
-          echo "dejadoc: could not download $asset, falling back to source"
-          printf '%s\n' "$err" | sed 's/^/dejadoc: /'
+          echo "echoes: could not download $asset, falling back to source"
+          printf '%s\n' "$err" | sed 's/^/echoes: /'
         else
-          echo "dejadoc: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, falling back to source"
+          echo "echoes: no prebuilt binary for $RUNNER_OS/$RUNNER_ARCH, falling back to source"
         fi
 
-        install=(dejadoc)
+        install=(echoes)
         [ -n "$tag" ] && install+=(--version "$VERSION")
         cargo install "${install[@]}"
 
@@ -191,18 +191,18 @@ runs:
       env:
         CONTEXT_CACHE_DIR: ${{ inputs.context-cache-dir }}
       run: |
-        dir="${CONTEXT_CACHE_DIR:-$RUNNER_TEMP/dejadoc-context-index}"
+        dir="${CONTEXT_CACHE_DIR:-$RUNNER_TEMP/echoes-context-index}"
         mkdir -p "$dir/public"
         echo "dir=$dir" >> "$GITHUB_OUTPUT"
-        echo "dejadoc-context-index-dir=$dir" >> "$GITHUB_ENV"
+        echo "echoes-context-index-dir=$dir" >> "$GITHUB_ENV"
 
     - name: Restore the dependency index
       if: ${{ inputs.mode != 'post' && inputs.context-dependency-depth > 0 }}
       uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        path: ${{ env.dejadoc-context-index-dir }}/public
-        key: dejadoc-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1
-        restore-keys: dejadoc-context-index-${{ runner.os }}-
+        path: ${{ env.echoes-context-index-dir }}/public
+        key: echoes-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1
+        restore-keys: echoes-context-index-${{ runner.os }}-
 
     - name: Scan for duplicates
       id: scan
@@ -231,7 +231,7 @@ runs:
         CONTEXT_ALL_FEATURES: ${{ inputs.context-all-features }}
         CONTEXT_NO_DEFAULT: ${{ inputs.context-no-default-features }}
         CONTEXT_TARGET: ${{ inputs.context-target }}
-        CONTEXT_CACHE_DIR: ${{ env.dejadoc-context-index-dir }}
+        CONTEXT_CACHE_DIR: ${{ env.echoes-context-index-dir }}
         CONTEXT_CHECK_LATEST: ${{ inputs.context-check-latest }}
         CONTEXT_FAIL: ${{ inputs.context-fail-on-reuse }}
       run: |
@@ -244,9 +244,9 @@ runs:
           prefix="$(realpath --relative-to="$GITHUB_WORKSPACE" "$root" 2>/dev/null)" || prefix=''
           [ "$prefix" = "." ] && prefix=''
         fi
-        printf '%s' "$prefix" > "$RUNNER_TEMP/dejadoc-prefix"
+        printf '%s' "$prefix" > "$RUNNER_TEMP/echoes-prefix"
         printf '%s\n' 'if $prefix == "" then . else ((.groups[]?.sites[]?, .context_groups[]?.sites[]?) |= (.file = "\($prefix)/\(.file)")) | (if .reuse then (.reuse.groups[]?.local |= (.file = "\($prefix)/\(.file)")) else . end) end' \
-          > "$RUNNER_TEMP/dejadoc-root.jq"
+          > "$RUNNER_TEMP/echoes-root.jq"
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
         [ -n "$PACKAGE" ] && set -- --package "$PACKAGE" "$@"
@@ -270,23 +270,23 @@ runs:
           [ "$CONTEXT_FAIL" = "true" ] && set -- --context-fail-on-reuse "$@"
         fi
         if [ -n "$PR_NUMBER" ] || [ "$DRY_RUN" = "true" ]; then
-          report="$RUNNER_TEMP/dejadoc-report.json"
+          report="$RUNNER_TEMP/echoes-report.json"
           status=0
-          cargo dejadoc \
+          cargo echoes \
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
             --no-fail --json "$@" > "$report.raw" || status=$?
           if [ ! -s "$report.raw" ]; then
-            echo "dejadoc: the scan produced no report"
+            echo "echoes: the scan produced no report"
             exit 2
           fi
-          jq --arg prefix "$prefix" -f "$RUNNER_TEMP/dejadoc-root.jq" "$report.raw" > "$report"
+          jq --arg prefix "$prefix" -f "$RUNNER_TEMP/echoes-root.jq" "$report.raw" > "$report"
           rm -f "$report.raw"
           jq -r '. as $r | "\($r.total) doctests, \($r.unique) unique, \($r.functions // 0) functions, \($r.unique_functions // 0) unique functions, \($r.groups | length) duplicated groups"' "$report"
           # The whole scan in the run summary, which needs no token, so a
           # fork pull request has it whatever the review can do.
           {
-            jq -r '"### dejadoc\n\n\(.total) doctests, \(.unique) unique, \(.functions // 0) functions, \(.unique_functions // 0) unique functions, \(.groups | length) duplicated groups"' "$report"
+            jq -r '"### echoes\n\n\(.total) doctests, \(.unique) unique, \(.functions // 0) functions, \(.unique_functions // 0) unique functions, \(.groups | length) duplicated groups"' "$report"
             jq -r '
               .groups[] | "\n- group `\(.id)`, \(.kind // "doctest"), \(.sites | length) copies\n"
                 + (.sites | map("  - `" + .file + ":" + (.line | tostring) + "`  " + .item)
@@ -344,11 +344,11 @@ runs:
           fi
           exit "$status"
         else
-          out="$RUNNER_TEMP/dejadoc-gate.txt"
+          out="$RUNNER_TEMP/echoes-gate.txt"
           status=0
           gate=()
           [ "$ANNOTATIONS" = "true" ] && gate+=(--github)
-          cargo dejadoc \
+          cargo echoes \
             --threshold "$THRESHOLD" \
             --min-tokens "$MIN_TOKENS" \
             "${gate[@]}" "$@" > "$out" || status=$?
@@ -364,7 +364,7 @@ runs:
           fi
           cat "$out"
           {
-            echo '### dejadoc'
+            echo '### echoes'
             echo
             echo '```'
             grep -v '^::' "$out"
@@ -404,7 +404,7 @@ runs:
         CONTEXT_ALL_FEATURES: ${{ inputs.context-all-features }}
         CONTEXT_NO_DEFAULT: ${{ inputs.context-no-default-features }}
         CONTEXT_TARGET: ${{ inputs.context-target }}
-        CONTEXT_CACHE_DIR: ${{ env.dejadoc-context-index-dir }}
+        CONTEXT_CACHE_DIR: ${{ env.echoes-context-index-dir }}
         CONTEXT_CHECK_LATEST: ${{ inputs.context-check-latest }}
         CONTEXT_FAIL: ${{ inputs.context-fail-on-reuse }}
       run: |
@@ -412,16 +412,16 @@ runs:
         # base commit. Any failure degrades to reviewing the full report.
         base_sha="$(gh api "repos/$GITHUB_REPOSITORY/pulls/$PR_NUMBER" --jq '.base.sha' 2>/dev/null)" || base_sha=''
         if [ -z "$base_sha" ]; then
-          echo "dejadoc: cannot read the base commit, the full report is reviewed"
+          echo "echoes: cannot read the base commit, the full report is reviewed"
           exit 0
         fi
         if ! git -C "$GITHUB_WORKSPACE" fetch -q --depth 1 origin "$base_sha" \
-          || ! git -C "$GITHUB_WORKSPACE" worktree add -q --detach "$RUNNER_TEMP/dejadoc-base" "$base_sha"; then
-          echo "dejadoc: cannot check out the base commit, the full report is reviewed"
+          || ! git -C "$GITHUB_WORKSPACE" worktree add -q --detach "$RUNNER_TEMP/echoes-base" "$base_sha"; then
+          echo "echoes: cannot check out the base commit, the full report is reviewed"
           exit 0
         fi
-        printf '%s\n' "$base_sha" > "$RUNNER_TEMP/dejadoc-base-sha"
-        dir="$RUNNER_TEMP/dejadoc-base"
+        printf '%s\n' "$base_sha" > "$RUNNER_TEMP/echoes-base-sha"
+        dir="$RUNNER_TEMP/echoes-base"
         [ -n "$CWD" ] && dir="$dir/$CWD"
         set --
         [ "$ALL_TARGETS" = "true" ] && set -- --all-targets "$@"
@@ -448,15 +448,15 @@ runs:
         # Threshold 1 inventories every base site, a group the pull request
         # completes from a single existing copy must still be reported.
         # The base tree has the head's layout, so the head's prefix roots its paths.
-        base_report="$RUNNER_TEMP/dejadoc-base-report.json"
-        if ! (cd "$dir" && cargo dejadoc \
+        base_report="$RUNNER_TEMP/echoes-base-report.json"
+        if ! (cd "$dir" && cargo echoes \
           --threshold 1 \
           --min-tokens "$MIN_TOKENS" \
           --no-fail --json "$@") > "$base_report.raw" \
-          || ! jq --rawfile prefix "$RUNNER_TEMP/dejadoc-prefix" -f "$RUNNER_TEMP/dejadoc-root.jq" \
+          || ! jq --rawfile prefix "$RUNNER_TEMP/echoes-prefix" -f "$RUNNER_TEMP/echoes-root.jq" \
             "$base_report.raw" > "$base_report"; then
           rm -f "$base_report"
-          echo "dejadoc: the base scan failed, the full report is reviewed"
+          echo "echoes: the base scan failed, the full report is reviewed"
         fi
         rm -f "$base_report.raw"
 
@@ -476,16 +476,16 @@ runs:
         pr="$PR_NUMBER"
         dry="$DRY_RUN"
         repo="$GITHUB_REPOSITORY"
-        report="$RUNNER_TEMP/dejadoc-report.json"
-        base_report="$RUNNER_TEMP/dejadoc-base-report.json"
-        body="$RUNNER_TEMP/dejadoc-review.md"
-        status="$RUNNER_TEMP/dejadoc-post-status"
-        inline_file="$RUNNER_TEMP/dejadoc-inline.tsv"
+        report="$RUNNER_TEMP/echoes-report.json"
+        base_report="$RUNNER_TEMP/echoes-base-report.json"
+        body="$RUNNER_TEMP/echoes-review.md"
+        status="$RUNNER_TEMP/echoes-post-status"
+        inline_file="$RUNNER_TEMP/echoes-inline.tsv"
         mode="$MODE"
-        payload="${PAYLOAD:-$RUNNER_TEMP/dejadoc-payload}"
+        payload="${PAYLOAD:-$RUNNER_TEMP/echoes-payload}"
         comments="$payload/comments.ndjson"
         meta="$payload/review.json"
-        reuse_tmp="$RUNNER_TEMP/dejadoc-reuse.ndjson"
+        reuse_tmp="$RUNNER_TEMP/echoes-reuse.ndjson"
         if [ "$mode" = "post" ]; then
           reuse_tmp="$payload/reuse.ndjson"
         fi
@@ -495,12 +495,12 @@ runs:
         out_of_range=''
         onlynew=0
         [ -s "$base_report" ] && onlynew=1
-        base_sha="$(cat "$RUNNER_TEMP/dejadoc-base-sha" 2>/dev/null || echo '')"
+        base_sha="$(cat "$RUNNER_TEMP/echoes-base-sha" 2>/dev/null || echo '')"
         # Post mode consumes a payload another job prepared, so it reads no
         # source tree and skips straight to the api calls.
         if [ "$mode" = "post" ]; then
           if [ ! -s "$meta" ]; then
-            echo "dejadoc: the prepared review is missing from $payload"
+            echo "echoes: the prepared review is missing from $payload"
             echo "failed" > "$status"
             exit 1
           fi
@@ -522,7 +522,7 @@ runs:
           fi
         fi
         if [ -n "$pr" ] && [ -z "$head_sha" ] && [ "$dry" != "true" ]; then
-          echo "dejadoc: cannot read pull request $pr, the review is not posted"
+          echo "echoes: cannot read pull request $pr, the review is not posted"
           echo "failed" > "$status"
           exit 1
         fi
@@ -563,8 +563,8 @@ runs:
         [ "$onlynew" = "1" ] && onlynew_mode=true
         # One command line argument holds at most 128 KiB, a large pull request's
         # file list exceeds it, so jq reads both lists from files.
-        changed_file="$RUNNER_TEMP/dejadoc-changed.json"
-        base_file="$RUNNER_TEMP/dejadoc-base-keys.json"
+        changed_file="$RUNNER_TEMP/echoes-changed.json"
+        base_file="$RUNNER_TEMP/echoes-base-keys.json"
         printf '%s' "$changed_json" > "$changed_file"
         printf '%s' "$base_json" > "$base_file"
         jq -r --slurpfile changed "$changed_file" --slurpfile base "$base_file" \
@@ -667,7 +667,7 @@ runs:
         # The inline posts, live mode only. The first post is the permission probe.
         # Each comment links to a prefilled wrong-review issue for its group.
         uri() { jq -rn --arg s "$1" '$s | @uri'; }
-        version="$(cargo dejadoc --version | awk '{ print $NF }')"
+        version="$(cargo echoes --version | awk '{ print $NF }')"
         report_link() {
           local sites
           sites="$(jq -r --argjson g "$1" '
@@ -675,13 +675,13 @@ runs:
             | [$s[:12][] | "\(.file):\(.line)  \(.item)"]
               + (if ($s | length) > 12 then ["and \(($s | length) - 12) more"] else [] end)
             | join("\n")' "$report")"
-          printf '[👎 Report a wrong review](https://github.com/LucaCappelletti94/cargo-dejadoc/issues/new?template=wrong-review.yml&title=%s&version=%s&review=%s&group=%s)' \
+          printf '[👎 Report a wrong review](https://github.com/LucaCappelletti94/cargo-echoes/issues/new?template=wrong-review.yml&title=%s&version=%s&review=%s&group=%s)' \
             "$(uri "Wrong review on $repo#$pr, group $1")" \
             "$(uri "$version")" \
             "$(uri "$GITHUB_SERVER_URL/$repo/pull/$pr")" \
             "$(uri "$sites")"
         }
-        support_link='[❤️ Support dejadoc](https://github.com/sponsors/LucaCappelletti94)'
+        support_link='[❤️ Support echoes](https://github.com/sponsors/LucaCappelletti94)'
         # A permalink to lines $3 to $4 of path $2 at commit $1, GitHub shows
         # and highlights those lines. Without a sha it falls back to plain text.
         blob_link() {
@@ -802,17 +802,17 @@ runs:
                 *) where='' share='' ;;
               esac
               if [ -n "$where" ]; then
-                printf '::error file=%s,line=%s,title=dejadoc::%s repeats %s at %s %s, %s, group %s\n' \
+                printf '::error file=%s,line=%s,title=echoes::%s repeats %s at %s %s, %s, group %s\n' \
                   "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$kept_item")" "$(escape_data "$keep")" "$where" "$share" "$g"
                 findings="$findings- \`$p:$line\`  $item, repeats \`$kept_item\` at \`$keep\` $where"$'\n'
                 findings_span=1
               else
-                printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the function %s at %s, group %s\n' \
+                printf '::error file=%s,line=%s,title=echoes::%s duplicates the function %s at %s, group %s\n' \
                   "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$kept_item")" "$(escape_data "$keep")" "$g"
                 findings="$findings- \`$p:$line\`  $item, duplicates the function \`$kept_item\` at \`$keep\`"$'\n'
               fi
             else
-              printf '::error file=%s,line=%s,title=dejadoc::%s duplicates the doctest at %s, group %s\n' \
+              printf '::error file=%s,line=%s,title=echoes::%s duplicates the doctest at %s, group %s\n' \
                 "$(escape_property "$p")" "$line" "$(escape_data "$item")" "$(escape_data "$keep")" "$g"
               findings="$findings- \`$p:$line\`  $item, duplicates \`$keep\`"$'\n'
             fi
@@ -860,7 +860,7 @@ runs:
             pv_e="$ce"
             loc="$(loc_md "$(loc_text "$fp" "$fl" "$ce")" "$url")"
           fi
-          dejadoc_link='[dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc)'
+          echoes_link='[echoes](https://github.com/LucaCappelletti94/cargo-echoes)'
           if [ "$kind" = "function" ]; then
             if [ "$remedy" != "delete" ]; then
               preview='the repeated function'
@@ -880,18 +880,18 @@ runs:
             note="This function repeats \`$kept_item\` at $loc under another \`cfg\`. Deleting either copy drops a configuration, one function under both conditions can replace them."
           elif [ "$kind" = "function" ]; then
             if [ "$onlynew" = "1" ] && [ -n "$basekeep" ]; then
-              note="This function was added by this pull request and duplicates a copy that already exists at $loc, $dejadoc_link suggests deleting the added copy, or updating it if it was meant to differ."
+              note="This function was added by this pull request and duplicates a copy that already exists at $loc, $echoes_link suggests deleting the added copy, or updating it if it was meant to differ."
             elif [ "$onlynew" = "1" ]; then
-              note="This pull request adds $knew copies of the same function, $dejadoc_link suggests keeping the first added copy at $loc and deleting this one, or updating it if it was meant to differ."
+              note="This pull request adds $knew copies of the same function, $echoes_link suggests keeping the first added copy at $loc and deleting this one, or updating it if it was meant to differ."
             else
-              note="This function appears $n times in this module, this is copy $c. $dejadoc_link suggests keeping the first copy at $loc and deleting this one, or updating it if it was meant to differ."
+              note="This function appears $n times in this module, this is copy $c. $echoes_link suggests keeping the first copy at $loc and deleting this one, or updating it if it was meant to differ."
             fi
           elif [ "$onlynew" = "1" ] && [ -n "$basekeep" ]; then
-            note="This doctest was added by this pull request and duplicates a copy that already exists at $loc, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests removing the added copy."
+            note="This doctest was added by this pull request and duplicates a copy that already exists at $loc, [echoes](https://github.com/LucaCappelletti94/cargo-echoes) suggests removing the added copy."
           elif [ "$onlynew" = "1" ]; then
-            note="This pull request adds $knew copies of the same doctest, [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first added copy at $loc and removing this one."
+            note="This pull request adds $knew copies of the same doctest, [echoes](https://github.com/LucaCappelletti94/cargo-echoes) suggests keeping the first added copy at $loc and removing this one."
           else
-            note="This doctest appears $n times in this scan, this is copy $c. [dejadoc](https://github.com/LucaCappelletti94/cargo-dejadoc) suggests keeping the first copy at $loc and removing this one."
+            note="This doctest appears $n times in this scan, this is copy $c. [echoes](https://github.com/LucaCappelletti94/cargo-echoes) suggests keeping the first copy at $loc and removing this one."
           fi
           comment="$note"
           [ -n "$url" ] && comment="$comment"$'\n\n'"$(preview_of "$url" "$pv_s" "$pv_e" "$preview")"
@@ -915,7 +915,7 @@ runs:
         # removal suggestion, so approximate and upstream matches stay advice.
         reuse_rendered=''
         if [ -s "$reuse_tmp" ]; then
-          reuse_built="$RUNNER_TEMP/dejadoc-reuse-built.ndjson"
+          reuse_built="$RUNNER_TEMP/echoes-reuse-built.ndjson"
           : > "$reuse_built"
           while IFS= read -r row; do
             [ -n "$row" ] || continue
@@ -964,22 +964,22 @@ runs:
                   ) | join("\n")) + "\n\n"
             ) | join("")' "$report")"
           {
-            title='Duplicated doctests found by dejadoc'
+            title='Duplicated doctests found by echoes'
             if [ "$(jq '[.groups[] | select(.kind == "function")] | length' "$report")" -gt 0 ]; then
-              title='Duplicates found by dejadoc'
+              title='Duplicates found by echoes'
             fi
             printf '%s\n' "$title"
-            echo 'dejadoc dry run, the review is not posted'
+            echo 'echoes dry run, the review is not posted'
             echo
             printf '%s\n' "$stats"
             echo
             printf '%s\n\n' "$groups_block"
-            echo 'Inline comments dejadoc would post'
+            echo 'Inline comments echoes would post'
             echo
             printf '%s' "$rendered"
             if [ -n "$reuse_rendered" ]; then
               echo
-              echo 'Neutral reuse and context advice dejadoc would post'
+              echo 'Neutral reuse and context advice echoes would post'
               echo
               printf '%s' "$reuse_rendered"
             fi
@@ -994,19 +994,19 @@ runs:
             echo "Run $run_url"
           } > "$body"
           { echo; cat "$body"; } >> "$GITHUB_STEP_SUMMARY"
-          echo "dejadoc dry run, the review is not posted"
+          echo "echoes dry run, the review is not posted"
           cat "$body"
           echo "dry-run" > "$status"
           exit 0
         fi
 
           # Both lists grow with the pull request, past one argument's 128 KiB.
-          printf '%s' "$out_of_range" > "$RUNNER_TEMP/dejadoc-out-of-range.txt"
-          printf '%s' "$findings" > "$RUNNER_TEMP/dejadoc-findings.txt"
+          printf '%s' "$out_of_range" > "$RUNNER_TEMP/echoes-out-of-range.txt"
+          printf '%s' "$findings" > "$RUNNER_TEMP/echoes-findings.txt"
           event='REQUEST_CHANGES'
           [ -s "$comments" ] || [ -n "$out_of_range" ] || event='COMMENT'
           jq -n --arg pr "$pr" --arg head "$head_sha" --arg event "$event" \
-            --rawfile oor "$RUNNER_TEMP/dejadoc-out-of-range.txt" --rawfile f "$RUNNER_TEMP/dejadoc-findings.txt" \
+            --rawfile oor "$RUNNER_TEMP/echoes-out-of-range.txt" --rawfile f "$RUNNER_TEMP/echoes-findings.txt" \
             '{pr: $pr, head_sha: $head, event: $event, out_of_range: $oor, findings: $f}' > "$meta"
           touch "$comments"
           touch "$reuse_tmp"
@@ -1015,10 +1015,10 @@ runs:
         # posting job has something to download.
         if [ ! -s "$comments" ] && [ -z "$out_of_range" ] && [ ! -s "$reuse_tmp" ]; then
           if [ "$onlynew" = "1" ]; then
-            echo "dejadoc: no duplicate was introduced by this pull request, the review is not posted"
+            echo "echoes: no duplicate was introduced by this pull request, the review is not posted"
             echo "skipped-existing" > "$status"
           else
-            echo "dejadoc: no duplicate is in the pull request diff, the review is not posted"
+            echo "echoes: no duplicate is in the pull request diff, the review is not posted"
             echo "skipped-nodiff" > "$status"
           fi
           exit 0
@@ -1037,14 +1037,14 @@ runs:
         fi
         if [ "$mode" = "prepare" ]; then
           cp "$reuse_tmp" "$payload/reuse.ndjson"
-          echo "dejadoc: the review is prepared in $payload for a later job"
+          echo "echoes: the review is prepared in $payload for a later job"
           echo "prepared" > "$status"
           exit 0
         fi
 
         readonly_notice() {
-          echo "dejadoc: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
-          echo "dejadoc: the annotations and the run summary carry the findings, the removal suggestion needs a review comment"
+          echo "echoes: the GITHUB_TOKEN is read-only for this pull request, the review is not posted"
+          echo "echoes: the annotations and the run summary carry the findings, the removal suggestion needs a review comment"
         }
         # The first post is the permission probe.
         readonly=0
@@ -1062,8 +1062,8 @@ runs:
             fi
             item="$(printf '%s' "$row" | jq -r '.item')"
             g="$(printf '%s' "$row" | jq -r '.group // .kind')"
-            printf 'dejadoc: %s:%s %s\n' "$p" "$line" "$item"
-            printf '%s\n' "$err" | sed 's/^/dejadoc: /'
+            printf 'echoes: %s:%s %s\n' "$p" "$line" "$item"
+            printf '%s\n' "$err" | sed 's/^/echoes: /'
             if printf '%s' "$err" | grep -qE 'HTTP 422|"status": "422"'; then
               out_of_range="$out_of_range- group $g  $(printf '`%s:%s`' "$p" "$line")  $item"$'\n'
             else
@@ -1099,7 +1099,7 @@ runs:
           review_body="$(printf 'These duplicates are not on lines GitHub shows in this pull request diff, the inline comment cannot attach there. The links point at the copies on the head commit.\n\n%s' "$out_of_range")"
         fi
         if [ -n "$failed_sites" ]; then
-          failed_block="$(printf '\n\nDuplicates dejadoc could not comment inline\n\n```\n%s```' "$failed_sites")"
+          failed_block="$(printf '\n\nDuplicates echoes could not comment inline\n\n```\n%s```' "$failed_sites")"
           review_body="$review_body$failed_block"
         fi
         if [ -n "$review_body" ]; then
@@ -1111,7 +1111,7 @@ runs:
             echo "skipped-readonly" > "$status"
             exit 0
           fi
-          echo "dejadoc: posting the review failed"
+          echo "echoes: posting the review failed"
           printf '%s\n' "$resp"
           echo "failed" > "$status"
           exit 1
@@ -1120,21 +1120,21 @@ runs:
         expected_state='CHANGES_REQUESTED'
         [ "$review_event" = "COMMENT" ] && expected_state='COMMENTED'
         if [ "$posted_state" != "$expected_state" ]; then
-          echo "dejadoc: the review response is unexpected"
+          echo "echoes: the review response is unexpected"
           printf '%s\n' "$resp"
           echo "failed" > "$status"
           exit 1
         fi
         if [ -n "$failed_sites" ]; then
-          echo "dejadoc: the inline comments failed for the following sites"
+          echo "echoes: the inline comments failed for the following sites"
           printf '%s' "$failed_sites"
         fi
-        echo "dejadoc: posted the review on pull request $pr"
+        echo "echoes: posted the review on pull request $pr"
         echo "posted" > "$status"
 
     - name: Save the dependency index
       if: ${{ always() && !cancelled() && inputs.mode != 'post' && inputs.context-dependency-depth > 0 && steps.scan.outputs.index-ok == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
       uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
       with:
-        path: ${{ env.dejadoc-context-index-dir }}/public
-        key: dejadoc-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1-${{ github.run_id }}-${{ github.run_attempt }}
+        path: ${{ env.echoes-context-index-dir }}/public
+        key: echoes-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1-${{ github.run_id }}-${{ github.run_attempt }}

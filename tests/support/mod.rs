@@ -23,7 +23,7 @@ impl Drop for Process {
 
 pub(super) fn run_cli(root: &Path, args: &[&str]) -> Output {
     let id = format!(
-        "dejadoc.test.{}-{}",
+        "echoes.test.{}-{}",
         std::process::id(),
         REQUEST.fetch_add(1, Ordering::Relaxed)
     );
@@ -32,10 +32,10 @@ pub(super) fn run_cli(root: &Path, args: &[&str]) -> Output {
     let stdout = capture.path().join(format!("{id}.stdout"));
     let stderr = capture.path().join(format!("{id}.stderr"));
     let mut process = Process(
-        Command::new(env!("CARGO_BIN_EXE_cargo-dejadoc"))
+        Command::new(env!("CARGO_BIN_EXE_cargo-echoes"))
             .current_dir(root)
             .args(args)
-            .env("DEJADOC_TEST_REQUEST", &id)
+            .env("ECHOES_TEST_REQUEST", &id)
             .stdin(Stdio::null())
             .stdout(std::fs::File::create(&stdout).unwrap())
             .stderr(std::fs::File::create(&stderr).unwrap())

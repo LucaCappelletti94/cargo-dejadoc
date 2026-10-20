@@ -304,7 +304,7 @@ pub(crate) fn analyze(
     let store = match cache::Store::open(&store_root) {
         Ok(store) => Some(store),
         Err(err) => {
-            eprintln!("dejadoc: dependency index is unavailable: {err}");
+            eprintln!("echoes: dependency index is unavailable: {err}");
             None
         }
     };

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 use crate::discover::Target;
 use crate::organization_source::{Corpus, PackageSource};
 use crate::{
-    ContextScope, Dejadoc, DocTest, Error, Group, Kind, OrganizationCoverage, OrganizationPackage,
+    ContextScope, DocTest, Echoes, Error, Group, Kind, OrganizationCoverage, OrganizationPackage,
     OrganizationRepository, Remedy, Report, SourceFile, TargetScan,
 };
 
@@ -157,7 +157,7 @@ fn organization_functions_group_across_crate_and_module_names() {
             lib_repo("org/beta", "beta", &beta),
         ],
     );
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_organization_corpus(corpus)
         .unwrap();
@@ -199,7 +199,7 @@ fn organization_doctests_group_across_repositories() {
             lib_repo("org/beta", "beta", &beta),
         ],
     );
-    let report = Dejadoc::default().run_organization_corpus(corpus).unwrap();
+    let report = Echoes::default().run_organization_corpus(corpus).unwrap();
     let groups = doctest_groups(&report);
     assert_eq!(
         groups.len(),
@@ -224,7 +224,7 @@ fn local_function_matching_stays_within_one_crate_root() {
         local_target("alpha", "alpha/src/lib.rs", &src),
         local_target("beta", "beta/src/lib.rs", &src),
     ];
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_targets("", &targets, &|_, _| None);
     assert!(
@@ -261,7 +261,7 @@ fn cross_scope_copies_get_the_safe_remedy() {
             "org",
             &[lib_repo("org/a", "a", &one), lib_repo("org/b", "b", &two)],
         );
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .run_organization_corpus(corpus)
             .unwrap();
@@ -280,7 +280,7 @@ fn same_crate_copies_across_modules_get_the_safe_remedy() {
     let lib = format!("mod one {{ fn shared{BODY} }}\nmod two {{ fn shared{BODY} }}");
     let dir = tempfile::tempdir().unwrap();
     let corpus = corpus(dir.path(), "org", &[lib_repo("org/a", "a", &lib)]);
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_organization_corpus(corpus)
         .unwrap();
@@ -298,7 +298,7 @@ fn same_scope_copies_keep_the_local_remedy() {
     let lib = format!("#[cfg(unix)]\nfn shared{BODY}\n#[cfg(windows)]\nfn shared{BODY}");
     let dir = tempfile::tempdir().unwrap();
     let corpus = corpus(dir.path(), "org", &[lib_repo("org/a", "a", &lib)]);
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_organization_corpus(corpus)
         .unwrap();
@@ -323,7 +323,7 @@ fn cross_scope_methods_get_the_remedy_their_self_types_ask() {
                 lib_repo("org/b", "beta", beta),
             ],
         );
-        Dejadoc::default()
+        Echoes::default()
             .functions()
             .run_organization_corpus(corpus)
             .unwrap()
@@ -367,7 +367,7 @@ fn same_named_owners_in_different_scopes_are_distinct_owners() {
             lib_repo("org/b", "beta", beta),
         ],
     );
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .fn_min_tokens(0)
         .run_organization_corpus(corpus)
@@ -410,7 +410,7 @@ fn a_physical_file_shared_by_two_packages_keeps_both_provenances() {
         ],
     };
     let corpus = corpus(dir.path(), "org", &[shared, other]);
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_organization_corpus(corpus)
         .unwrap();
@@ -484,7 +484,7 @@ fn a_module_file_shared_by_two_crate_roots_is_one_function_occurrence() {
             vec![(String::from("c"), String::from("c/src/lib.rs"))],
         )],
     };
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_organization_corpus(corpus(dir.path(), "org", &[shared, other]))
         .unwrap();
@@ -541,7 +541,7 @@ fn a_module_reached_through_an_outside_alias_is_qualified_by_its_repository() {
         "beta",
         &format!("/// ```\n{BLOCK_DOC}/// ```\npub fn shared{BODY}\n"),
     );
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .run_organization_corpus(corpus(dir.path(), "org", &[alpha, beta]))
         .unwrap();
     let org = report.organization.as_ref().unwrap();
@@ -575,7 +575,7 @@ fn the_package_selector_restricts_the_organization_scan() {
             lib_repo("org/c", "c", &lib),
         ],
     );
-    let selected = Dejadoc::default()
+    let selected = Echoes::default()
         .package("b")
         .run_organization_corpus(corpus)
         .unwrap();
@@ -599,7 +599,7 @@ fn an_unknown_organization_package_is_rejected() {
         "org",
         &[lib_repo("org/a", "a", "pub fn f() {}")],
     );
-    let result = Dejadoc::default()
+    let result = Echoes::default()
         .package("absent")
         .run_organization_corpus(corpus);
     assert!(
@@ -622,7 +622,7 @@ fn missing_packages_in_incomplete_discovery_keep_coverage_failures() {
         .coverage
         .failures
         .push(String::from("org/unavailable"));
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .package("absent")
         .run_organization_corpus(corpus)
         .unwrap();
@@ -675,7 +675,7 @@ fn included_source_text_keeps_doc_attributes_literal_in_both_target_orders() {
             "twin",
             "/// ```\n/// let other = 9;\n/// ```\npub fn f() {}\n",
         );
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .run_organization_corpus(corpus(dir.path(), "org", &[repo, twin]))
             .unwrap();
         let organization = report.organization.as_ref().unwrap();
@@ -707,7 +707,7 @@ fn explicit_context_scopes_keep_candidates_outside_the_legacy_package() {
         lib_repo("org/b", "beta", &beta),
     ];
     let scanner = || {
-        Dejadoc::default()
+        Echoes::default()
             .context_blocks()
             .context_min_tokens(0)
             .context_select(ContextScope::Module(String::from("beta")))
@@ -741,7 +741,7 @@ fn cross_repository_context_blocks_group() {
             lib_repo("org/b", "beta", &beta),
         ],
     );
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .context_blocks()
         .context_min_tokens(0)
         .run_organization_corpus(corpus)
@@ -767,7 +767,7 @@ fn context_selection_restricts_organization_anchors() {
         lib_repo("org/a", "alpha", &alpha),
         lib_repo("org/b", "beta", beta),
     ];
-    let all = Dejadoc::default()
+    let all = Echoes::default()
         .context_blocks()
         .context_min_tokens(0)
         .run_organization_corpus(corpus(dir.path(), "org", &repos))
@@ -776,7 +776,7 @@ fn context_selection_restricts_organization_anchors() {
         group.sites.iter().any(|site| site.item == "alpha::one")
             && group.sites.iter().any(|site| site.item == "alpha::two")
     }));
-    let selected = Dejadoc::default()
+    let selected = Echoes::default()
         .context_blocks()
         .context_min_tokens(0)
         .context_select(ContextScope::Module(String::from("beta")))
@@ -815,7 +815,7 @@ fn confined_doc_include_qualifies_its_path_and_keeps_provenance() {
         "org",
         &[alpha, lib_repo("org/beta", "beta", &beta)],
     );
-    let report = Dejadoc::default().run_organization_corpus(corpus).unwrap();
+    let report = Echoes::default().run_organization_corpus(corpus).unwrap();
     let groups = doctest_groups(&report);
     assert_eq!(
         groups.len(),
@@ -865,7 +865,7 @@ fn doc_includes_preserve_literal_backslashes_in_repository_paths() {
         )],
     };
     let beta = lib_repo("org/beta", "beta", &format!("{DOC_LIB}pub fn f() {{}}\n"));
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .run_organization_corpus(corpus(dir.path(), "org", &[alpha, beta]))
         .unwrap();
     let organization = report.organization.as_ref().unwrap();
@@ -920,7 +920,7 @@ fn a_doc_include_escaping_the_snapshot_marks_coverage_incomplete() {
         &format!("{DOC_LIB}pub fn shared() {{}}\n"),
     );
     let corpus = corpus(dir.path(), "org", &[missing, escape, folder, good, keep]);
-    let report = Dejadoc::default().run_organization_corpus(corpus).unwrap();
+    let report = Echoes::default().run_organization_corpus(corpus).unwrap();
     let org = report.organization.as_ref().unwrap();
     assert!(
         !org.coverage.complete,
@@ -973,7 +973,7 @@ fn a_module_failure_marks_coverage_and_keeps_the_rest() {
     );
     let good = lib_repo("org/good", "good", &format!("pub fn shared{BODY}"));
     let corpus = corpus(dir.path(), "org", &[bad, good]);
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run_organization_corpus(corpus)
         .unwrap();
@@ -1001,7 +1001,7 @@ fn a_module_failure_marks_coverage_and_keeps_the_rest() {
 
 #[test]
 fn dependency_traversal_is_rejected_in_organization_mode() {
-    let err = Dejadoc::default()
+    let err = Echoes::default()
         .context_dependency_depth(1)
         .run_organization("org")
         .unwrap_err();
@@ -1011,7 +1011,7 @@ fn dependency_traversal_is_rejected_in_organization_mode() {
 
 #[test]
 fn an_organization_scan_without_dependency_search_proceeds() {
-    let report = Dejadoc::default().run_organization("../evil").unwrap();
+    let report = Echoes::default().run_organization("../evil").unwrap();
     let coverage = &report.organization.as_ref().unwrap().coverage;
     assert!(!coverage.complete);
     assert!(coverage.failures[0].contains("not a valid GitHub login"));
@@ -1027,7 +1027,7 @@ fn an_empty_repository_is_a_valid_input() {
         packages: Vec::new(),
     };
     let corpus = corpus(dir.path(), "org", &[empty]);
-    let report = Dejadoc::default().run_organization_corpus(corpus).unwrap();
+    let report = Echoes::default().run_organization_corpus(corpus).unwrap();
     let org = report.organization.as_ref().unwrap();
     assert_eq!(org.repositories.len(), 1);
     assert_eq!(org.packages.len(), 0);
@@ -1059,7 +1059,7 @@ fn organization_incomplete_coverage_exits_two_even_with_no_fail() {
         "/// ```\n/// assert_eq!(1 + 1, 2);\n/// ```\npub fn solo() {}\n",
     );
     let dir = tempfile::tempdir().unwrap();
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .run_organization_corpus(corpus(dir.path(), "org", &[clean(), solo]))
         .unwrap();
     assert_eq!(report.groups.len(), 0);
@@ -1068,7 +1068,7 @@ fn organization_incomplete_coverage_exits_two_even_with_no_fail() {
         std::process::ExitCode::SUCCESS
     );
     let dir = tempfile::tempdir().unwrap();
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .run_organization_corpus(corpus(dir.path(), "org", &[clean(), twin]))
         .unwrap();
     assert_eq!(doctest_groups(&report).len(), 1);
@@ -1082,7 +1082,7 @@ fn organization_incomplete_coverage_exits_two_even_with_no_fail() {
         "org",
         &[clean(), lib_repo("org/bad", "bad", "pub mod missing;\n")],
     );
-    let report = Dejadoc::default().run_organization_corpus(broken).unwrap();
+    let report = Echoes::default().run_organization_corpus(broken).unwrap();
     assert!(!report.organization.as_ref().unwrap().coverage.complete);
     assert_eq!(
         crate::exit_code(&report, true),

@@ -275,7 +275,7 @@ fn stage_beside(destination: &Path) -> Result<tempfile::TempDir, ArchiveError> {
         })?;
     fs::create_dir_all(parent)?;
     Ok(tempfile::Builder::new()
-        .prefix("dejadoc-")
+        .prefix("echoes-")
         .tempdir_in(parent)?)
 }
 
@@ -284,7 +284,7 @@ fn track_top(path: &Path, top: &mut Option<OsString>) {
     let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
         return;
     };
-    if name == ".crate" || name == "dejadoc-extract" {
+    if name == ".crate" || name == "echoes-extract" {
         return;
     }
     if let Some(first) = path
@@ -677,7 +677,7 @@ pub(crate) mod tests {
                 b"pub fn f() {}\n".to_vec(),
             ),
             (0, ".crate".into(), String::new(), b"x".to_vec()),
-            (0, "dejadoc-extract".into(), String::new(), b"x".to_vec()),
+            (0, "echoes-extract".into(), String::new(), b"x".to_vec()),
         ];
         let archive = archive_file(dir.path(), "markers.crate", &packed(markers));
         let dest = dir.path().join("out").join("markers");

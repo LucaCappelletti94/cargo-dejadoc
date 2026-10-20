@@ -14,7 +14,7 @@ mod public_sites;
 #[path = "support/site_src.rs"]
 mod site_src;
 
-use dejadoc::{Dejadoc, SourceFile, TargetScan, group};
+use echoes::{Echoes, SourceFile, TargetScan, group};
 use functions::function;
 use group_members::members;
 use impl_item::impl_method;
@@ -294,14 +294,14 @@ fn boolean_cli_fixture_preserves_exact_function_and_doctest_members() {
         .unwrap(),
     );
     for threshold in [0, 30] {
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .fn_min_tokens(threshold)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None);
         let function_groups: Vec<_> = report
             .groups
             .iter()
-            .filter(|group| group.kind == dejadoc::Kind::Function)
+            .filter(|group| group.kind == echoes::Kind::Function)
             .collect();
         let function_members = members(function_groups.iter().copied());
         assert_eq!(
@@ -317,7 +317,7 @@ fn boolean_cli_fixture_preserves_exact_function_and_doctest_members() {
         let doctest_groups: Vec<_> = report
             .groups
             .iter()
-            .filter(|group| group.kind == dejadoc::Kind::Doctest)
+            .filter(|group| group.kind == echoes::Kind::Doctest)
             .collect();
         assert_eq!(doctest_groups.len(), 1);
         let sites = &doctest_groups[0].sites;

@@ -2,7 +2,7 @@
 
 use std::path::{Path, PathBuf};
 
-use dejadoc::{DependencySearch, ReuseReport};
+use echoes::{DependencySearch, ReuseReport};
 
 const MATCHING_BODY: &str = "let result = input + 1u32; result * 2u32";
 const APP_ID_SUFFIX: &str = "#0.1.0";
@@ -190,7 +190,7 @@ fn options(cache: &Path, target: Option<String>, depth: usize) -> DependencySear
 }
 
 fn run_dependency(root: &Path, options: DependencySearch) -> ReuseReport {
-    let report = dejadoc::Dejadoc::default()
+    let report = echoes::Echoes::default()
         .context_blocks()
         .context_min_tokens(1)
         .context_dependencies(options)

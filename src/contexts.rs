@@ -154,7 +154,7 @@ mod tests {
     use super::group;
     use crate::context_index::IndexedContext;
     use crate::reuse::ContextAccess;
-    use crate::{ContextGroup, ContextKind, ContextSite, Dejadoc, Report, SourceFile, TargetScan};
+    use crate::{ContextGroup, ContextKind, ContextSite, Echoes, Report, SourceFile, TargetScan};
     use alloc::string::{String, ToString};
     use alloc::vec;
     use alloc::vec::Vec;
@@ -172,7 +172,7 @@ mod tests {
                 rustdoc: true,
             }],
         };
-        Dejadoc::default()
+        Echoes::default()
             .context_blocks()
             .context_min_tokens(floor)
             .run_targets("", &[target], &|_, _| None)
@@ -290,7 +290,7 @@ mod tests {
                 files: vec![file],
             },
         ];
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .context_blocks()
             .context_min_tokens(0)
             .run_targets("", &targets, &|_, _| None);
@@ -459,7 +459,7 @@ mod tests {
                 rustdoc: true,
             }],
         };
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .context_blocks()
             .context_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);

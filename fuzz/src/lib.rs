@@ -1,19 +1,19 @@
-//! Harness pieces the dejadoc fuzz targets share.
+//! Harness pieces the echoes fuzz targets share.
 
 use std::sync::LazyLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Sender};
 use std::time::Duration;
 
-use dejadoc::DocTest;
+use echoes::DocTest;
 
 type Job = Box<dyn FnOnce() + Send>;
 
 /// Longest a target waits for the worker, past libFuzzer's own `-timeout`.
 const REPLY_DEADLINE: Duration = Duration::from_secs(120);
 
-/// The queue of one long-lived thread with the stack `dejadoc::group`
-/// reserves, so a deep input reports a fault in dejadoc and not the end of
+/// The queue of one long-lived thread with the stack `echoes::group`
+/// reserves, so a deep input reports a fault in echoes and not the end of
 /// the fuzzer's stack, without a thread start per input.
 static WORKER: LazyLock<Sender<Job>> = LazyLock::new(|| {
     let (jobs, queue) = mpsc::channel::<Job>();
@@ -45,7 +45,7 @@ pub fn on_large_stack<T: Send + 'static>(f: impl FnOnce() -> T + Send + 'static)
 /// Extract the doctests of `source` as the root file of crate `c`.
 pub fn extract(source: &str) -> Option<Vec<DocTest>> {
     let file = syn::parse_file(source).ok()?;
-    Some(dejadoc::extract::extract(
+    Some(echoes::extract::extract(
         "c",
         "/r/src/lib.rs",
         &file,
@@ -64,9 +64,9 @@ pub fn check_spans(blocks: &[DocTest]) {
 }
 
 /// The function report of `source` scanned as the modules `a` and `b` of one crate.
-pub fn functions(source: &str) -> Option<dejadoc::Report> {
+pub fn functions(source: &str) -> Option<echoes::Report> {
     let parsed = syn::parse_file(source).ok()?;
-    let file = |segment: &str| dejadoc::SourceFile {
+    let file = |segment: &str| echoes::SourceFile {
         path: format!("/r/src/{segment}.rs"),
         segments: vec![segment.to_string()],
         cfg: Vec::new(),
@@ -74,13 +74,13 @@ pub fn functions(source: &str) -> Option<dejadoc::Report> {
         text: source.to_string(),
         rustdoc: false,
     };
-    let target = dejadoc::TargetScan {
+    let target = echoes::TargetScan {
         name: "c".into(),
         files: vec![file("a"), file("b")],
         library: true,
     };
     Some(
-        dejadoc::Dejadoc::default()
+        echoes::Echoes::default()
             .functions()
             .fn_min_tokens(0)
             .run_targets("/r", &[target], &|_, _| None),
@@ -88,7 +88,7 @@ pub fn functions(source: &str) -> Option<dejadoc::Report> {
 }
 
 /// Every function group stays in one module, and both copies of the source group alike.
-pub fn check_functions(report: &dejadoc::Report) {
+pub fn check_functions(report: &echoes::Report) {
     let mut per_file = [0usize; 2];
     for group in &report.groups {
         let file = &group.sites[0].file;
@@ -228,7 +228,7 @@ pub fn check_dependency_schedules(data: &[u8]) {
         self_type: None,
         public: false,
     };
-    let report = dejadoc::group(
+    let report = echoes::group(
         &[
             site("original", original),
             site("scheduled", scheduled),
@@ -413,7 +413,7 @@ pub fn check_boolean_schedules(data: &[u8]) {
         self_type: None,
         public: false,
     };
-    let report = dejadoc::group(
+    let report = echoes::group(
         &[
             site("original", original),
             site("v04", v04),
@@ -542,7 +542,7 @@ pub fn check_value_schedules(data: &[u8]) {
         self_type: None,
         public: false,
     };
-    let report = dejadoc::group(
+    let report = echoes::group(
         &[
             site("original", original),
             site("v07", v07),
@@ -678,7 +678,7 @@ pub fn check_helper_schedules(data: &[u8]) {
         self_type: None,
         public: false,
     };
-    let report = dejadoc::group(
+    let report = echoes::group(
         &[
             site("a_original", format!("{a_code}{a_original}{main_a}")),
             site("a_scheduled", format!("{a_code}{a_scheduled}{main_a}")),
@@ -915,7 +915,7 @@ pub fn check_structure_schedules(data: &[u8]) {
         site("n_suf_mix", match_fn(&arm(&format!("{la}u32|{lb}")))),
         site("n_macro_alt", n_macro_alt),
     ];
-    let report = dejadoc::group(&sites, 2, 0);
+    let report = echoes::group(&sites, 2, 0);
     let mut groups: Vec<Vec<&str>> = report
         .groups
         .iter()
@@ -1090,7 +1090,7 @@ pub fn check_item_schedules(data: &[u8]) {
         site("pn_dup_a", format!("struct S;{i1}{i1_dup}{p_main}")),
         site("pn_dup_b", format!("struct S;{i_both_dup}{p_main}")),
     ];
-    let report = dejadoc::group(&sites, 2, 0);
+    let report = echoes::group(&sites, 2, 0);
     let mut groups: Vec<Vec<&str>> = report
         .groups
         .iter()
@@ -1148,7 +1148,7 @@ pub fn check_item_schedules(data: &[u8]) {
         self_type: None,
         public: false,
     };
-    let failing = dejadoc::group(
+    let failing = echoes::group(
         &[
             failing_site("f_a_original", format!("{a_one}{a_two}{a_main}")),
             failing_site("f_a_order", format!("{a_two}{a_one}{a_main}")),

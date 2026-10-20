@@ -20,8 +20,8 @@ pub fn alpha_fn() {}
 /// ```
 pub fn alpha_variant() {}
 
-/// Allowed duplicate; carries the dejadoc token.
-/// ```rust,dejadoc
+/// Allowed duplicate; carries the echoes token.
+/// ```rust,echoes
 /// fn shared() { }
 /// ```
 pub fn alpha_allowed() {}

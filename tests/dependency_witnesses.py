@@ -305,7 +305,7 @@ def run_matrix(cases, *, request_id, toolchain="stable", timeout=DEFAULT_TIMEOUT
         }
 
     results = []
-    with tempfile.TemporaryDirectory(prefix="dejadoc-witness-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="echoes-witness-") as scratch:
         scratch_root = pathlib.Path(scratch)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS)
         pending = {}

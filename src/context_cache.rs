@@ -52,10 +52,10 @@ impl Store {
     /// The per-user cache directory, honoring `XDG_CACHE_HOME`.
     pub(crate) fn default_root() -> PathBuf {
         match std::env::var_os("XDG_CACHE_HOME") {
-            Some(dir) if !dir.is_empty() => PathBuf::from(dir).join("dejadoc"),
+            Some(dir) if !dir.is_empty() => PathBuf::from(dir).join("echoes"),
             _ => {
                 let home = std::env::var_os("HOME").map_or_else(PathBuf::new, PathBuf::from);
-                home.join(".cache").join("dejadoc")
+                home.join(".cache").join("echoes")
             }
         }
     }
@@ -299,15 +299,15 @@ mod tests {
 
     #[test]
     fn default_root_honors_the_xdg_cache_home() {
-        if std::env::var_os("DEJADOC_COV_XDG_PROBE").is_some() {
+        if std::env::var_os("ECHOES_COV_XDG_PROBE").is_some() {
             let home = std::env::var_os("XDG_CACHE_HOME").expect("the probe run sets the variable");
-            assert_eq!(Store::default_root(), PathBuf::from(home).join("dejadoc"));
+            assert_eq!(Store::default_root(), PathBuf::from(home).join("echoes"));
             return;
         }
         let dir = tempfile::tempdir().unwrap();
         let output =
             std::process::Command::new(std::env::current_exe().expect("the test binary path"))
-                .env("DEJADOC_COV_XDG_PROBE", "1")
+                .env("ECHOES_COV_XDG_PROBE", "1")
                 .env("XDG_CACHE_HOME", dir.path())
                 .arg("context_cache::tests::default_root_honors_the_xdg_cache_home")
                 .arg("--exact")

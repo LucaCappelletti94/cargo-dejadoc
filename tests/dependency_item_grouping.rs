@@ -1,6 +1,6 @@
 //! Item grouping membership, canonical sizes and thresholds.
 
-use dejadoc::{Dejadoc, DocTest, Kind, Report, SourceFile, TargetScan, group};
+use echoes::{DocTest, Echoes, Kind, Report, SourceFile, TargetScan, group};
 
 #[path = "support/doc_blocks.rs"]
 mod doc_blocks;
@@ -68,7 +68,7 @@ fn item_cli_fixture_preserves_exact_function_and_doctest_members() {
     );
     let target = target(text);
     for threshold in [0, 30] {
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .fn_min_tokens(threshold)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None);
@@ -157,7 +157,7 @@ fn item_cli_fixture_boundaries_and_reversed_sites() {
     let text = include_str!("fixtures/itemws/src/lib.rs");
     let mut target = target(text);
     let scan = |floor: usize| {
-        Dejadoc::default()
+        Echoes::default()
             .functions()
             .fn_min_tokens(floor)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None)
@@ -180,12 +180,12 @@ fn item_cli_fixture_boundaries_and_reversed_sites() {
         .iter()
         .filter(|group| group.kind == Kind::Doctest)
     {
-        let included = Dejadoc::default().min_tokens(group.tokens).run_targets(
+        let included = Echoes::default().min_tokens(group.tokens).run_targets(
             "",
             std::slice::from_ref(&target),
             &|_, _| None,
         );
-        let excluded = Dejadoc::default().min_tokens(group.tokens + 1).run_targets(
+        let excluded = Echoes::default().min_tokens(group.tokens + 1).run_targets(
             "",
             std::slice::from_ref(&target),
             &|_, _| None,
@@ -194,7 +194,7 @@ fn item_cli_fixture_boundaries_and_reversed_sites() {
         assert!(!excluded.groups.iter().any(|member| member.id == group.id));
     }
     target.files[0].parsed.items.reverse();
-    let reversed_scan = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let reversed_scan = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,

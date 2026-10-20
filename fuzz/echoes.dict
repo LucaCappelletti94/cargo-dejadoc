@@ -9,7 +9,7 @@
 "compile_fail"
 "test_harness"
 "edition2021"
-"dejadoc"
+"echoes"
 "custom"
 "{.class}"
 # Doc comment and attribute shapes

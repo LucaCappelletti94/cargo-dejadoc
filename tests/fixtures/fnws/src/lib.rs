@@ -46,7 +46,7 @@ pub fn total_too(values: &[u32], limit: u32) -> u32 {
     doubled
 }
 
-// dejadoc: allow
+// echoes: allow
 pub fn kept_on_purpose(values: &[u32], limit: u32) -> u32 {
     let mut total = 0;
     for value in values {

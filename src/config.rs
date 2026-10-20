@@ -1,11 +1,11 @@
-//! `.dejadoc.toml` parameters. A missing file is a no-op.
+//! `.echoes.toml` parameters. A missing file is a no-op.
 
 use crate::{ContextScope, DependencySearch};
 use std::path::Path;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-/// Parameters from a `.dejadoc.toml` file.
+/// Parameters from a `.echoes.toml` file.
 pub(crate) struct Config {
     /// Report groups with at least this many sites.
     pub(crate) threshold: Option<usize>,
@@ -60,14 +60,14 @@ mod tests {
 
     #[test]
     fn missing_file_is_default() {
-        let cfg = load(Path::new("/nonexistent/.dejadoc.toml")).unwrap();
+        let cfg = load(Path::new("/nonexistent/.echoes.toml")).unwrap();
         assert_eq!(cfg, Config::default());
     }
 
     #[test]
     fn loads_parameters() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".dejadoc.toml");
+        let path = dir.path().join(".echoes.toml");
         std::fs::write(
             &path,
             "threshold = 3\nmin-tokens = 4\nfunctions = false\nfn-min-tokens = 50\ncontext-blocks = true\ncontext-min-tokens = 30\nscan-generated = true\ngenerated-markers = [\"by rust-bindgen\"]\n",
@@ -90,7 +90,7 @@ mod tests {
     #[test]
     fn partial_file_keeps_defaults_for_absent_keys() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".dejadoc.toml");
+        let path = dir.path().join(".echoes.toml");
         std::fs::write(&path, "threshold = 3\n").unwrap();
         let cfg = load(&path).unwrap();
         assert_eq!(cfg.threshold, Some(3));
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn unknown_field_is_rejected() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".dejadoc.toml");
+        let path = dir.path().join(".echoes.toml");
         std::fs::write(&path, "bogus = 1\n").unwrap();
         assert!(load(&path).is_err());
     }
@@ -108,7 +108,7 @@ mod tests {
     #[test]
     fn invalid_toml_is_an_error() {
         let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join(".dejadoc.toml");
+        let path = dir.path().join(".echoes.toml");
         std::fs::write(&path, "threshold = ").unwrap();
         assert!(load(&path).is_err());
     }

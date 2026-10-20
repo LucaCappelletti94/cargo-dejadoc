@@ -13,7 +13,7 @@ use crate::context_network;
 use crate::reuse::{DependencyCandidate, ExistingIssue, PackageSource, ReuseAction};
 
 /// The title tag of extraction requests.
-const ISSUE_TAG: &str = "[DEJADOC]";
+const ISSUE_TAG: &str = "[ECHOES]";
 
 /// The issue search page size.
 const SEARCH_PER_PAGE: usize = 100;
@@ -653,7 +653,7 @@ fn git_checkout_prefix(package: &PackageSource, repo: &str) -> Option<Result<Str
 fn extraction_body(permalink: &str) -> String {
     format!(
         "Please extract this source range into a public function or method.\n\n{permalink}\n\n\
-         <!-- dejadoc: check existing issues and pull requests for this range, and state \
+         <!-- echoes: check existing issues and pull requests for this range, and state \
          willingness to contribute the extraction as a pull request. -->"
     )
 }
@@ -682,7 +682,7 @@ mod tests {
     const BODY: &str =
         "fn helper(value: u32) -> u32 {\n    let total = value + 1u32;\n    total * 2u32\n}\n";
     const SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-index";
-    const TITLE: &str = "[DEJADOC] Extract a public helper from dep::helper";
+    const TITLE: &str = "[ECHOES] Extract a public helper from dep::helper";
     const FILE: &str = "src/lib.rs";
 
     fn permalink(commit: &str) -> String {
@@ -950,7 +950,7 @@ mod tests {
         );
         assert!(
             issue_url.contains(
-                "title=%5BDEJADOC%5D%20Extract%20a%20public%20helper%20from%20dep%3A%3Ahelper"
+                "title=%5BECHOES%5D%20Extract%20a%20public%20helper%20from%20dep%3A%3Ahelper"
             ),
             "{issue_url}"
         );
@@ -1080,7 +1080,7 @@ mod tests {
         let body = percent_decode(params.get("body").expect("body param"));
         assert_eq!(title, TITLE);
         assert!(body.contains(permalink(SHA).as_str()));
-        assert!(body.contains("<!-- dejadoc"));
+        assert!(body.contains("<!-- echoes"));
         assert!(!body.contains("value + 1u32"));
         assert!(!body.contains(dir.path().to_str().unwrap()));
         assert!(!body.contains("crates.io"));

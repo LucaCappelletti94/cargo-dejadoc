@@ -1,6 +1,6 @@
 //! A single combined-family workspace exercises every M1-M8 fold at once.
 
-use dejadoc::{Dejadoc, Kind, Remedy, SourceFile, TargetScan};
+use echoes::{Echoes, Kind, Remedy, SourceFile, TargetScan};
 
 #[path = "support/group_members.rs"]
 mod group_members;
@@ -26,7 +26,7 @@ fn target(text: &str) -> TargetScan {
 fn composition_cli_fixture_groups_every_combined_family() {
     let text = include_str!("fixtures/compositionws/src/lib.rs");
     let target = target(text);
-    let report = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let report = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,

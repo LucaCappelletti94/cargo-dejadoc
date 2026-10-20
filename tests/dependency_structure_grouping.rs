@@ -7,7 +7,7 @@ struct SourcePair {
     b: String,
 }
 
-use dejadoc::{Dejadoc, DocTest, Kind, Remedy, SourceFile, TargetScan, group};
+use echoes::{DocTest, Echoes, Kind, Remedy, SourceFile, TargetScan, group};
 
 #[path = "support/doc_blocks.rs"]
 mod doc_blocks;
@@ -45,7 +45,7 @@ fn target(text: &str) -> TargetScan {
 fn structure_cli_fixture_preserves_exact_function_and_doctest_members() {
     let text = include_str!("fixtures/structurews/src/lib.rs");
     let target = target(text);
-    let report = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let report = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,
@@ -105,7 +105,7 @@ fn structure_cli_fixture_preserves_exact_function_and_doctest_members() {
 fn structure_cli_fixture_boundaries_and_reversed_sites() {
     let text = include_str!("fixtures/structurews/src/lib.rs");
     let mut target = target(text);
-    let base = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let base = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,
@@ -131,7 +131,7 @@ fn structure_cli_fixture_boundaries_and_reversed_sites() {
         );
     }
     target.files[0].parsed.items.reverse();
-    let reversed_scan = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let reversed_scan = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,
@@ -181,7 +181,7 @@ fn structure_threshold_uses_public_canonical_sizes() {
     let entries: [(&[String], &syn::File); 1] = [(&[], &file)];
     let context = syn_canon::SourceContext::new(entries);
     let target = target(text);
-    let base = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let base = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,
@@ -208,11 +208,11 @@ fn structure_threshold_uses_public_canonical_sizes() {
             assert_eq!(group.tokens, size, "{item}");
         }
         let floor = group.tokens;
-        let included = Dejadoc::default()
+        let included = Echoes::default()
             .functions()
             .fn_min_tokens(floor)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None);
-        let excluded = Dejadoc::default()
+        let excluded = Echoes::default()
             .functions()
             .fn_min_tokens(floor + 1)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None);

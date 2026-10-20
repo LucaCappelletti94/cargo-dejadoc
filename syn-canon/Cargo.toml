@@ -6,7 +6,7 @@ rust-version = "1.88"
 authors = ["Luca Cappelletti"]
 description = "Canonical form of a syn file, equal across formatting drift and local binder names"
 license = "MIT"
-repository = "https://github.com/LucaCappelletti94/cargo-dejadoc"
+repository = "https://github.com/LucaCappelletti94/cargo-echoes"
 keywords = ["syn", "canonical", "normalize", "alpha-equivalence", "no-std"]
 categories = ["development-tools", "parser-implementations", "no-std"]
 

@@ -9,12 +9,12 @@ fuzz_target!(|data: &[u8]| {
         return;
     };
     let source = source.to_owned();
-    dejadoc_fuzz::on_large_stack(move || {
-        if let Some(blocks) = dejadoc_fuzz::extract(&source) {
-            dejadoc_fuzz::check_spans(&blocks);
+    echoes_fuzz::on_large_stack(move || {
+        if let Some(blocks) = echoes_fuzz::extract(&source) {
+            echoes_fuzz::check_spans(&blocks);
         }
-        if let Some(report) = dejadoc_fuzz::functions(&source) {
-            dejadoc_fuzz::check_functions(&report);
+        if let Some(report) = echoes_fuzz::functions(&source) {
+            echoes_fuzz::check_functions(&report);
         }
     });
 });

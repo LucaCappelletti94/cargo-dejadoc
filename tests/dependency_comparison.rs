@@ -1,7 +1,7 @@
 //! Opaque comparison, canonical size boundaries, and reference metadata.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
-use dejadoc::{DocTest, group};
+use echoes::{DocTest, group};
 use syn_canon::{ContextKind, SourceContext};
 
 #[path = "support/function.rs"]

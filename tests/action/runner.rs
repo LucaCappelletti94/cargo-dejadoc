@@ -137,14 +137,14 @@ impl Runner {
 
     /// The posted review status file, empty when no status was written.
     pub fn status(&self) -> String {
-        read(&format!("{}/dejadoc-post-status", self.run_temp))
+        read(&format!("{}/echoes-post-status", self.run_temp))
             .trim()
             .to_string()
     }
 
     /// The rendered review body, empty when not rendered.
     pub fn body(&self) -> String {
-        read(&format!("{}/dejadoc-review.md", self.run_temp))
+        read(&format!("{}/echoes-review.md", self.run_temp))
     }
 
     pub fn gh_calls(&self) -> Vec<Value> {
@@ -203,7 +203,7 @@ impl Runner {
     pub fn scan_calls(&self) -> Vec<Value> {
         self.cargo_calls()
             .into_iter()
-            .filter(|c| c.get("cmd").and_then(Value::as_str) == Some("dejadoc"))
+            .filter(|c| c.get("cmd").and_then(Value::as_str) == Some("echoes"))
             .collect()
     }
 

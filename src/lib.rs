@@ -66,11 +66,11 @@ pub use reuse::{
 };
 pub use syn_canon::ContextKind;
 
-/// Scan parameters. In `run`, unset values fall back to `.dejadoc.toml`,
+/// Scan parameters. In `run`, unset values fall back to `.echoes.toml`,
 /// then to defaults.
 #[derive(Debug, Clone, Default)]
 #[expect(clippy::struct_excessive_bools, reason = "independent scan switches")]
-pub struct Dejadoc {
+pub struct Echoes {
     package: Option<String>,
     all_targets: bool,
     threshold: Option<usize>,
@@ -86,7 +86,7 @@ pub struct Dejadoc {
     generated_markers: Vec<String>,
 }
 
-impl Dejadoc {
+impl Echoes {
     /// Restrict doctests, functions and default context scopes to one workspace member.
     #[must_use]
     pub fn package(mut self, name: impl Into<String>) -> Self {
@@ -191,7 +191,7 @@ impl Dejadoc {
         self
     }
 
-    /// Fill unset parameters from the `.dejadoc.toml` at `path`, before the workspace root one under `run`.
+    /// Fill unset parameters from the `.echoes.toml` at `path`, before the workspace root one under `run`.
     ///
     /// # Errors
     ///
@@ -247,7 +247,7 @@ impl Dejadoc {
     #[cfg(feature = "std")]
     fn run_here(self, root: &Path) -> Result<Report> {
         let workspace = discover::workspace(root, None, self.all_targets)?;
-        let cfg = config::load(&workspace.root.join(".dejadoc.toml"))?;
+        let cfg = config::load(&workspace.root.join(".echoes.toml"))?;
         let scan = self.fill_from(&cfg);
         if let Some(name) = scan.package.as_deref()
             && !workspace
@@ -264,7 +264,7 @@ impl Dejadoc {
             match std::fs::read_to_string(&inc) {
                 Ok(text) => Some((inc.to_string_lossy().into_owned(), text)),
                 Err(err) => {
-                    eprintln!("dejadoc: cannot read doc include {}: {err}", inc.display());
+                    eprintln!("echoes: cannot read doc include {}: {err}", inc.display());
                     None
                 }
             }
@@ -654,7 +654,7 @@ impl Dejadoc {
                         coverage: DependencyCoverage {
                             complete: false,
                             failures: alloc::vec![
-                                "Dependency discovery requires Dejadoc::run".into(),
+                                "Dependency discovery requires Echoes::run".into(),
                             ],
                             ..DependencyCoverage::default()
                         },
@@ -856,7 +856,7 @@ pub struct DocTest {
     pub info: Vec<String>,
     /// Raw block body, or a function's source text.
     pub code: String,
-    /// The site carries the `dejadoc` allow token or comment.
+    /// The site carries the `echoes` allow token or comment.
     #[serde(skip)]
     pub allow: bool,
     /// The self type of a method, the trait of a default method.
@@ -1258,7 +1258,7 @@ struct OrganizationTargets {
 /// `corpus`, the discovery failures recorded repository-qualified.
 #[cfg(feature = "std")]
 fn organization_targets(
-    dejadoc: &Dejadoc,
+    echoes: &Echoes,
     corpus: &organization_source::Corpus,
     expand_contexts: bool,
 ) -> OrganizationTargets {
@@ -1272,7 +1272,7 @@ fn organization_targets(
         let root = corpus.roots[record.repository]
             .as_deref()
             .expect("packages come from repositories with snapshots");
-        let selected = dejadoc
+        let selected = echoes
             .package
             .as_deref()
             .is_none_or(|want| want == record.name);
@@ -1480,7 +1480,7 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn context_blocks_are_off_by_default() {
-        let report = Dejadoc::default().run("tests/fixtures/contextws").unwrap();
+        let report = Echoes::default().run("tests/fixtures/contextws").unwrap();
         assert_eq!(report.context_blocks, 0);
         assert_eq!(report.unique_context_blocks, 0);
         assert_eq!(report.context_groups.len(), 0);
@@ -1560,8 +1560,8 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn run_outside_a_workspace_is_a_workspace_error() {
-        let err = Dejadoc::default()
-            .run("/nonexistent-dejadoc-root")
+        let err = Echoes::default()
+            .run("/nonexistent-echoes-root")
             .unwrap_err();
         assert!(matches!(err, Error::Workspace(_)));
     }
@@ -1578,13 +1578,13 @@ mod tests {
         ];
         // The file value applies through the infallible entry point.
         let report =
-            Dejadoc::default()
+            Echoes::default()
                 .config(&file)
                 .unwrap()
                 .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(report.groups, Vec::new());
         // Builder values set after config still win.
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .config(&file)
             .unwrap()
             .threshold(2)
@@ -1592,7 +1592,7 @@ mod tests {
         assert_eq!(report.groups.len(), 1);
         std::fs::write(&file, "min-tokens = 1000\n").unwrap();
         let report =
-            Dejadoc::default()
+            Echoes::default()
                 .config(&file)
                 .unwrap()
                 .run_targets("", &targets, &|_f, _i| None);
@@ -1608,7 +1608,7 @@ mod tests {
             let file = dir.path().join("config.toml");
             std::fs::write(&file, toml).unwrap();
             let target = target_from("c", "src/lib.rs", &[], src);
-            let scan = Dejadoc::default().config(&file).unwrap();
+            let scan = Echoes::default().config(&file).unwrap();
             scan.run_targets("", &[target], &|_f, _i| None).groups.len()
         };
         assert_eq!(scan_with("fn-min-tokens = 0\n"), 0);
@@ -1619,20 +1619,20 @@ mod tests {
     #[test]
     fn the_function_check_runs_only_when_enabled() {
         let src = format!("fn one{BODY}\nfn two{BODY}\n");
-        let scan = |scan: Dejadoc| {
+        let scan = |scan: Echoes| {
             let target = target_from("c", "src/lib.rs", &[], &src);
             let report = scan.run_targets("", &[target], &|_f, _i| None);
             (report.functions, report.groups.len())
         };
-        assert_eq!(scan(Dejadoc::default()), (0, 0));
-        assert_eq!(scan(Dejadoc::default().functions()), (2, 1));
+        assert_eq!(scan(Echoes::default()), (0, 0));
+        assert_eq!(scan(Echoes::default().functions()), (2, 1));
     }
 
     #[test]
     #[cfg(feature = "std")]
     fn config_marks_more_files_generated_or_scans_them_anyway() {
         let dir = tempfile::tempdir().unwrap();
-        let groups = |header: &str, toml: &str, builder: Dejadoc| {
+        let groups = |header: &str, toml: &str, builder: Echoes| {
             let file = dir.path().join("config.toml");
             std::fs::write(&file, toml).unwrap();
             let src = format!("{header}fn one() -> u8 {{ 1 + 2 }}\nfn two() -> u8 {{ 1 + 2 }}\n");
@@ -1640,25 +1640,25 @@ mod tests {
         };
         let marked = "// @generated\n";
         let bindgen = "/* automatically generated by rust-bindgen */\n";
-        assert_eq!(groups(marked, "", Dejadoc::default()), 0);
+        assert_eq!(groups(marked, "", Echoes::default()), 0);
         assert_eq!(
-            groups(marked, "scan-generated = true\n", Dejadoc::default()),
+            groups(marked, "scan-generated = true\n", Echoes::default()),
             1
         );
         assert_eq!(
-            groups(marked, "scan-generated = false\n", Dejadoc::default()),
+            groups(marked, "scan-generated = false\n", Echoes::default()),
             0
         );
         assert_eq!(
             groups(
                 bindgen,
                 "generated-markers = [\"rust-bindgen\"]\n",
-                Dejadoc::default()
+                Echoes::default()
             ),
             0
         );
         // A builder marker survives a config file that names other markers.
-        let builder = Dejadoc::default().generated_marker("rust-bindgen");
+        let builder = Echoes::default().generated_marker("rust-bindgen");
         assert_eq!(
             groups(bindgen, "generated-markers = [\"protoc\"]\n", builder),
             0
@@ -1671,7 +1671,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("bad.toml");
         std::fs::write(&file, "threshold = \"high\"\n").unwrap();
-        let err = Dejadoc::default().config(&file).unwrap_err();
+        let err = Echoes::default().config(&file).unwrap_err();
         assert!(matches!(err, Error::Config(_)));
     }
 
@@ -1704,7 +1704,7 @@ mod tests {
     const BODY: &str = "(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += value * 2; } else { total -= 1; } } let doubled = total + limit; doubled }";
 
     /// The function groups of a one-file scan of `src` with the function check on, as item lists.
-    fn fn_groups(scan: Dejadoc, src: &str) -> Vec<Vec<String>> {
+    fn fn_groups(scan: Echoes, src: &str) -> Vec<Vec<String>> {
         let report = scan.functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], src)],
@@ -1723,7 +1723,7 @@ mod tests {
         let public = |src: &str, library: bool| -> Vec<bool> {
             let mut target = target_from("c", "src/lib.rs", &[], src);
             target.library = library;
-            let report = Dejadoc::default()
+            let report = Echoes::default()
                 .functions()
                 .run_targets("", &[target], &|_f, _i| None);
             report.groups[0].sites.iter().map(|s| s.public).collect()
@@ -1745,7 +1745,7 @@ mod tests {
         ] {
             let src = format!("#[cfg_attr(unix, {wrapped})]\nfn one{BODY}\nfn two{BODY}\n");
             assert_eq!(
-                fn_groups(Dejadoc::default(), &src),
+                fn_groups(Echoes::default(), &src),
                 [["c::one", "c::two"]],
                 "{wrapped}"
             );
@@ -1758,7 +1758,7 @@ mod tests {
         ] {
             let src = format!("#[cfg_attr(unix, {wrapped})]\nfn one{BODY}\nfn two{BODY}\n");
             assert_eq!(
-                fn_groups(Dejadoc::default(), &src),
+                fn_groups(Echoes::default(), &src),
                 Vec::<Vec<String>>::new(),
                 "{wrapped}"
             );
@@ -1771,7 +1771,7 @@ mod tests {
             "pub fn one{BODY}\n#[inline]\n#[cfg(unix)]\n/// Doc.\nfn two{BODY}\n#[must_use]\npub(crate) fn three{BODY}\n"
         );
         assert_eq!(
-            fn_groups(Dejadoc::default(), &src),
+            fn_groups(Echoes::default(), &src),
             [["c::one", "c::two", "c::three"]]
         );
     }
@@ -1781,7 +1781,7 @@ mod tests {
         let src = format!("fn one{BODY}\nfn two{BODY}\n");
         let hash = |root: &str| {
             let target = target_from("c", &format!("{root}/src/lib.rs"), &[], &src);
-            Dejadoc::default()
+            Echoes::default()
                 .functions()
                 .run_targets(root, &[target], &|_f, _i| None)
                 .groups[0]
@@ -1799,7 +1799,7 @@ mod tests {
             ("dyn Shape", "dyn Area"),
         ] {
             let src = format!("impl {one} {{ fn run{BODY} }}\nimpl {two} {{ fn run{BODY} }}\n");
-            let report = Dejadoc::default().functions().run_targets(
+            let report = Echoes::default().functions().run_targets(
                 "",
                 &[target_from("c", "src/lib.rs", &[], &src)],
                 &|_f, _i| None,
@@ -1823,9 +1823,9 @@ mod tests {
         let body = format!(
             "/// ```\n/// let x = 1;\n/// let y = x + 1;\n/// ```\nfn one{BODY}\n/// ```\n/// let x = 1;\n/// let y = x + 1;\n/// ```\nfn two{BODY}\n"
         );
-        let scan = |header: &str, dejadoc: Dejadoc| {
+        let scan = |header: &str, echoes: Echoes| {
             let target = target_from("c", "src/lib.rs", &[], &format!("{header}{body}"));
-            let report = dejadoc
+            let report = echoes
                 .functions()
                 .run_targets("", &[target], &|_f, _i| None);
             (report.total, report.functions, report.groups.len())
@@ -1835,9 +1835,9 @@ mod tests {
             "\n\n\n\n// @generated\n",
             "// Code generated by software.amazon.smithy.rust.codegen.smithy-rs. DO NOT EDIT.\n",
         ] {
-            assert_eq!(scan(header, Dejadoc::default()), (0, 0, 0), "{header}");
+            assert_eq!(scan(header, Echoes::default()), (0, 0, 0), "{header}");
             assert_eq!(
-                scan(header, Dejadoc::default().scan_generated()),
+                scan(header, Echoes::default().scan_generated()),
                 (2, 2, 2),
                 "{header}"
             );
@@ -1847,13 +1847,13 @@ mod tests {
             "// Code generated by hand, edit freely.\n",
             "/* automatically generated by rust-bindgen 0.72.1 */\n",
         ] {
-            assert_eq!(scan(header, Dejadoc::default()), (2, 2, 2), "{header}");
+            assert_eq!(scan(header, Echoes::default()), (2, 2, 2), "{header}");
         }
         let bindgen = "/* automatically generated by rust-bindgen 0.72.1 */\n";
         assert_eq!(
             scan(
                 bindgen,
-                Dejadoc::default().generated_marker("by rust-bindgen")
+                Echoes::default().generated_marker("by rust-bindgen")
             ),
             (0, 0, 0)
         );
@@ -1866,17 +1866,17 @@ mod tests {
             "struct A;\nimpl A {{ fn pick_files{BODY}\nfn pick_folders{BODY} }}\nimpl A {{\nfn one(self, values: &[u32], limit: u32) -> u32 {{ let mut total = 0; for value in values {{ if *value > limit {{ total += pick_files(values, limit); }} else {{ total -= 1; }} }} total }}\nfn two(self, values: &[u32], limit: u32) -> u32 {{ let mut total = 0; for value in values {{ if *value > limit {{ total += pick_folders(values, limit); }} else {{ total -= 1; }} }} total }}\n}}\n"
         );
         assert_eq!(
-            fn_groups(Dejadoc::default(), &src),
+            fn_groups(Echoes::default(), &src),
             [["c::A::pick_files", "c::A::pick_folders"]]
         );
         let methods = "struct A;\nimpl A {\nfn one(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\nfn two(self, values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\n}\n";
         assert_eq!(
-            fn_groups(Dejadoc::default(), methods),
+            fn_groups(Echoes::default(), methods),
             Vec::<Vec<String>>::new()
         );
         // A free function's name is in scope, so recursion still renames with it.
         let free = "fn one(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += one(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\nfn two(values: &[u32], limit: u32) -> u32 { let mut total = 0; for value in values { if *value > limit { total += two(values, limit); } else { total -= 1; } } let doubled = total + limit; doubled }\n";
-        assert_eq!(fn_groups(Dejadoc::default(), free), [["c::one", "c::two"]]);
+        assert_eq!(fn_groups(Echoes::default(), free), [["c::one", "c::two"]]);
     }
 
     #[test]
@@ -1887,7 +1887,7 @@ mod tests {
             target_from("containers", "tests/containers.rs", &[], &src),
             target_from("containers", "tests/containers.rs", &[], &src),
         ];
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .run_targets("", &targets, &|_f, _i| None);
         let items: Vec<Vec<&str>> = report
@@ -1907,7 +1907,7 @@ mod tests {
             target_from("show_posts", "mysql/src/bin/show_posts.rs", &[], &src),
             target_from("show_posts", "pg/src/bin/show_posts.rs", &[], &src),
         ];
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(report.groups, Vec::new());
@@ -1918,12 +1918,12 @@ mod tests {
     fn functions_compare_within_one_module_only() {
         let src = format!("fn one{BODY}\nmod inner {{ fn two{BODY} }}\n");
         assert_eq!(
-            fn_groups(Dejadoc::default(), &src),
+            fn_groups(Echoes::default(), &src),
             Vec::<Vec<String>>::new()
         );
         let src = format!("mod inner {{ fn one{BODY}\nfn two{BODY} }}\n");
         assert_eq!(
-            fn_groups(Dejadoc::default(), &src),
+            fn_groups(Echoes::default(), &src),
             [["c::inner::one", "c::inner::two"]]
         );
     }
@@ -1933,7 +1933,7 @@ mod tests {
         let src = format!(
             "struct A;\nfn run{BODY}\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n"
         );
-        let report = Dejadoc::default().functions().run_targets(
+        let report = Echoes::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &src)],
             &|_f, _i| None,
@@ -1943,7 +1943,7 @@ mod tests {
         assert_eq!(types, [None, Some("A"), Some("A")]);
         assert_eq!(group.remedy, Some(Remedy::GenericOrMacro));
         let same = format!("struct A;\nimpl A {{ fn run{BODY} }}\nimpl A {{ fn again{BODY} }}\n");
-        let report = Dejadoc::default().functions().run_targets(
+        let report = Echoes::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &same)],
             &|_f, _i| None,
@@ -1953,7 +1953,7 @@ mod tests {
 
     /// The remedy of the one function group of `src`.
     fn remedy_of(src: &str) -> Option<Remedy> {
-        let report = Dejadoc::default().functions().run_targets(
+        let report = Echoes::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], src)],
             &|_f, _i| None,
@@ -2080,7 +2080,7 @@ mod tests {
         let src = format!(
             "struct A;\nstruct B;\nimpl A {{ fn run{BODY} }}\nimpl B {{ fn run{BODY} }}\ntrait T {{ fn go{BODY} }}\n"
         );
-        let report = Dejadoc::default().functions().run_targets(
+        let report = Echoes::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &src)],
             &|_f, _i| None,
@@ -2109,7 +2109,7 @@ mod tests {
     fn methods_naming_their_owner_group_across_self_types() {
         let src = "struct A<T>(T);\nstruct B<T>(T);\nimpl<T: Default> A<T> { fn make() -> Self { Self(T::default()) } }\nimpl<T: Default> B<T> { fn make() -> Self { Self(T::default()) } }\n";
         assert_eq!(
-            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            fn_groups(Echoes::default().fn_min_tokens(0), src),
             [["c::A<T>::make", "c::B<T>::make"]]
         );
     }
@@ -2118,7 +2118,7 @@ mod tests {
     fn methods_group_across_owner_headers_listing_parameters_differently() {
         let src = "struct A<T, U>(T, U);\nstruct B<T, U>(T, U);\nimpl<T: Default, U> A<T, U> { fn make() -> T { T::default() } }\nimpl<U, T: Default> B<T, U> { fn make() -> T { T::default() } }\n";
         assert_eq!(
-            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            fn_groups(Echoes::default().fn_min_tokens(0), src),
             [["c::A<T,U>::make", "c::B<T,U>::make"]]
         );
     }
@@ -2127,7 +2127,7 @@ mod tests {
     fn methods_group_across_wrapper_owners() {
         let src = "trait Table { fn table() -> u8; }\nimpl<T: Table> Table for &T { fn table() -> u8 { T::table() } }\nimpl<T: Table> Table for Box<T> { fn table() -> u8 { T::table() } }\n";
         assert_eq!(
-            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            fn_groups(Echoes::default().fn_min_tokens(0), src),
             [["c::&T::table", "c::Box<T>::table"]]
         );
     }
@@ -2136,7 +2136,7 @@ mod tests {
     fn methods_of_one_owner_using_different_parameters_stay_apart() {
         let src = "struct A<T, U>(T, U);\nstruct B<T, U>(T, U);\nimpl<T: Default, U: Default> A<T, U> { fn left() -> T { T::default() } fn right() -> U { U::default() } }\nimpl<T: Default, U: Default> B<T, U> { fn left() -> T { T::default() } }\n";
         assert_eq!(
-            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            fn_groups(Echoes::default().fn_min_tokens(0), src),
             [["c::A<T,U>::left", "c::B<T,U>::left"]]
         );
     }
@@ -2151,7 +2151,7 @@ mod tests {
             format!("#[test]\n#[ignore]\nfn one{BODY}\n#[test]\nfn two{BODY}\n"),
         ] {
             assert_eq!(
-                fn_groups(Dejadoc::default(), &src),
+                fn_groups(Echoes::default(), &src),
                 Vec::<Vec<String>>::new(),
                 "{src}"
             );
@@ -2162,48 +2162,42 @@ mod tests {
     fn the_function_floor_counts_the_body_not_the_signature() {
         // diesel's `&'a str::from_sql` pair: 30 tokens as whole functions, 6 in the body.
         let src = "struct S;\ntrait A {}\ntrait B {}\nimpl A for S {\nfn from_sql(value: &mut PgValue<'_>) -> deserialize::Result<Self> { Ok(core::str::from_utf8(value.as_bytes())?) }\n}\nimpl B for S {\nfn from_sql(value: &mut PgValue<'_>) -> deserialize::Result<Self> { Ok(core::str::from_utf8(value.as_bytes())?) }\n}\n";
-        assert_eq!(
-            fn_groups(Dejadoc::default(), src),
-            Vec::<Vec<String>>::new()
-        );
-        assert_eq!(fn_groups(Dejadoc::default().fn_min_tokens(6), src).len(), 1);
-        assert_eq!(fn_groups(Dejadoc::default().fn_min_tokens(7), src).len(), 0);
+        assert_eq!(fn_groups(Echoes::default(), src), Vec::<Vec<String>>::new());
+        assert_eq!(fn_groups(Echoes::default().fn_min_tokens(6), src).len(), 1);
+        assert_eq!(fn_groups(Echoes::default().fn_min_tokens(7), src).len(), 0);
     }
 
     #[test]
     fn the_function_floor_defaults_to_30_tokens_and_is_settable() {
         let src = "fn one() -> u8 { 1 + 2 }\nfn two() -> u8 { 1 + 2 }\n";
+        assert_eq!(fn_groups(Echoes::default(), src), Vec::<Vec<String>>::new());
         assert_eq!(
-            fn_groups(Dejadoc::default(), src),
-            Vec::<Vec<String>>::new()
-        );
-        assert_eq!(
-            fn_groups(Dejadoc::default().fn_min_tokens(0), src),
+            fn_groups(Echoes::default().fn_min_tokens(0), src),
             [["c::one", "c::two"]]
         );
         let src = format!("fn one{BODY}\nfn two{BODY}\n");
         assert_eq!(
-            fn_groups(Dejadoc::default().fn_min_tokens(1000), &src),
+            fn_groups(Echoes::default().fn_min_tokens(1000), &src),
             Vec::<Vec<String>>::new()
         );
     }
 
     #[test]
     fn an_allow_comment_above_a_function_drops_its_site() {
-        let src = format!("fn one{BODY}\n// dejadoc: allow\n#[inline]\nfn two{BODY}\n");
+        let src = format!("fn one{BODY}\n// echoes: allow\n#[inline]\nfn two{BODY}\n");
         assert_eq!(
-            fn_groups(Dejadoc::default(), &src),
+            fn_groups(Echoes::default(), &src),
             Vec::<Vec<String>>::new()
         );
-        let src = format!("fn one{BODY}\n// dejadoc: allow\n\nfn two{BODY}\n");
-        assert_eq!(fn_groups(Dejadoc::default(), &src), [["c::one", "c::two"]]);
+        let src = format!("fn one{BODY}\n// echoes: allow\n\nfn two{BODY}\n");
+        assert_eq!(fn_groups(Echoes::default(), &src), [["c::one", "c::two"]]);
     }
 
     #[test]
     fn nested_functions_are_not_sites() {
         let src = format!("fn outer() {{ fn one{BODY}\nfn two{BODY} }}\n");
         assert_eq!(
-            fn_groups(Dejadoc::default(), &src),
+            fn_groups(Echoes::default(), &src),
             Vec::<Vec<String>>::new()
         );
     }
@@ -2211,7 +2205,7 @@ mod tests {
     #[test]
     fn a_function_site_spans_its_attributes_and_counts_apart() {
         let src = format!("/// One.\n#[inline]\nfn one{BODY}\n\nfn two{BODY}\n");
-        let report = Dejadoc::default().functions().run_targets(
+        let report = Echoes::default().functions().run_targets(
             "",
             &[target_from("c", "src/lib.rs", &[], &src)],
             &|_f, _i| None,
@@ -2233,7 +2227,7 @@ mod tests {
             &format!("/// ```\n/// let x = 1;\n/// ```\nfn one{BODY}\nfn two{BODY}\n"),
         );
         target.files[0].rustdoc = false;
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .run_targets("", &[target], &|_f, _i| None);
         assert_eq!(report.total, 0);
@@ -2246,7 +2240,7 @@ mod tests {
             scan_target("alpha", "src/lib.rs", &[], "one"),
             scan_target("beta", "src/parser.rs", &["parser"], "two"),
         ];
-        let report = Dejadoc::default().run_targets("", &targets, &|_file, _inc| None);
+        let report = Echoes::default().run_targets("", &targets, &|_file, _inc| None);
         assert_eq!(report.total, 2);
         assert_eq!(report.unique, 1);
         assert_eq!(report.groups.len(), 1);
@@ -2316,7 +2310,7 @@ mod tests {
             target("alpha", "let pino = 1; pino + 1"),
             target("beta", "let abete = 1; abete + 1"),
         ];
-        let report = Dejadoc::default().run_targets("", &targets, &|_file, _inc| None);
+        let report = Echoes::default().run_targets("", &targets, &|_file, _inc| None);
         assert_eq!(report.total, 2);
         assert_eq!(report.unique, 1);
         assert_eq!(report.groups.len(), 1);
@@ -2338,13 +2332,13 @@ mod tests {
             scan_target("alpha", "alpha/src/lib.rs", &[], "one"),
             scan_target("beta", "beta/src/lib.rs", &[], "two"),
         ];
-        let narrow = Dejadoc::default()
+        let narrow = Echoes::default()
             .threshold(3)
             .run_targets("", &targets, &|_f, _i| None);
         assert_eq!(narrow.total, 2);
         assert_eq!(narrow.groups, Vec::new());
         let filtered =
-            Dejadoc::default()
+            Echoes::default()
                 .package("beta")
                 .threshold(1)
                 .run_targets("", &targets, &|_f, _i| None);
@@ -2541,7 +2535,7 @@ mod tests {
         let root = dir.path().to_path_buf();
         let report = std::thread::Builder::new()
             .stack_size(2 << 20)
-            .spawn(move || Dejadoc::default().run(root))
+            .spawn(move || Echoes::default().run(root))
             .unwrap()
             .join()
             .unwrap()
@@ -2552,9 +2546,9 @@ mod tests {
     #[test]
     #[cfg(feature = "std")]
     fn context_dependency_depth_sets_the_search_depth() {
-        let scan = Dejadoc::default().context_dependency_depth(3);
+        let scan = Echoes::default().context_dependency_depth(3);
         assert_eq!(scan.context_dependencies.depth, Some(3));
-        let scan = Dejadoc::default()
+        let scan = Echoes::default()
             .context_dependencies(DependencySearch {
                 check_latest: Some(false),
                 ..DependencySearch::default()
@@ -2574,15 +2568,15 @@ mod tests {
             doc: true,
             library: true,
         };
-        let requested = |scan: Dejadoc| scan.context_target_requested(&target, "root");
-        assert!(requested(Dejadoc::default()));
-        assert!(requested(Dejadoc::default().package("mycrate")));
-        assert!(!requested(Dejadoc::default().package("other")));
+        let requested = |scan: Echoes| scan.context_target_requested(&target, "root");
+        assert!(requested(Echoes::default()));
+        assert!(requested(Echoes::default().package("mycrate")));
+        assert!(!requested(Echoes::default().package("other")));
         assert!(requested(
-            Dejadoc::default().context_select(ContextScope::Workspace)
+            Echoes::default().context_select(ContextScope::Workspace)
         ));
         assert!(requested(
-            Dejadoc::default()
+            Echoes::default()
                 .context_select(ContextScope::Crate("other".into()))
                 .context_search(ContextScope::File("src/lib.rs".into()))
         ));
@@ -2593,7 +2587,7 @@ mod tests {
     fn run_targets_reports_dependency_discovery_as_incomplete() {
         let target = target_from("mycrate", "src\\lib.rs", &[], "fn one() {}\n");
         let report =
-            Dejadoc::default()
+            Echoes::default()
                 .context_dependency_depth(1)
                 .run_targets("", &[target], &|_f, _i| None);
         assert!(report.reuse.is_some());
@@ -2601,7 +2595,7 @@ mod tests {
         assert!(!reuse.coverage.complete);
         assert_eq!(
             reuse.coverage.failures,
-            ["Dependency discovery requires Dejadoc::run"]
+            ["Dependency discovery requires Echoes::run"]
         );
         assert_eq!(reuse.groups, Vec::new());
     }

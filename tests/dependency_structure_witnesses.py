@@ -272,7 +272,7 @@ def run_categories(categories, *, request_id, toolchain, deadline):
 
     results = []
     expected_ids = {row_id_for(job) for job in jobs}
-    with tempfile.TemporaryDirectory(prefix="dejadoc-structure-category-") as scratch:
+    with tempfile.TemporaryDirectory(prefix="echoes-structure-category-") as scratch:
         scratch_root = pathlib.Path(scratch)
         executor = concurrent.futures.ThreadPoolExecutor(max_workers=WORKERS)
         pending = {}

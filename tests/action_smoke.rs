@@ -21,7 +21,7 @@ use serde_json::Value;
 // actions/cache v4 and actions/cache save v4 resolve to this commit, verified
 // against the actions/cache repository refs.
 const CACHE_SHA: &str = "0057852bfaa89a56745cba8c7296529d2fc39830";
-const CACHE_KEY_PREFIX: &str = "dejadoc-context-index-Linux-";
+const CACHE_KEY_PREFIX: &str = "echoes-context-index-Linux-";
 
 fn use_by_name<'a>(uses: &'a [Use], name: &str) -> Option<&'a Use> {
     uses.iter().find(|u| u.name == name)
@@ -41,8 +41,8 @@ fn s01_gate_clean() {
     let r = world.runner();
     assert_eq!(exit, 0, "clean gate run exits 0");
     assert!(
-        r.summary().contains("### dejadoc"),
-        "the run summary carries the dejadoc header"
+        r.summary().contains("### echoes"),
+        "the run summary carries the echoes header"
     );
     assert!(
         r.summary().contains("duplicated groups"),
@@ -93,7 +93,7 @@ fn s02_gate_dups() {
             6,
             3,
         ))
-        .human("2 doctests, 1 unique, 0 functions, 0 unique functions, 1 duplicated groups\n\ndoctest group g1, 2 copies\n- src/lib.rs:3  app::parse\n- src/dup.rs:3  app::parse\n\n::error file=src/lib.rs,line=3,title=dejadoc::app::parse duplicates the doctest at src/dup.rs:3, group 1\n")
+        .human("2 doctests, 1 unique, 0 functions, 0 unique functions, 1 duplicated groups\n\ndoctest group g1, 2 copies\n- src/lib.rs:3  app::parse\n- src/dup.rs:3  app::parse\n\n::error file=src/lib.rs,line=3,title=echoes::app::parse duplicates the doctest at src/dup.rs:3, group 1\n")
         .exit_code(1);
     world.write_file("pkg/src/lib.rs", SRC_LIB);
     world.set_meta_root(world.workspace_path().join("pkg"));
@@ -185,7 +185,7 @@ fn s03_gate_reuse_gated() {
     );
     let cache_dir = r
         .job_env()
-        .get("dejadoc-context-index-dir")
+        .get("echoes-context-index-dir")
         .map_or("", String::as_str);
     assert!(
         !cache_dir.is_empty() && Path::new(cache_dir).join("public").is_dir(),
@@ -538,7 +538,7 @@ fn s07_pr_fork_403() {
         "no review is posted without permission"
     );
     assert!(
-        r.summary().contains("### dejadoc"),
+        r.summary().contains("### echoes"),
         "the public report stays available on forks"
     );
 }
@@ -654,7 +654,7 @@ fn s09_fixture() -> (Value, Value) {
 
 /// The prepare payload files carry the prepared review.
 fn s09_payload_checks(world: &World, r: &Runner) {
-    let payload = world.workspace_path().join("dejadoc-payload");
+    let payload = world.workspace_path().join("echoes-payload");
     let meta: Value = serde_json::from_str(
         &fs::read_to_string(payload.join("review.json")).expect("read the payload metadata"),
     )
@@ -702,7 +702,7 @@ fn s09_prepare_post_reuse() {
         .inputs(&[
             ("pr-number", "7"),
             ("mode", "prepare"),
-            ("payload", "dejadoc-payload"),
+            ("payload", "echoes-payload"),
             ("context-dependency-depth", "2"),
         ])
         .event("pull_request")
@@ -723,7 +723,7 @@ fn s09_prepare_post_reuse() {
         .inputs(&[
             ("pr-number", "7"),
             ("mode", "post"),
-            ("payload", "dejadoc-payload"),
+            ("payload", "echoes-payload"),
         ])
         .event("pull_request")
         .workspace(payload_ws)
@@ -805,11 +805,11 @@ fn s10_dry_run_reuse() {
         "the dry run says it posts nothing"
     );
     assert!(
-        body.contains("Inline comments dejadoc would post"),
+        body.contains("Inline comments echoes would post"),
         "the dry run previews the local comments"
     );
     assert!(
-        body.contains("Neutral reuse and context advice dejadoc would post"),
+        body.contains("Neutral reuse and context advice echoes would post"),
         "the dry run previews the neutral reuse advice"
     );
     assert!(
@@ -875,7 +875,7 @@ fn s12_cache_trusted_save() {
     );
     let cache_dir = r
         .job_env()
-        .get("dejadoc-context-index-dir")
+        .get("echoes-context-index-dir")
         .map_or("", String::as_str);
     assert!(
         !cache_dir.is_empty() && Path::new(cache_dir).join("public").is_dir(),
@@ -1038,7 +1038,7 @@ fn s15_prepare_post_reuse_only() {
         .inputs(&[
             ("pr-number", "7"),
             ("mode", "prepare"),
-            ("payload", "dejadoc-payload"),
+            ("payload", "echoes-payload"),
             ("context-dependency-depth", "2"),
         ])
         .event("pull_request")
@@ -1069,7 +1069,7 @@ fn s15_prepare_post_reuse_only() {
 
     assert_eq!(exit, 0, "the reuse-only prepare run exits 0");
     let meta: Value = serde_json::from_str(
-        &fs::read_to_string(world.workspace_path().join("dejadoc-payload/review.json"))
+        &fs::read_to_string(world.workspace_path().join("echoes-payload/review.json"))
             .expect("read the payload metadata"),
     )
     .expect("parse the payload metadata");
@@ -1085,7 +1085,7 @@ fn s15_prepare_post_reuse_only() {
         .inputs(&[
             ("pr-number", "7"),
             ("mode", "post"),
-            ("payload", "dejadoc-payload"),
+            ("payload", "echoes-payload"),
         ])
         .event("pull_request")
         .workspace(payload_ws)

@@ -1,4 +1,4 @@
-use dejadoc::DocTest;
+use echoes::DocTest;
 
 /// A synthetic doctest site spanning the whole `<item>.rs` file.
 pub(super) fn site(item: &str, code: &str, info: &[&str]) -> DocTest {

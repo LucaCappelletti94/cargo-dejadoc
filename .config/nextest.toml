@@ -7,7 +7,7 @@ slow-timeout = { period = "60s" }
 
 # The exhaustive search witnesses set the length of a run, so they start first.
 [[profile.default.overrides]]
-filter = "binary_id(dejadoc::dependency_items) & (test(=item_search_accepts_exact_state_limit) | test(=item_search_retains_partition_after_state_limit) | test(=item_order_keeps_over_node_budget_groups_atomic)) | binary_id(dejadoc::dependency_algebra_oracle) & test(=all_small_algebra_graphs_match_the_independent_unordered_oracle)"
+filter = "binary_id(echoes::dependency_items) & (test(=item_search_accepts_exact_state_limit) | test(=item_search_retains_partition_after_state_limit) | test(=item_order_keeps_over_node_budget_groups_atomic)) | binary_id(echoes::dependency_algebra_oracle) & test(=all_small_algebra_graphs_match_the_independent_unordered_oracle)"
 priority = 100
 
 [profile.ci]
@@ -28,5 +28,5 @@ slow-timeout = { period = "120s", terminate-after = 30 }
 # A mutation run stops at the first failure, so the exhaustive search witnesses run last, after
 # every quicker test has had the chance to catch the mutant.
 [[profile.mutants.overrides]]
-filter = "binary_id(dejadoc::dependency_items) & (test(=item_search_accepts_exact_state_limit) | test(=item_search_retains_partition_after_state_limit) | test(=item_order_keeps_over_node_budget_groups_atomic)) | binary_id(dejadoc::dependency_algebra_oracle) & test(=all_small_algebra_graphs_match_the_independent_unordered_oracle)"
+filter = "binary_id(echoes::dependency_items) & (test(=item_search_accepts_exact_state_limit) | test(=item_search_retains_partition_after_state_limit) | test(=item_order_keeps_over_node_budget_groups_atomic)) | binary_id(echoes::dependency_algebra_oracle) & test(=all_small_algebra_graphs_match_the_independent_unordered_oracle)"
 priority = -100
