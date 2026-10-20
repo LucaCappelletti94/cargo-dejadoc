@@ -250,7 +250,9 @@ fn mirror_manifest(
             .and_then(toml::Value::as_table_mut)
         {
             for (_key, entry) in table.iter_mut() {
-                remap_patch_entry(entry, manifest_dir, destinations);
+                if let Some(deps) = entry.as_table_mut() {
+                    remap_dep_table(deps, manifest_dir, destinations);
+                }
             }
         }
     }
@@ -281,23 +283,6 @@ fn remap_dep_table(
                     .into_owned(),
             ),
         );
-    }
-}
-
-/// Remap a `path` field under `patch` or `replace`.
-fn remap_patch_entry(
-    entry: &mut toml::Value,
-    manifest_dir: &Path,
-    destinations: &BTreeMap<PathBuf, PathBuf>,
-) {
-    let Some(table) = entry.as_table_mut() else {
-        return;
-    };
-    for (_key, value) in table.iter_mut() {
-        let Some(deps) = value.as_table_mut() else {
-            continue;
-        };
-        remap_dep_table(deps, manifest_dir, destinations);
     }
 }
 
@@ -698,10 +683,15 @@ mod tests {
         let temp_root = temp_root(&workspace);
         let mirror = read(Path::new(temp_root.as_str()).join("a/Cargo.toml").as_path());
         let mirror_b = read(Path::new(temp_root.as_str()).join("b/Cargo.toml").as_path());
-        assert!(
-            mirror.contains(&format!("path = \"{temp_root}/b\"")),
-            "{mirror}"
-        );
+        let parsed: toml::Value = toml::from_str(&mirror).unwrap();
+        let mirrored_b = format!("{temp_root}/b");
+        for table in [&parsed["dependencies"], &parsed["patch"]["crates-io"]] {
+            assert_eq!(
+                table["b"]["path"].as_str(),
+                Some(mirrored_b.as_str()),
+                "{mirror}"
+            );
+        }
         assert!(mirror.contains("stray = 1"), "{mirror}");
         assert!(
             mirror.contains("git = \"https://example.test/b\""),
