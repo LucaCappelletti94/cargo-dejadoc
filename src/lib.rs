@@ -38,13 +38,27 @@ pub mod extract;
 mod fence;
 mod functions;
 mod normalize;
+mod organization;
+#[cfg(all(test, feature = "std"))]
+mod organization_matching;
+#[cfg(feature = "std")]
+mod organization_snapshot;
+#[cfg(feature = "std")]
+mod organization_source;
 mod report;
 mod reuse;
+#[cfg(feature = "std")]
+mod source_archive;
 
 /// Reader for an `include_str!` doc splice, given the containing file and
 /// the path as written. Yields the resolved path and text.
 type IncludeRead<'a> = dyn Fn(&str, &str) -> Option<(String, String)> + 'a;
 pub use context_scope::ContextScope;
+pub use organization::{
+    OrganizationCoverage, OrganizationPackage, OrganizationReport, OrganizationRepository,
+};
+#[cfg(feature = "std")]
+pub use organization_source::{OwnerError, repository_owner};
 pub use report::{annotations, human, json};
 pub use reuse::{
     ContextAccess, DependencyCandidate, DependencyCoverage, DependencySearch, ExistingIssue,
@@ -226,7 +240,7 @@ impl Dejadoc {
     #[cfg(feature = "std")]
     pub fn run(self, root: impl AsRef<Path>) -> Result<Report> {
         let root = root.as_ref();
-        on_large_stack(GROUP_STACK, || self.clone().run_here(root))
+        on_large_stack(GROUP_STACK, || self.run_here(root))
     }
 
     /// `run` on the calling thread's stack.
@@ -311,7 +325,7 @@ impl Dejadoc {
                     &targets
                 },
             }),
-            true,
+            ScanMode::Workspace,
             &read,
             group_here,
         );
@@ -324,10 +338,37 @@ impl Dejadoc {
         Ok(report)
     }
 
+    /// Scan every repository accessible for the GitHub organization `organization`, pinned
+    /// to each default branch's commit, without a local workspace.
+    ///
+    /// # Errors
+    ///
+    /// Fails when dependency traversal is requested, unsupported in organization mode, or when
+    /// the package selector names no package of a completely analyzed organization.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the scan panics, a bug in this crate.
+    #[cfg(feature = "std")]
+    pub fn run_organization(self, organization: &str) -> Result<Report> {
+        if self.context_dependencies.depth.unwrap_or(0) > 0 {
+            return Err(Error::OrganizationDependencies);
+        }
+        on_large_stack(GROUP_STACK, || {
+            let cache = self
+                .context_dependencies
+                .cache_dir
+                .as_deref()
+                .map(Path::new);
+            let corpus = organization_source::load(organization, cache, self.all_targets);
+            self.run_organization_corpus(corpus)
+        })
+    }
+
     /// Scan supplied targets with caller-provided doc reads and context scopes, reporting requested dependency discovery as incomplete.
     #[must_use]
     pub fn run_targets(self, root: &str, targets: &[TargetScan], read: &IncludeRead<'_>) -> Report {
-        self.scan(root, targets, None, false, read, group)
+        self.scan(root, targets, None, ScanMode::SuppliedTargets, read, group)
     }
 
     /// Group doctests, then run enabled source-syntax checks.
@@ -336,7 +377,7 @@ impl Dejadoc {
         root: &str,
         targets: &[TargetScan],
         discovered: Option<&Discovered<'_>>,
-        discover_dependencies: bool,
+        mode: ScanMode,
         read: &IncludeRead<'_>,
         group_doctests: fn(&[DocTest], usize, usize) -> Report,
     ) -> Report {
@@ -405,6 +446,7 @@ impl Dejadoc {
                 sites,
                 threshold,
                 self.fn_min_tokens.unwrap_or(DEFAULT_FN_MIN_TOKENS),
+                mode.organization(),
             );
             report.functions = total;
             report.unique_functions = unique;
@@ -414,10 +456,93 @@ impl Dejadoc {
             root,
             all_targets,
             &targets,
-            discover_dependencies,
+            mode.discover_dependencies(),
             &mut report,
         );
         report
+    }
+
+    /// Scan a prepared organization corpus.
+    #[cfg(feature = "std")]
+    fn run_organization_corpus(self, corpus: organization_source::Corpus) -> Result<Report> {
+        if let Some(name) = self.package.as_deref()
+            && corpus.report.coverage.complete
+            && !corpus
+                .report
+                .packages
+                .iter()
+                .any(|package| package.name == name)
+        {
+            return Err(Error::UnknownOrganizationPackage(name.to_string()));
+        }
+        let expand_contexts = self.context_select.is_some() || self.context_search.is_some();
+        let repo_lookup: BTreeMap<&str, usize> = corpus
+            .report
+            .repositories
+            .iter()
+            .enumerate()
+            .map(|(index, repo)| (repo.name.as_str(), index))
+            .collect();
+        let OrganizationTargets {
+            targets,
+            context_targets,
+            mut ownership,
+            mut failures,
+        } = organization_targets(&self, &corpus, expand_contexts);
+        let include_failures = core::cell::RefCell::new(Vec::new());
+        let include_edges = core::cell::RefCell::new(Vec::new());
+        let legacy_roots: BTreeSet<String> = targets
+            .iter()
+            .filter_map(|target| target.files.first().map(|file| file.path.clone()))
+            .collect();
+        let mut report = {
+            let read = organization_read(
+                &repo_lookup,
+                &corpus.roots,
+                &include_failures,
+                &include_edges,
+            );
+            self.scan(
+                "",
+                &targets,
+                Some(&Discovered {
+                    legacy_roots: &legacy_roots,
+                    context_targets: if expand_contexts {
+                        &context_targets
+                    } else {
+                        &targets
+                    },
+                }),
+                ScanMode::Organization,
+                &read,
+                group,
+            )
+        };
+        failures.extend(include_failures.into_inner());
+        let mut contributions: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+        for (containing, included) in include_edges.into_inner() {
+            contributions
+                .entry(included)
+                .or_default()
+                .extend(&ownership[&containing]);
+        }
+        for (included, mut owners) in contributions {
+            ownership.entry(included).or_default().append(&mut owners);
+        }
+        let file_packages = organization_file_packages(&report, &mut ownership);
+        let mut coverage = corpus.report.coverage;
+        if !failures.is_empty() {
+            coverage.complete = false;
+            coverage.failures.extend(failures);
+        }
+        report.organization = Some(OrganizationReport {
+            name: corpus.report.name,
+            repositories: corpus.report.repositories,
+            packages: corpus.report.packages,
+            file_packages,
+            coverage,
+        });
+        Ok(report)
     }
 
     #[cfg(feature = "std")]
@@ -543,7 +668,41 @@ impl Dejadoc {
     }
 }
 
-/// Targets workspace discovery prepared, the preferred files for every check and the context
+/// How the scan's sources were obtained, selecting the function comparison and dependency
+/// discovery.
+#[derive(Clone, Copy)]
+enum ScanMode {
+    /// A local workspace, with full dependency discovery.
+    #[cfg(feature = "std")]
+    Workspace,
+    /// Caller-supplied in-memory targets.
+    SuppliedTargets,
+    /// A prepared organization corpus.
+    #[cfg(feature = "std")]
+    Organization,
+}
+
+impl ScanMode {
+    /// Whether functions compare across crates and modules.
+    fn organization(self) -> bool {
+        match self {
+            #[cfg(feature = "std")]
+            Self::Organization => true,
+            _ => false,
+        }
+    }
+
+    /// Whether dependency discovery runs.
+    fn discover_dependencies(self) -> bool {
+        match self {
+            #[cfg(feature = "std")]
+            Self::Workspace => true,
+            _ => false,
+        }
+    }
+}
+
+/// Targets source discovery prepared, the preferred files for every check and the context
 /// scope corpus.
 struct Discovered<'a> {
     /// Root files of the targets the doctest, function and default context checks scan.
@@ -659,12 +818,22 @@ pub enum Error {
     /// The package selector names no workspace member.
     #[error("workspace: no workspace member named `{0}`")]
     UnknownPackage(String),
+    /// The package selector names no package in the complete organization corpus.
+    #[error("organization: no package named `{0}`")]
+    UnknownOrganizationPackage(String),
     /// A file could not be read.
     #[error("I/O: {0}")]
     Io(#[from] std::io::Error),
     /// The config file could not be read or parsed.
     #[error("config: {0}")]
     Config(#[from] toml::de::Error),
+    /// Dependency traversal is requested for an organization scan, which scans the
+    /// organization's own repositories only.
+    #[error("organization: dependency traversal is not supported")]
+    OrganizationDependencies,
+    /// The current repository's GitHub owner could not be determined.
+    #[error("organization: {0}")]
+    Owner(#[from] OwnerError),
 }
 
 /// A `Result` with [`Error`] as its default error type.
@@ -806,6 +975,9 @@ pub struct Report {
     /// Dependency reuse opportunities and requested-analysis coverage.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub reuse: Option<ReuseReport>,
+    /// The organization corpus a scan covered, present for organization scans only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub organization: Option<OrganizationReport>,
 }
 
 #[cfg(feature = "std")]
@@ -813,6 +985,13 @@ pub struct Report {
 #[must_use = "return the status from `main`"]
 pub fn exit_code(report: &Report, no_fail: bool) -> std::process::ExitCode {
     use std::process::ExitCode;
+    if report
+        .organization
+        .as_ref()
+        .is_some_and(|organization| !organization.coverage.complete)
+    {
+        return ExitCode::from(2);
+    }
     if report
         .reuse
         .as_ref()
@@ -876,19 +1055,20 @@ fn split_unlinked(
     }
 }
 
-/// `f` on a thread with `stack` reserved, or on the calling thread when the
-/// system refuses that thread.
+/// Run on a reserved stack, falling back to the caller when spawning fails.
 #[cfg(feature = "std")]
-fn on_large_stack<T: Send>(stack: usize, f: impl Fn() -> T + Sync) -> T {
-    std::thread::scope(|scope| {
+fn on_large_stack<T: Send>(stack: usize, f: impl FnOnce() -> T + Send) -> T {
+    let mut job = Some(f);
+    let result = std::thread::scope(|scope| {
         match std::thread::Builder::new()
             .stack_size(stack)
-            .spawn_scoped(scope, &f)
+            .spawn_scoped(scope, || job.take().unwrap()())
         {
-            Ok(worker) => worker.join().expect("the scan does not panic"),
-            Err(_) => f(),
+            Ok(worker) => Some(worker.join().expect("the scan does not panic")),
+            Err(_) => None,
         }
-    })
+    });
+    result.unwrap_or_else(|| job.take().unwrap()())
 }
 
 /// Stack reserved for discovery and canonicalization, room for deeply nested
@@ -944,6 +1124,7 @@ fn group_here(blocks: &[DocTest], threshold: usize, min_tokens: usize) -> Report
         unique_context_blocks: 0,
         context_groups: Vec::new(),
         reuse: None,
+        organization: None,
     }
 }
 
@@ -966,21 +1147,38 @@ fn checked_attributes(info: &[String]) -> Vec<&str> {
 }
 
 /// The function count, distinct forms and groups, each function canonicalized as a one-item file.
-/// Functions hashing alike are split by owner role key when one owner has methods under two
-/// role keys among them, so methods of one owner using different parameters stay apart.
+/// Functions hashing alike are split by owner role key when one owner in one scope has methods
+/// under two role keys among them, so methods of one owner using different parameters stay
+/// apart. With `organization`, the module and crate scope leave the hash and the cross-scope
+/// remedy applies.
 fn group_functions(
     sites: impl Iterator<Item = functions::FnSite>,
     threshold: usize,
     min_tokens: usize,
+    organization: bool,
 ) -> (usize, usize, Vec<Group>) {
     let mut total = 0;
     let mut by_hash: BTreeMap<String, Vec<functions::FnSite>> = BTreeMap::new();
-    for f in sites.inspect(|_| total += 1).filter(|f| !f.site.allow) {
+    let mut sites: Vec<functions::FnSite> = sites.collect();
+    if organization {
+        // Crates sharing a module file through `#[path]` see one physical function.
+        sites.sort_by(|a, b| {
+            (a.site.file.as_str(), a.site.line).cmp(&(b.site.file.as_str(), b.site.line))
+        });
+        sites.dedup_by(|a, b| a.site.file == b.site.file && a.site.line == b.site.line);
+    }
+    for f in sites
+        .into_iter()
+        .inspect(|_| total += 1)
+        .filter(|f| !f.site.allow)
+    {
         let mut hasher = blake3::Hasher::new();
         hasher.update(&[FUNCTION_DOMAIN]);
-        let length = u64::try_from(f.scope.len()).expect("the scope length fits u64");
-        hasher.update(&length.to_be_bytes());
-        hasher.update(f.scope.as_bytes());
+        if !organization {
+            let length = u64::try_from(f.context.scope.len()).expect("the scope length fits u64");
+            hasher.update(&length.to_be_bytes());
+            hasher.update(f.context.scope.as_bytes());
+        }
         hasher.update(f.form.key().as_bytes());
         by_hash
             .entry(hasher.finalize().to_hex().to_string())
@@ -1001,21 +1199,219 @@ fn group_functions(
             (hash, false, f.form.body_units(), (f.site, f.context))
         })
     });
+    let remedy = if organization {
+        functions::remedy_organization
+    } else {
+        functions::remedy
+    };
     let (unique, groups) = bucket(Kind::Function, entries, threshold, min_tokens, |sites| {
-        Some(functions::remedy(sites))
+        Some(remedy(sites))
     });
     (total, unique, groups)
 }
 
-/// Whether one owner has methods under two different owner role keys among `members`.
+/// Whether one owner in one scope has methods under two different owner role keys among
+/// `members`, the scope constant in every group of the local hashes.
 fn owner_roles_conflict(members: &[functions::FnSite]) -> bool {
-    let mut roles: BTreeMap<&str, Option<&str>> = BTreeMap::new();
+    let mut roles: BTreeMap<(&str, &str), Option<&str>> = BTreeMap::new();
     members.iter().any(|f| {
         f.site.self_type.as_deref().is_some_and(|owner| {
             let role = f.form.owner_role_key();
-            *roles.entry(owner).or_insert(role) != role
+            *roles
+                .entry((f.context.scope.as_str(), owner))
+                .or_insert(role)
+                != role
         })
     })
+}
+
+/// The path of a module file inside the canonical snapshot `root`, through its canonical
+/// form when the written path reaches the snapshot through an outside alias.
+#[cfg(feature = "std")]
+fn snapshot_relative(path: &Path, root: &Path) -> Option<PathBuf> {
+    match path.strip_prefix(root) {
+        Ok(relative) => Some(relative.to_path_buf()),
+        Err(_) => Some(
+            std::fs::canonicalize(path)
+                .ok()?
+                .strip_prefix(root)
+                .ok()?
+                .to_path_buf(),
+        ),
+    }
+}
+
+/// The organization scan inputs prepared from a corpus.
+#[cfg(feature = "std")]
+struct OrganizationTargets {
+    /// Linked targets of the selected packages.
+    targets: Vec<TargetScan>,
+    /// Targets carrying every conditional module branch, for explicit context scopes.
+    context_targets: Vec<TargetScan>,
+    /// The packages owning each qualified source file.
+    ownership: BTreeMap<String, BTreeSet<usize>>,
+    /// Repository-qualified discovery failures.
+    failures: Vec<String>,
+}
+
+/// The organization scan targets, context targets and per-file package ownership of
+/// `corpus`, the discovery failures recorded repository-qualified.
+#[cfg(feature = "std")]
+fn organization_targets(
+    dejadoc: &Dejadoc,
+    corpus: &organization_source::Corpus,
+    expand_contexts: bool,
+) -> OrganizationTargets {
+    let mut failures = Vec::new();
+    let mut targets = Vec::new();
+    let mut context_targets = Vec::new();
+    let mut ownership: BTreeMap<String, BTreeSet<usize>> = BTreeMap::new();
+    for source in &corpus.packages {
+        let record = &corpus.report.packages[source.package];
+        let repo_name = corpus.report.repositories[record.repository].name.as_str();
+        let root = corpus.roots[record.repository]
+            .as_deref()
+            .expect("packages come from repositories with snapshots");
+        let selected = dejadoc
+            .package
+            .as_deref()
+            .is_none_or(|want| want == record.name);
+        if !selected && !expand_contexts {
+            continue;
+        }
+        let root_str = root.to_string_lossy().into_owned();
+        for target in &source.targets {
+            let tree = discover::module_tree(target, Some(root));
+            failures.extend(
+                tree.failures
+                    .into_iter()
+                    .map(|failure| failure.message.replace(&root_str, repo_name)),
+            );
+            let (linked, every) = split_unlinked(tree.files, &tree.unlinked, expand_contexts);
+            let mut qualify = |files: Vec<SourceFile>| -> Vec<SourceFile> {
+                files
+                    .into_iter()
+                    .map(|mut file| {
+                        let relative = snapshot_relative(Path::new(&file.path), root);
+                        file.path = relative.map_or(file.path, |relative| {
+                            format!("{repo_name}/{}", organization::path_label(&relative))
+                        });
+                        ownership
+                            .entry(file.path.clone())
+                            .or_default()
+                            .insert(source.package);
+                        file
+                    })
+                    .collect()
+            };
+            if selected {
+                targets.push(TargetScan {
+                    name: target.name.clone(),
+                    files: qualify(linked),
+                    library: target.library,
+                });
+            }
+            if let Some(files) = every {
+                context_targets.push(TargetScan {
+                    name: target.name.clone(),
+                    files: qualify(files),
+                    library: target.library,
+                });
+            }
+        }
+    }
+    OrganizationTargets {
+        targets,
+        context_targets,
+        ownership,
+        failures,
+    }
+}
+
+/// The confined doc-include read of an organization scan, resolving written paths inside
+/// the owning repository snapshot and recording failures and provenance edges.
+#[cfg(feature = "std")]
+fn organization_read<'a>(
+    repo_lookup: &'a BTreeMap<&str, usize>,
+    repo_roots: &'a [Option<PathBuf>],
+    include_failures: &'a core::cell::RefCell<Vec<String>>,
+    include_edges: &'a core::cell::RefCell<Vec<(String, String)>>,
+) -> impl Fn(&str, &str) -> Option<(String, String)> + 'a {
+    move |file: &str, written: &str| -> Option<(String, String)> {
+        let snapshot = file.match_indices('/').nth(1).and_then(|(separator, _)| {
+            let (repo_name, relative) = file.split_at(separator);
+            let root = repo_roots[*repo_lookup.get(repo_name)?].as_deref()?;
+            Some((repo_name, &relative[1..], root))
+        });
+        let Some((repo_name, relative, root)) = snapshot else {
+            include_failures.borrow_mut().push(format!(
+                "{file}: doc include {written} has no repository snapshot"
+            ));
+            return None;
+        };
+        let parent = relative.rsplit_once('/').map_or("", |(parent, _)| parent);
+        let mut candidate =
+            PathBuf::with_capacity(root.as_os_str().len() + parent.len() + written.len() + 2);
+        candidate.push(root);
+        candidate.push(parent);
+        candidate.push(written);
+        let canonical = match std::fs::canonicalize(&candidate) {
+            Ok(canonical) => canonical,
+            Err(err) => {
+                include_failures
+                    .borrow_mut()
+                    .push(format!("{file}: cannot read doc include {written} ({err})"));
+                return None;
+            }
+        };
+        let Ok(rel) = canonical.strip_prefix(root) else {
+            include_failures.borrow_mut().push(format!(
+                "{file}: doc include {written} escapes the repository snapshot"
+            ));
+            return None;
+        };
+        let text = match std::fs::read_to_string(&canonical) {
+            Ok(text) => text,
+            Err(err) => {
+                include_failures
+                    .borrow_mut()
+                    .push(format!("{file}: cannot read doc include {written} ({err})"));
+                return None;
+            }
+        };
+        let qualified = format!("{repo_name}/{}", organization::path_label(rel));
+        include_edges
+            .borrow_mut()
+            .push((file.to_string(), qualified.clone()));
+        Some((qualified, text))
+    }
+}
+
+/// The package indices owning each file a finding names, taken out of `ownership`.
+#[cfg(feature = "std")]
+fn organization_file_packages(
+    report: &Report,
+    ownership: &mut BTreeMap<String, BTreeSet<usize>>,
+) -> BTreeMap<String, Vec<usize>> {
+    let mut finding_paths = BTreeSet::new();
+    for group in &report.groups {
+        for site in &group.sites {
+            finding_paths.insert(site.file.clone());
+        }
+    }
+    for group in &report.context_groups {
+        for site in &group.sites {
+            finding_paths.insert(site.file.clone());
+        }
+    }
+    finding_paths
+        .into_iter()
+        .filter_map(|path| {
+            ownership
+                .remove(&path)
+                .map(|owners| (path, owners.into_iter().collect()))
+        })
+        .collect()
 }
 
 /// One hash's text fallback flag, token count and sites with their context.
@@ -2119,8 +2515,12 @@ mod tests {
             dt("b.rs", 2, "m::b", "let y = 1;", false),
         ];
         // No system reserves half the address space for one thread's stack.
-        let refused = on_large_stack(usize::MAX / 2, || group_here(&blocks, 2, 0));
-        assert_eq!(refused, group(&blocks, 2, 0));
+        let expected = group(&blocks, 2, 0);
+        let refused = on_large_stack(usize::MAX / 2, || {
+            let blocks = blocks;
+            group_here(&blocks, 2, 0)
+        });
+        assert_eq!(refused, expected);
         assert_eq!(refused.groups.len(), 1);
     }
 

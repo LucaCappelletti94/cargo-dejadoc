@@ -8,7 +8,7 @@
 
 Whoa, deja vu. A doctest went past us, and then another that looked just like it.
 
-`cargo dejadoc` finds duplicated Rust doctests, and optionally duplicated functions and code blocks, across a workspace. The [wiki](https://github.com/LucaCappelletti94/cargo-dejadoc/wiki) explains each check, the options and the Action in depth.
+`cargo dejadoc` finds duplicated Rust doctests, and optionally duplicated functions and code blocks, across a workspace or across every crate of a GitHub organization. The [wiki](https://github.com/LucaCappelletti94/cargo-dejadoc/wiki) explains each check, the options and the Action in depth.
 
 ![A pull request review by dejadoc, with an inline comment on a duplicated doctest and a suggestion that removes the copy](https://raw.githubusercontent.com/LucaCappelletti94/cargo-dejadoc/main/docs/review.png)
 
@@ -17,6 +17,7 @@ Whoa, deja vu. A doctest went past us, and then another that looked just like it
 ```bash
 cargo install dejadoc
 cargo dejadoc --functions --context-blocks
+cargo dejadoc --organization --functions
 ```
 
 | Check | Enable | Default minimum size | Set the size |
@@ -26,6 +27,8 @@ cargo dejadoc --functions --context-blocks
 | Contexts | `--context-blocks` | `30` canonical weighted tokens | `--context-min-tokens` |
 
 Options can also live in `.dejadoc.toml` at the workspace root, and `cargo dejadoc --help` lists them all. Keep an intentional copy with a `rust,dejadoc` fence or a `// dejadoc: allow` line above the function. The wiki lists [what counts as the same code](https://github.com/LucaCappelletti94/cargo-dejadoc/wiki/What-counts-as-the-same-code).
+
+`--organization` scans the default branch of every repository of a GitHub organization or user that the `GH_TOKEN` or `GITHUB_TOKEN` credential can read, private ones included, and compares functions across crates and modules. Without a name it scans the owner of the current repository, from `GITHUB_REPOSITORY_OWNER` or the `origin` remote. Downloaded repositories never configure the scan or run code, so pass `--config` for options, and the exit status is `2` whenever a repository could not be analyzed, even with `--no-fail`.
 
 ## GitHub Action
 

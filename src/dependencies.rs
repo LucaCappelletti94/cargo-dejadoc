@@ -9,6 +9,7 @@ use crate::reuse::{
     ContextAccess, DependencyCandidate, DependencyCoverage, DependencySearch, PackageSource,
     ReuseAction, ReuseGroup, ReuseReport,
 };
+use crate::source_archive::{ArchiveKind, extract_archive};
 use alloc::borrow::ToOwned;
 use alloc::collections::{BTreeMap, BTreeSet, VecDeque};
 use alloc::format;
@@ -20,7 +21,7 @@ use cargo_metadata::{Dependency, DependencyKind, Metadata, TargetKind};
 use core::str::FromStr;
 use semver::Version;
 use std::eprintln;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 
 /// The crates.io index source identity cargo reports.
 const CRATES_IO_INDEX: &str = "https://github.com/rust-lang/crates.io-index";
@@ -29,8 +30,6 @@ const CRATES_IO_SOURCE: &str = "registry+https://github.com/rust-lang/crates.io-
 pub(crate) const REGISTRY_API: &str = "https://crates.io/api/v1/crates";
 /// Default registry archive base for source downloads.
 pub(crate) const REGISTRY_CDN: &str = "https://static.crates.io/crates";
-const MAX_EXTRACT_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_EXTRACT_FILES: u64 = 65_536;
 
 /// Registry endpoints the latest-release check talks to.
 #[derive(Clone, Debug)]
@@ -236,7 +235,11 @@ impl Discovery {
             target.to_owned(),
         ];
         let mut acquired = Vec::new();
-        match run_bounded("rustc", &args, None, FAST_PROCESS_DEADLINE, &id) {
+        match run_bounded(
+            std::process::Command::new("rustc").args(&args),
+            FAST_PROCESS_DEADLINE,
+            &id,
+        ) {
             Ok(out) if out.status.success() => {
                 let text = String::from_utf8_lossy(&out.stdout);
                 acquired = text
@@ -1010,7 +1013,7 @@ impl Discovery {
         }
         let dest = base.join("sources").join(&name_version);
         if !dest.is_dir() {
-            extract_crate(&archive, &dest).map_err(|error| {
+            extract_archive(&archive, &dest, ArchiveKind::Crate).map_err(|error| {
                 format!("dependency source for {name_version} could not be extracted {error}")
             })?;
         }
@@ -1241,7 +1244,11 @@ fn establish_targets(root: &Path, explicit: Option<&str>) -> Vec<String> {
 fn host_target() -> Option<String> {
     let id = next_proc_id();
     let args = vec!["-vV".to_owned()];
-    let Ok(out) = run_bounded("rustc", &args, None, FAST_PROCESS_DEADLINE, &id) else {
+    let Ok(out) = run_bounded(
+        std::process::Command::new("rustc").args(&args),
+        FAST_PROCESS_DEADLINE,
+        &id,
+    ) else {
         return None;
     };
     let text = String::from_utf8_lossy(&out.stdout);
@@ -1284,7 +1291,14 @@ fn run_metadata(
     // The working directory stays at the original root, so the original cargo
     // config and rustup toolchain are honored.
     let id = next_proc_id();
-    let out = run_bounded("cargo", &args, Some(root), METADATA_PROCESS_DEADLINE, &id)?;
+    let out = run_bounded(
+        std::process::Command::new("cargo")
+            .args(&args)
+            .current_dir(root),
+        METADATA_PROCESS_DEADLINE,
+        &id,
+    )
+    .map_err(|error| error.to_string())?;
     if !out.status.success() {
         return Err(format!(
             "cargo metadata failed: {}",
@@ -1327,7 +1341,14 @@ fn discover_members(root: &Path) -> Result<Vec<crate::context_manifest::MemberIn
         manifest.to_string_lossy().into_owned(),
     ];
     let id = next_proc_id();
-    let out = run_bounded("cargo", &args, Some(root), FAST_PROCESS_DEADLINE, &id)?;
+    let out = run_bounded(
+        std::process::Command::new("cargo")
+            .args(&args)
+            .current_dir(root),
+        FAST_PROCESS_DEADLINE,
+        &id,
+    )
+    .map_err(|error| error.to_string())?;
     if !out.status.success() {
         return Err(format!(
             "cargo metadata --no-deps failed: {}",
@@ -1397,7 +1418,7 @@ const METADATA_PROCESS_DEADLINE: std::time::Duration = std::time::Duration::from
 static PROC_SEQ: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
 
 /// A correlated identifier for one subprocess request.
-fn next_proc_id() -> String {
+pub(crate) fn next_proc_id() -> String {
     let seq = PROC_SEQ.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
     format!("djd.proc.{}-{seq:04}", std::process::id())
 }
@@ -1408,10 +1429,42 @@ const REAP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(10);
 const OUTPUT_LIMIT: u64 = 16 * 1024 * 1024;
 
 /// The captured output of one bounded subprocess.
-struct ProcOutput {
-    status: std::process::ExitStatus,
-    stdout: Vec<u8>,
-    stderr: Vec<u8>,
+#[derive(Debug)]
+pub(crate) struct ProcOutput {
+    pub(crate) status: std::process::ExitStatus,
+    pub(crate) stdout: Vec<u8>,
+    pub(crate) stderr: Vec<u8>,
+}
+
+#[derive(Debug, thiserror::Error)]
+pub(crate) enum ProcessError {
+    #[error("{id} {operation} {program} {source}")]
+    Io {
+        id: String,
+        program: String,
+        operation: &'static str,
+        #[source]
+        source: std::io::Error,
+    },
+    #[error("{id} {program} breached its {deadline:?} deadline")]
+    Deadline {
+        id: String,
+        program: String,
+        deadline: std::time::Duration,
+    },
+    #[error("{id} {program} output exceeds the {OUTPUT_LIMIT} byte limit")]
+    OutputLimit { id: String, program: String },
+}
+
+impl ProcessError {
+    fn io(id: &str, program: &str, operation: &'static str, source: std::io::Error) -> Self {
+        Self::Io {
+            id: id.to_owned(),
+            program: program.to_owned(),
+            operation,
+            source,
+        }
+    }
 }
 
 struct Process(std::process::Child);
@@ -1424,89 +1477,69 @@ impl Drop for Process {
 }
 
 /// Run a correlated subprocess with bounded completion, capture and cleanup.
-fn run_bounded(
-    program: &str,
-    args: &[String],
-    cwd: Option<&Path>,
+pub(crate) fn run_bounded(
+    command: &mut std::process::Command,
     deadline: std::time::Duration,
     id: &str,
-) -> Result<ProcOutput, String> {
-    let dir = tempfile::tempdir().map_err(|err| format!("{id} tempdir {program}: {err}"))?;
+) -> Result<ProcOutput, ProcessError> {
+    let program = command.get_program().to_string_lossy().into_owned();
+    let name = program.as_str();
+    let io = |operation: &'static str| move |error| ProcessError::io(id, name, operation, error);
+    let dir = tempfile::tempdir().map_err(io("tempdir"))?;
     let stdout_path = dir.path().join("stdout");
     let stderr_path = dir.path().join("stderr");
-    let stdout = std::fs::File::create(&stdout_path)
-        .map_err(|err| format!("{id} stdout file {program}: {err}"))?;
-    let stderr = std::fs::File::create(&stderr_path)
-        .map_err(|err| format!("{id} stderr file {program}: {err}"))?;
-    let mut cmd = std::process::Command::new(program);
-    cmd.args(args).stdout(stdout).stderr(stderr);
-    if let Some(cwd) = cwd {
-        cmd.current_dir(cwd);
-    }
+    let stdout = std::fs::File::create(&stdout_path).map_err(io("stdout file"))?;
+    let stderr = std::fs::File::create(&stderr_path).map_err(io("stderr file"))?;
+    command.stdout(stdout).stderr(stderr);
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt as _;
-        cmd.process_group(0);
+        command.process_group(0);
     }
-    let mut child = Process(
-        cmd.spawn()
-            .map_err(|err| format!("{id} spawn {program} {err}"))?,
-    );
+    let mut child = Process(command.spawn().map_err(io("spawn"))?);
     let started = std::time::Instant::now();
     loop {
-        match child.0.try_wait() {
+        let outcome = match child.0.try_wait().map_err(io("wait")) {
             Ok(Some(status)) => {
-                let stdout = capture_output(&stdout_path, program, id)?;
-                let stderr = capture_output(&stderr_path, program, id)?;
+                let stdout = capture_output(&stdout_path, &program, id)?;
+                let stderr = capture_output(&stderr_path, &program, id)?;
                 return Ok(ProcOutput {
                     status,
                     stdout,
                     stderr,
                 });
             }
-            Ok(None) => {
-                if started.elapsed() >= deadline {
-                    let group = child.0.id();
-                    let _ = child.0.kill();
-                    kill_process_group(group);
-                    let _ = reap_bounded(&mut child.0, REAP_DEADLINE);
-                    return Err(format!("{id} {program} breached its {deadline:?} deadline"));
-                }
-            }
-            Err(err) => {
-                let group = child.0.id();
-                let _ = child.0.kill();
-                kill_process_group(group);
-                return Err(format!("{id} wait {program} {err}"));
-            }
+            Ok(None) if started.elapsed() < deadline => None,
+            Ok(None) => Some(ProcessError::Deadline {
+                id: id.to_owned(),
+                program: program.clone(),
+                deadline,
+            }),
+            Err(error) => Some(error),
+        };
+        if let Some(error) = outcome {
+            let group = child.0.id();
+            let _ = child.0.kill();
+            kill_process_group(group);
+            let _ = reap_bounded(&mut child.0, REAP_DEADLINE);
+            return Err(error);
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
     }
 }
 
-/// Read one captured output file, after checking its size against the limit.
-fn capture_output(path: &Path, program: &str, id: &str) -> Result<Vec<u8>, String> {
+/// Read one captured output file, refusing one longer than the limit.
+fn capture_output(path: &Path, program: &str, id: &str) -> Result<Vec<u8>, ProcessError> {
     use std::io::Read as _;
-    let size = std::fs::metadata(path)
-        .map_err(|err| format!("{id} stat {program} output: {err}"))?
-        .len();
-    if size > OUTPUT_LIMIT {
-        return Err(format!(
-            "{id} {program} output exceeds the {OUTPUT_LIMIT} byte limit"
-        ));
-    }
-    let mut bytes = Vec::with_capacity(
-        usize::try_from(size).map_err(|err| format!("{id} {program} output size {err}"))?,
-    );
+    let mut bytes = Vec::new();
     std::fs::File::open(path)
-        .map_err(|err| format!("{id} open {program} output {err}"))?
-        .take(OUTPUT_LIMIT + 1)
-        .read_to_end(&mut bytes)
-        .map_err(|err| format!("{id} read {program} output {err}"))?;
-    if bytes.len() as u64 > OUTPUT_LIMIT {
-        return Err(format!(
-            "{id} {program} output exceeds the {OUTPUT_LIMIT} byte limit"
-        ));
+        .and_then(|file| file.take(OUTPUT_LIMIT + 1).read_to_end(&mut bytes))
+        .map_err(|error| ProcessError::io(id, program, "read output", error))?;
+    if !u64::try_from(bytes.len()).is_ok_and(|length| length <= OUTPUT_LIMIT) {
+        return Err(ProcessError::OutputLimit {
+            id: id.to_owned(),
+            program: program.to_owned(),
+        });
     }
     Ok(bytes)
 }
@@ -2029,91 +2062,6 @@ fn relative(path: &str, root: &Path) -> String {
     )
 }
 
-/// Safely extract a `.crate` into an immutable atomically published directory.
-fn extract_crate(archive: &Path, dest: &Path) -> std::io::Result<()> {
-    let file = std::fs::File::open(archive)?;
-    let decoder = flate2::read::GzDecoder::new(file);
-    let mut archive = tar::Archive::new(decoder);
-    let stage_parent = dest
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .ok_or_else(|| {
-            std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "extraction destination has no parent directory",
-            )
-        })?;
-    std::fs::create_dir_all(stage_parent)?;
-    let stage = tempfile::Builder::new()
-        .prefix("dejadoc-")
-        .tempdir_in(stage_parent)?;
-    let temp = stage.path();
-    let mut total: u64 = 0;
-    let mut count: u64 = 0;
-    let mut top: Option<String> = None;
-    for entry in archive.entries()? {
-        let mut entry = entry?;
-        let path = entry.path()?.to_path_buf();
-        if path.is_absolute()
-            || path
-                .components()
-                .any(|component| matches!(component, Component::ParentDir))
-            || entry.header().entry_type().is_symlink()
-            || entry.header().entry_type().is_hard_link()
-        {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "unsafe entry in crate archive",
-            ));
-        }
-        total = total.saturating_add(entry.header().size()?);
-        count += 1;
-        if total > MAX_EXTRACT_BYTES || count > MAX_EXTRACT_FILES {
-            return Err(std::io::Error::new(
-                std::io::ErrorKind::InvalidData,
-                "crate archive exceeds the extraction limit",
-            ));
-        }
-        if let Some(parent) = temp.join(&path).parent() {
-            std::fs::create_dir_all(parent)?;
-        }
-        entry.unpack(temp.join(&path))?;
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if name == ".crate" || name == "dejadoc-extract" {
-            continue;
-        }
-        if let Some(first) = path
-            .components()
-            .next()
-            .and_then(|component| component.as_os_str().to_str())
-        {
-            top = Some(first.to_owned());
-        }
-    }
-    let Some(top) = top else {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "crate archive has no package root",
-        ));
-    };
-    let root = temp.join(&top);
-    if !root.is_dir() {
-        return Err(std::io::Error::new(
-            std::io::ErrorKind::InvalidData,
-            "crate archive has no package root",
-        ));
-    }
-    match std::fs::rename(&root, dest) {
-        Ok(()) => {}
-        // Completed artifacts are immutable.
-        Err(_) if dest.is_dir() => {}
-        Err(error) => return Err(error),
-    }
-    Ok(())
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2529,13 +2477,13 @@ mod tests {
         let args = ["-c", "sleep 0.5; printf leaked > escaped"].map(str::to_owned);
         let started = std::time::Instant::now();
         let result = run_bounded(
-            "sh",
-            &args,
-            Some(dir.path()),
+            std::process::Command::new("sh")
+                .args(&args)
+                .current_dir(dir.path()),
             std::time::Duration::from_millis(50),
             &id,
         );
-        let error = result.err().unwrap();
+        let error = result.err().unwrap().to_string();
         assert!(error.contains(&id));
         assert!(error.contains("deadline"));
         assert!(started.elapsed() < std::time::Duration::from_secs(15));
@@ -3486,7 +3434,7 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let (dest_thread, fifo_thread) = (dest.clone(), fifo.clone());
         std::thread::spawn(move || {
-            let outcome = extract_crate(&fifo_thread, &dest_thread);
+            let outcome = extract_archive(&fifo_thread, &dest_thread, ArchiveKind::Crate);
             tx.send((id, outcome)).unwrap();
         });
         let mut writer = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
@@ -3522,13 +3470,14 @@ mod tests {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
         let (dest_thread, fifo_thread) = (dest.clone(), fifo.clone());
         std::thread::spawn(move || {
-            let outcome = extract_crate(&fifo_thread, &dest_thread);
+            let outcome = extract_archive(&fifo_thread, &dest_thread, ArchiveKind::Crate);
             tx.send((id, outcome)).unwrap();
         });
         let mut writer = std::fs::OpenOptions::new().write(true).open(&fifo).unwrap();
         // The late extraction blocks inside archive I/O on these bytes while the writer holds the rest.
         writer.write_all(&late_stream[..16]).unwrap();
-        extract_crate(&published_path, &dest).expect("the first extraction must publish");
+        extract_archive(&published_path, &dest, ArchiveKind::Crate)
+            .expect("the first extraction must publish");
         writer.write_all(&late_stream[16..]).unwrap();
         drop(writer);
         let (got_id, outcome) = rx.recv_timeout(TIMEOUT).unwrap();
@@ -4129,10 +4078,54 @@ iota = { version = "4", optional = true }
     fn oversized_subprocess_output_is_rejected() {
         let id = next_proc_id();
         let args = ["-c", "head -c 17000000 /dev/zero"].map(str::to_owned);
-        let error = run_bounded("sh", &args, None, std::time::Duration::from_secs(30), &id)
-            .err()
-            .expect("oversized output must be rejected");
-        assert!(error.contains("output exceeds"), "{error}");
+        let error = run_bounded(
+            std::process::Command::new("sh").args(&args),
+            std::time::Duration::from_secs(30),
+            &id,
+        )
+        .expect_err("oversized output must be rejected");
+        assert!(matches!(error, ProcessError::OutputLimit { .. }));
+    }
+
+    #[test]
+    fn output_at_the_limit_is_kept() {
+        let id = next_proc_id();
+        let args = ["-c".to_owned(), format!("head -c {OUTPUT_LIMIT} /dev/zero")];
+        let output = run_bounded(
+            std::process::Command::new("sh").args(&args),
+            std::time::Duration::from_secs(30),
+            &id,
+        )
+        .expect("output at the limit is kept");
+        assert_eq!(u64::try_from(output.stdout.len()).unwrap(), OUTPUT_LIMIT);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_capture_file_the_child_removes_or_replaces_is_a_read_failure() {
+        for script in [
+            r#"rm "$(readlink /proc/$$/fd/1)""#,
+            r#"out="$(readlink /proc/$$/fd/1)"; rm "$out"; mkdir "$out""#,
+        ] {
+            let id = next_proc_id();
+            let args = ["-c", script].map(str::to_owned);
+            let error = run_bounded(
+                std::process::Command::new("sh").args(&args),
+                std::time::Duration::from_secs(30),
+                &id,
+            )
+            .expect_err(script);
+            assert!(
+                matches!(
+                    &error,
+                    ProcessError::Io {
+                        operation: "read output",
+                        ..
+                    }
+                ),
+                "{script}: {error}"
+            );
+        }
     }
 
     #[test]
@@ -4154,15 +4147,12 @@ iota = { version = "4", optional = true }
         let id = next_proc_id();
         let args = ["30".to_owned()];
         let error = run_bounded(
-            "sleep",
-            &args,
-            None,
+            std::process::Command::new("sleep").args(&args),
             std::time::Duration::from_millis(100),
             &id,
         )
-        .err()
-        .expect("a breached deadline must be reported");
-        assert!(error.contains("breached its"), "{error}");
+        .expect_err("a breached deadline must be reported");
+        assert!(matches!(error, ProcessError::Deadline { .. }));
     }
 
     #[cfg(target_os = "linux")]
@@ -4178,15 +4168,12 @@ iota = { version = "4", optional = true }
         ];
         let id = next_proc_id();
         let error = run_bounded(
-            "sh",
-            &args,
-            None,
+            std::process::Command::new("sh").args(&args),
             std::time::Duration::from_millis(500),
             &id,
         )
-        .err()
-        .expect("a breached deadline must be reported");
-        assert!(error.contains("breached its"), "{error}");
+        .expect_err("a breached deadline must be reported");
+        assert!(matches!(error, ProcessError::Deadline { .. }));
         let pid = std::fs::read_to_string(&pid_file).unwrap();
         let stat = format!("/proc/{}/stat", pid.trim());
         let gone = (0..250).any(|_| {
@@ -5048,163 +5035,6 @@ iota = { version = "4", optional = true }
         );
         assert!(failures.contains("u3-2.0.0.crate"), "{failures}");
         assert!(!report.coverage.complete, "{:?}", report.coverage);
-    }
-
-    /// A gzip tar archive with explicit entry types, `0` for regular files.
-    fn packed(entries: Vec<(u8, std::ffi::OsString, String, Vec<u8>)>) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        let encoder = flate2::write::GzEncoder::new(&mut bytes, flate2::Compression::default());
-        let mut tar = tar::Builder::new(encoder);
-        tar.preserve_absolute(true);
-        for (entry_type, path, link, data) in entries {
-            let mut header = tar::Header::new_gnu();
-            header.set_size(u64::try_from(data.len()).unwrap());
-            header.set_mode(if entry_type == b'5' { 0o755 } else { 0o644 });
-            if entry_type != 0 {
-                header.set_entry_type(tar::EntryType::new(entry_type));
-                if !link.is_empty() {
-                    header.set_link_name(&link).unwrap();
-                }
-            }
-            tar.append_data(&mut header, &path, data.as_slice())
-                .unwrap();
-        }
-        let encoder = tar.into_inner().unwrap();
-        encoder.finish().unwrap();
-        bytes
-    }
-
-    /// A gzip tar of one raw header entry, for paths the builder refuses.
-    fn raw_tar_entry(path: &str, data: &[u8]) -> Vec<u8> {
-        let mut header = [0u8; 512];
-        header[..path.len()].copy_from_slice(path.as_bytes());
-        header[100..108].copy_from_slice(b"000644\0 ");
-        header[108..116].copy_from_slice(b"0000000 ");
-        header[116..124].copy_from_slice(b"0000000 ");
-        let size = format!("{:011o} ", u64::try_from(data.len()).unwrap());
-        header[124..136].copy_from_slice(size.as_bytes());
-        header[156] = b'0';
-        header[136..148].copy_from_slice(b"00000000000 ");
-        for byte in &mut header[148..156] {
-            *byte = b' ';
-        }
-        let sum: u32 = header.iter().map(|byte| u32::from(*byte)).sum();
-        header[148..154].copy_from_slice(format!("{sum:06o}").as_bytes());
-        header[155] = b' ';
-        let mut out = header.to_vec();
-        out.extend_from_slice(data);
-        while out.len() % 512 != 0 {
-            out.push(0);
-        }
-        out.extend(std::iter::repeat_n(0, 1024));
-        let mut bytes = Vec::new();
-        let mut encoder = flate2::write::GzEncoder::new(&mut bytes, flate2::Compression::default());
-        encoder.write_all(&out).unwrap();
-        encoder.finish().unwrap();
-        bytes
-    }
-
-    fn write_crate(dir: &Path, name: &str, bytes: Vec<u8>) -> std::path::PathBuf {
-        let path = dir.join(format!("{name}.crate"));
-        std::fs::write(&path, bytes).unwrap();
-        path
-    }
-
-    #[test]
-    fn extraction_rejects_unsafe_and_oversized_archives() {
-        let dir = tempfile::tempdir().unwrap();
-        let valid = packed(vec![(
-            0,
-            "top/src/lib.rs".into(),
-            String::new(),
-            b"pub fn f() {}\n".to_vec(),
-        )]);
-        let valid_path = write_crate(dir.path(), "valid", valid);
-        let error = extract_crate(&valid_path, Path::new("nv")).unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidInput);
-        for (entry_type, path, link, note) in [
-            (0u8, "/etc/evil", String::new(), "absolute"),
-            (b'2', "top/link", "escape".to_owned(), "symlink"),
-            (b'1', "top/hard", "other".to_owned(), "hard link"),
-        ] {
-            let archive = packed(vec![(entry_type, path.into(), link, b"x".to_vec())]);
-            let path = write_crate(dir.path(), note, archive);
-            let error = extract_crate(&path, &dir.path().join("out").join(note)).expect_err(note);
-            assert_eq!(error.kind(), std::io::ErrorKind::InvalidData, "{note}");
-            assert!(
-                error.to_string().contains("unsafe entry in crate archive"),
-                "{note}"
-            );
-        }
-
-        let archive = raw_tar_entry("../evil", b"x");
-        let path = write_crate(dir.path(), "parent", archive);
-        let error = extract_crate(&path, &dir.path().join("out/parent")).unwrap_err();
-        assert_eq!(error.kind(), std::io::ErrorKind::InvalidData);
-        assert!(error.to_string().contains("unsafe entry in crate archive"));
-        let blob = vec![0u8; 300_000_000];
-        let archive = packed(vec![(0, "top/blob".into(), String::new(), blob)]);
-        let path = write_crate(dir.path(), "huge", archive);
-        let error = extract_crate(&path, &dir.path().join("out/huge")).unwrap_err();
-        assert!(error.to_string().contains("exceeds the extraction limit"));
-        let entries: Vec<(u8, std::ffi::OsString, String, Vec<u8>)> = (0..65_537)
-            .map(|i| (0, format!("top/f{i}").into(), String::new(), vec![b'x']))
-            .collect();
-        let path = write_crate(dir.path(), "many", packed(entries));
-        let error = extract_crate(&path, &dir.path().join("out/many")).unwrap_err();
-        assert!(error.to_string().contains("exceeds the extraction limit"));
-        let archive = packed(vec![
-            (b'5', "top/".into(), String::new(), Vec::new()),
-            (
-                0,
-                "top/src/lib.rs".into(),
-                String::new(),
-                b"pub fn f() {}\n".to_vec(),
-            ),
-        ]);
-        let path = write_crate(dir.path(), "skipped", archive);
-        let dest = dir.path().join("out/skipped");
-        extract_crate(&path, &dest).expect("the skipped entry must not block extraction");
-        assert_eq!(
-            std::fs::read_to_string(dest.join("src/lib.rs")).unwrap(),
-            "pub fn f() {}\n"
-        );
-        for name in [".crate", "dejadoc-extract"] {
-            let archive = packed(vec![(0, name.into(), String::new(), b"x".to_vec())]);
-            let path = write_crate(dir.path(), name, archive);
-            let error = extract_crate(&path, &dir.path().join("out").join(name)).unwrap_err();
-            assert!(error.to_string().contains("no package root"), "{name}");
-        }
-        let archive = packed(vec![(0, "top".into(), String::new(), b"x".to_vec())]);
-        let path = write_crate(dir.path(), "file-top", archive);
-        let error = extract_crate(&path, &dir.path().join("out/file-top")).unwrap_err();
-        assert!(error.to_string().contains("no package root"));
-        let dest = dir.path().join("out/taken");
-        std::fs::create_dir_all(dest.parent().unwrap()).unwrap();
-        std::fs::write(&dest, "a file").unwrap();
-        assert!(extract_crate(&valid_path, &dest).is_err());
-        assert_eq!(std::fs::read_to_string(&dest).unwrap(), "a file");
-    }
-
-    #[cfg(unix)]
-    #[test]
-    fn non_utf8_names_never_displace_the_package_root() {
-        use std::os::unix::ffi::OsStringExt as _;
-        let dir = tempfile::tempdir().unwrap();
-        let raw = |bytes: &[u8]| std::ffi::OsString::from_vec(bytes.to_vec());
-        let lib = b"pub fn f() {}\n".to_vec();
-        let archive = packed(vec![
-            (0, raw(b"top/src/lib.rs"), String::new(), lib),
-            (0, raw(b"top/\xff"), String::new(), b"x".to_vec()),
-            (0, raw(b"\xff/y"), String::new(), b"y".to_vec()),
-        ]);
-        let path = write_crate(dir.path(), "raw", archive);
-        let dest = dir.path().join("out/raw");
-        extract_crate(&path, &dest).expect("the UTF-8 root is the package root");
-        assert_eq!(
-            std::fs::read_to_string(dest.join("src/lib.rs")).unwrap(),
-            "pub fn f() {}\n"
-        );
     }
 
     /// One indexed context record for the group unit test.
