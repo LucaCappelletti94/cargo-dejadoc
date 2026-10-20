@@ -3,6 +3,11 @@
 #[path = "support/dependency.rs"]
 mod support;
 
+#[path = "support/trait_forms.rs"]
+mod trait_forms;
+
+use trait_forms::trait_method_forms;
+
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_str(source).unwrap())
 }
@@ -315,19 +320,7 @@ fn ancestor_live_attributes_disable_constant_folds() {
         unreachable!()
     };
     let context = syn_canon::SourceContext::new(core::iter::once((&[][..], &file)));
-    let forms: Vec<_> = trait_
-        .items
-        .iter()
-        .filter_map(|item| match item {
-            syn::TraitItem::Fn(method) => Some(
-                context
-                    .function(&method.sig, method.default.as_ref().unwrap())
-                    .unwrap()
-                    .canonicalize(),
-            ),
-            _ => None,
-        })
-        .collect();
+    let forms = trait_method_forms(&context, trait_);
     assert_ne!(forms[0], forms[1]);
 }
 

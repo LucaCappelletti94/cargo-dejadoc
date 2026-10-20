@@ -2769,6 +2769,25 @@ fn restore_type(facts: &mut ReferenceFacts, ty: &syn::Type, resolutions: &[TypeR
     restore.visit_type(ty);
 }
 
+/// Rename the value binder of a constant or static, normalize its
+/// expression when constants are allowed, then visit it.
+fn visit_value_item(
+    renamer: &mut Renamer<'_>,
+    ident: &mut syn::Ident,
+    ty: &mut syn::Type,
+    expr: &mut syn::Expr,
+    attrs: &mut [syn::Attribute],
+) {
+    renamer.rename_binder(Ns::Value, ident);
+    if renamer.constants_allowed() {
+        let expected = renamer.param_prim(ty);
+        crate::constants::normalize_expr(renamer, expr, expected);
+    }
+    renamer.visit_attrs(attrs);
+    syn::visit_mut::visit_type_mut(renamer, ty);
+    syn::visit_mut::visit_expr_mut(renamer, expr);
+}
+
 impl VisitMut for Renamer<'_> {
     fn visit_file_mut(&mut self, file: &mut syn::File) {
         self.observed |= crate::context::live_attr(&file.attrs);
@@ -3078,25 +3097,23 @@ impl VisitMut for Renamer<'_> {
     }
 
     fn visit_item_const_mut(&mut self, item: &mut syn::ItemConst) {
-        self.rename_binder(Ns::Value, &mut item.ident);
-        if self.constants_allowed() {
-            let expected = self.param_prim(&item.ty);
-            crate::constants::normalize_expr(self, &mut item.expr, expected);
-        }
-        self.visit_attrs(&mut item.attrs);
-        syn::visit_mut::visit_type_mut(self, &mut item.ty);
-        syn::visit_mut::visit_expr_mut(self, &mut item.expr);
+        visit_value_item(
+            self,
+            &mut item.ident,
+            &mut item.ty,
+            &mut item.expr,
+            &mut item.attrs,
+        );
     }
 
     fn visit_item_static_mut(&mut self, item: &mut syn::ItemStatic) {
-        self.rename_binder(Ns::Value, &mut item.ident);
-        if self.constants_allowed() {
-            let expected = self.param_prim(&item.ty);
-            crate::constants::normalize_expr(self, &mut item.expr, expected);
-        }
-        self.visit_attrs(&mut item.attrs);
-        syn::visit_mut::visit_type_mut(self, &mut item.ty);
-        syn::visit_mut::visit_expr_mut(self, &mut item.expr);
+        visit_value_item(
+            self,
+            &mut item.ident,
+            &mut item.ty,
+            &mut item.expr,
+            &mut item.attrs,
+        );
     }
 
     fn visit_impl_item_const_mut(&mut self, item: &mut syn::ImplItemConst) {

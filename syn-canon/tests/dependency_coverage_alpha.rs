@@ -1,22 +1,9 @@
 //! Alpha-rename analysis pass fixtures, one per missing coverage line group.
 
-/// The canonical view of one indexed declaration, by its written name.
-fn view_of(file: &syn::File, name: &str) -> syn_canon::CanonicalForm {
-    let context = syn_canon::SourceContext::new(core::iter::once((&[][..], file)));
-    let target = file
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(f) if f.sig.ident == name => Some((&f.sig, f.block.as_ref())),
-            syn::Item::Impl(imp) => imp.items.iter().find_map(|member| match member {
-                syn::ImplItem::Fn(f) if f.sig.ident == name => Some((&f.sig, &f.block)),
-                _ => None,
-            }),
-            _ => None,
-        })
-        .unwrap_or_else(|| panic!("{name} fixture"));
-    context.function(target.0, target.1).unwrap().canonicalize()
-}
+#[path = "support/view.rs"]
+mod view;
+
+use view::view_of;
 
 #[test]
 fn seeded_helper_views_keep_module_routes_apart() {

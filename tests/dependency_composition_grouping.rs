@@ -2,6 +2,11 @@
 
 use dejadoc::{Dejadoc, Kind, Remedy, SourceFile, TargetScan};
 
+#[path = "support/group_members.rs"]
+mod group_members;
+
+use group_members::members;
+
 fn target(text: &str) -> TargetScan {
     TargetScan {
         name: "composition".to_owned(),
@@ -31,15 +36,7 @@ fn composition_cli_fixture_groups_every_combined_family() {
         .iter()
         .filter(|group| group.kind == Kind::Function)
         .collect();
-    let mut function_members: Vec<Vec<_>> = function_groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    function_members.sort_unstable();
+    let function_members = members(function_groups.iter().copied());
     assert_eq!(
         function_members,
         [

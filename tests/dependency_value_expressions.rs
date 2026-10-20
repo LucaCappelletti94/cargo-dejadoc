@@ -2,6 +2,11 @@
 
 use std::fmt::Write as _;
 
+#[path = "support/grouped_file.rs"]
+mod grouped;
+
+use grouped::grouped_file;
+
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_str(source).unwrap())
 }
@@ -12,28 +17,6 @@ fn separate(left: &str, right: &str) {
         syn_canon::canonicalize_failing(syn::parse_str(left).unwrap()),
         syn_canon::canonicalize_failing(syn::parse_str(right).unwrap())
     );
-}
-
-/// Wrap expressions in real delimiterless interpolation groups.
-fn grouped_file(source: &str) -> syn::File {
-    struct Groups;
-
-    impl syn::visit_mut::VisitMut for Groups {
-        fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
-            syn::visit_mut::visit_expr_mut(self, expr);
-            let inner =
-                core::mem::replace(expr, syn::Expr::Verbatim(proc_macro2::TokenStream::new()));
-            *expr = syn::Expr::Group(syn::ExprGroup {
-                attrs: Vec::new(),
-                group_token: syn::token::Group::default(),
-                expr: Box::new(inner),
-            });
-        }
-    }
-
-    let mut file: syn::File = syn::parse_str(source).unwrap();
-    syn::visit_mut::VisitMut::visit_file_mut(&mut Groups, &mut file);
-    file
 }
 
 fn grouped(source: &str) -> syn_canon::CanonicalForm {

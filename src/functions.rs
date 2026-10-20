@@ -295,20 +295,9 @@ struct Parts<'a> {
 fn exports(meta: &syn::Meta) -> bool {
     let path = meta.path();
     if path.is_ident("unsafe") {
-        return wrapped(meta, 0).is_some_and(|metas| metas.iter().any(exports));
+        return syn_canon::wrapped(meta, 0).is_some_and(|metas| metas.iter().any(exports));
     }
     path.is_ident("no_mangle") || path.is_ident("export_name")
-}
-
-/// The metas `meta` wraps after its first `skip` arguments, `None` when they don't parse.
-fn wrapped(meta: &syn::Meta, skip: usize) -> Option<Vec<syn::Meta>> {
-    let syn::Meta::List(list) = meta else {
-        return None;
-    };
-    let parser = syn::punctuated::Punctuated::<syn::Meta, syn::Token![,]>::parse_terminated;
-    list.parse_args_with(parser)
-        .ok()
-        .map(|metas| metas.into_iter().skip(skip).collect())
 }
 
 /// The whole type as written, `Foo<u8>` and `a::Foo` telling apart types one last segment would merge.

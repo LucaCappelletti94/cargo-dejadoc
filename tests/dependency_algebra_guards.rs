@@ -1,20 +1,15 @@
 //! Public guards for the algebra laws beyond the four named cases.
 
+#[path = "support/same.rs"]
+mod same;
+
+use same::same;
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_str(source).unwrap())
 }
 
 fn failing(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize_failing(syn::parse_str(source).unwrap())
-}
-
-fn same(left: &str, right: &str) {
-    let a = form(left);
-    let b = form(right);
-    assert_eq!(a, b, "{left}\n{right}");
-    assert_eq!(a.body_units(), b.body_units());
-    assert_eq!(a.leaf_tokens(), b.leaf_tokens());
-    assert_ne!(failing(left), failing(right));
 }
 
 fn separate(left: &str, right: &str) {

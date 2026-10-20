@@ -139,15 +139,11 @@ impl Walker<'_> {
             }
             Item::Struct(s) => {
                 let path = format!("{prefix}::{}", s.ident);
-                if self.doc(&s.attrs, &path) {
-                    self.fields(s.fields.iter(), &path);
-                }
+                self.doc_fields(&s.attrs, s.fields.iter(), &path);
             }
             Item::Union(u) => {
                 let path = format!("{prefix}::{}", u.ident);
-                if self.doc(&u.attrs, &path) {
-                    self.fields(u.fields.named.iter(), &path);
-                }
+                self.doc_fields(&u.attrs, u.fields.named.iter(), &path);
             }
             Item::Enum(e) => {
                 let path = format!("{prefix}::{}", e.ident);
@@ -156,9 +152,7 @@ impl Walker<'_> {
                 }
                 for variant in &e.variants {
                     let sub = format!("{path}::{}", variant.ident);
-                    if self.doc(&variant.attrs, &sub) {
-                        self.fields(variant.fields.iter(), &sub);
-                    }
+                    self.doc_fields(&variant.attrs, variant.fields.iter(), &sub);
                 }
             }
             _ => {
@@ -189,6 +183,18 @@ impl Walker<'_> {
                 .as_ref()
                 .map_or_else(|| index.to_string(), ToString::to_string);
             self.doc(&field.attrs, &format!("{prefix}::{name}"));
+        }
+    }
+
+    /// The docs of `fields` under `prefix`, recorded when `attrs` carry docs.
+    fn doc_fields(
+        &mut self,
+        attrs: &[syn::Attribute],
+        fields: syn::punctuated::Iter<'_, syn::Field>,
+        prefix: &str,
+    ) {
+        if self.doc(attrs, prefix) {
+            self.fields(fields, prefix);
         }
     }
 

@@ -1,6 +1,11 @@
 //! Macro-argument rewriter arms, impl-member name fallback and group-wrapped
 //! context locals.
 
+#[path = "support/grouped_file.rs"]
+mod grouped;
+
+use grouped::grouped_file;
+
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_file(source).unwrap())
 }
@@ -12,28 +17,6 @@ fn failing(source: &str) -> syn_canon::CanonicalForm {
 /// Canonicalize a hand-built file.
 fn file_form(file: syn::File) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(file)
-}
-
-/// Wrap every expression in a delimiterless interpolation group.
-fn grouped_file(source: &str) -> syn::File {
-    struct Groups;
-
-    impl syn::visit_mut::VisitMut for Groups {
-        fn visit_expr_mut(&mut self, expr: &mut syn::Expr) {
-            syn::visit_mut::visit_expr_mut(self, expr);
-            let inner =
-                core::mem::replace(expr, syn::Expr::Verbatim(proc_macro2::TokenStream::new()));
-            *expr = syn::Expr::Group(syn::ExprGroup {
-                attrs: Vec::new(),
-                group_token: syn::token::Group::default(),
-                expr: Box::new(inner),
-            });
-        }
-    }
-
-    let mut file: syn::File = syn::parse_str(source).unwrap();
-    syn::visit_mut::VisitMut::visit_file_mut(&mut Groups, &mut file);
-    file
 }
 
 /// A struct plus one inherent impl whose members carry the given source order,

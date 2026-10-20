@@ -1921,7 +1921,14 @@ pub(crate) fn blocking_attr(attrs: &[syn::Attribute]) -> bool {
 
 /// The metas `meta` wraps after its first `skip` arguments, `None` when
 /// they don't parse.
-pub(crate) fn wrapped(meta: &syn::Meta, skip: usize) -> Option<Vec<syn::Meta>> {
+///
+/// ```
+/// let attr: syn::Attribute = syn::parse_quote!(#[cfg_attr(unix, inline, cold)]);
+/// let metas = syn_canon::wrapped(&attr.meta, 1).unwrap();
+/// assert!(metas[0].path().is_ident("inline") && metas[1].path().is_ident("cold"));
+/// ```
+#[must_use]
+pub fn wrapped(meta: &syn::Meta, skip: usize) -> Option<Vec<syn::Meta>> {
     let syn::Meta::List(list) = meta else {
         return None;
     };

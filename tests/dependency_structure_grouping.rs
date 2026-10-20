@@ -7,46 +7,24 @@ struct SourcePair {
     b: String,
 }
 
-use dejadoc::{Dejadoc, DocTest, Kind, Remedy, Report, SourceFile, TargetScan, group};
+use dejadoc::{Dejadoc, DocTest, Kind, Remedy, SourceFile, TargetScan, group};
 
-fn site(item: &str, code: &str, info: &[&str]) -> DocTest {
-    DocTest {
-        file: format!("src/{item}.rs"),
-        line: 7,
-        end: Some(11),
-        item: item.to_owned(),
-        info: info.iter().map(|tag| (*tag).to_owned()).collect(),
-        code: code.to_owned(),
-        allow: false,
-        self_type: None,
-        public: false,
-    }
-}
+#[path = "support/doc_blocks.rs"]
+mod doc_blocks;
+#[path = "support/function_ids.rs"]
+mod functions;
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/same.rs"]
+mod same;
+#[path = "support/site_src.rs"]
+mod site_src;
 
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
-
-fn function_ids(report: &Report) -> Vec<&str> {
-    let mut ids: Vec<&str> = report
-        .groups
-        .iter()
-        .filter(|group| group.kind == Kind::Function)
-        .map(|group| group.id.as_str())
-        .collect();
-    ids.sort_unstable();
-    ids
-}
+use doc_blocks::doc_blocks;
+use functions::function_ids;
+use group_members::members;
+use same::same;
+use site_src::site;
 
 fn target(text: &str) -> TargetScan {
     TargetScan {
@@ -77,15 +55,7 @@ fn structure_cli_fixture_preserves_exact_function_and_doctest_members() {
         .iter()
         .filter(|group| group.kind == Kind::Function)
         .collect();
-    let mut function_members: Vec<Vec<_>> = function_groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    function_members.sort_unstable();
+    let function_members = members(function_groups.iter().copied());
     assert_eq!(
         function_members,
         [
@@ -179,7 +149,10 @@ fn structure_cli_fixture_boundaries_and_reversed_sites() {
     let included = group(&doctest_sites, 1, 0);
     let reversed_doctests = group(&reversed_sites, 1, 0);
     assert_eq!(included.groups.len(), 1);
-    assert_eq!(members(&included), members(&reversed_doctests));
+    assert_eq!(
+        members(&included.groups),
+        members(&reversed_doctests.groups)
+    );
     assert_eq!(included.groups[0].id, reversed_doctests.groups[0].id);
 }
 
@@ -199,25 +172,6 @@ fn find_function<'a>(file: &'a syn::File, module: &str, name: &str) -> &'a syn::
         }
     }
     panic!("fixture is missing {module}::{name}");
-}
-
-fn doc_blocks(text: &str) -> Vec<String> {
-    let mut blocks: Vec<String> = Vec::new();
-    let mut current: Option<String> = None;
-    for raw in text.lines() {
-        let line = raw.strip_prefix("//!").unwrap_or(raw);
-        if line.trim_start().starts_with("```") {
-            if let Some(block) = current.take() {
-                blocks.push(block);
-            } else {
-                current = Some(String::new());
-            }
-        } else if let Some(block) = current.as_mut() {
-            block.push_str(line);
-            block.push('\n');
-        }
-    }
-    blocks
 }
 
 #[test]
@@ -292,8 +246,8 @@ fn structure_threshold_uses_public_canonical_sizes() {
     ];
     let included = group(&sites, 2, tokens);
     let reversed_report = group(&reversed, 2, tokens);
-    assert_eq!(members(&included), [vec!["first", "second"]]);
-    assert_eq!(members(&reversed_report), members(&included));
+    assert_eq!(members(&included.groups), [vec!["first", "second"]]);
+    assert_eq!(members(&reversed_report.groups), members(&included.groups));
     assert_eq!(included.groups[0].id, reversed_report.groups[0].id);
     assert_eq!(included.groups[0].tokens, tokens);
     assert_eq!(group(&sites, 2, tokens + 1).groups.len(), 0);
@@ -319,7 +273,7 @@ fn structure_threshold_uses_public_canonical_sizes() {
         tokens,
     );
     assert_eq!(
-        members(&flagged),
+        members(&flagged.groups),
         [vec!["first", "second"], vec!["flag_first", "flag_second"],]
     );
 }
@@ -330,15 +284,6 @@ fn form(source: &str) -> syn_canon::CanonicalForm {
 
 fn failing(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize_failing(syn::parse_str(source).unwrap())
-}
-
-fn same(left: &str, right: &str) {
-    let a = form(left);
-    let b = form(right);
-    assert_eq!(a, b, "{left}\n{right}");
-    assert_eq!(a.body_units(), b.body_units());
-    assert_eq!(a.leaf_tokens(), b.leaf_tokens());
-    assert_ne!(failing(left), failing(right));
 }
 
 fn distinct(left: &str, right: &str) {

@@ -1,5 +1,13 @@
 //! Closed item ordering and compatible inherent partitions.
 
+#[path = "support/function.rs"]
+mod functions;
+#[path = "support/method_form.rs"]
+mod method_form;
+
+use functions::function;
+use method_form::method_form;
+
 #[derive(serde::Deserialize)]
 struct Pair {
     id: String,
@@ -503,16 +511,6 @@ fn items_compose_with_effect_barrier() {
     );
 }
 
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
-}
-
 fn function_form(
     context: &syn_canon::SourceContext<'_>,
     function: &syn::ItemFn,
@@ -557,29 +555,6 @@ fn borrowed_views_match_the_standalone_partition_fold() {
         function_form(&split_context, function(&split, "probe")),
         function_form(&combined_context, function(&combined, "probe"))
     );
-}
-
-fn method_form(
-    context: &syn_canon::SourceContext<'_>,
-    source: &syn::File,
-    name: &str,
-) -> syn_canon::CanonicalForm {
-    source
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Impl(impl_item) => impl_item.items.iter().find_map(|member| match member {
-                syn::ImplItem::Fn(function) if function.sig.ident == name => Some(
-                    context
-                        .function(&function.sig, &function.block)
-                        .unwrap()
-                        .canonicalize(),
-                ),
-                _ => None,
-            }),
-            _ => None,
-        })
-        .unwrap()
 }
 
 #[test]

@@ -2,7 +2,15 @@
 
 use std::collections::BTreeSet;
 
-use dejadoc::{DocTest, Report, group};
+use dejadoc::{DocTest, group};
+
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/same.rs"]
+mod same;
+
+use group_members::members;
+use same::same;
 
 fn form(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize(syn::parse_str(source).unwrap())
@@ -10,15 +18,6 @@ fn form(source: &str) -> syn_canon::CanonicalForm {
 
 fn failing(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize_failing(syn::parse_str(source).unwrap())
-}
-
-fn same(left: &str, right: &str) {
-    let a = form(left);
-    let b = form(right);
-    assert_eq!(a, b, "{left}\n{right}");
-    assert_eq!(a.body_units(), b.body_units());
-    assert_eq!(a.leaf_tokens(), b.leaf_tokens());
-    assert_ne!(failing(left), failing(right));
 }
 
 fn separate(left: &str, right: &str) {
@@ -102,20 +101,6 @@ fn site(item: &str, code: &str) -> DocTest {
     }
 }
 
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<_> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
-
 #[test]
 fn tied_future_negation_grouping_keeps_the_exact_family_members() {
     let mut sites = family_sources("(y,z,b)")
@@ -130,7 +115,7 @@ fn tied_future_negation_grouping_keeps_the_exact_family_members() {
     ));
     let report = group(&sites, 1, 0);
     assert_eq!(
-        members(&report),
+        members(&report.groups),
         [
             vec![
                 "fam_00",
@@ -176,7 +161,7 @@ fn inverted_future_conditions_preserve_origins_branches_and_output_positions() {
     ]
     .map(|(item, code)| site(item, code));
     assert_eq!(
-        members(&group(&sites, 1, 0)),
+        members(group(&sites, 1, 0).groups.iter()),
         [
             vec!["branches"],
             vec!["oriented", "original", "permuted"],

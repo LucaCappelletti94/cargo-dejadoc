@@ -4,21 +4,64 @@ use core::fmt::Write;
 
 use syn_canon::{CanonicalForm, SourceContext};
 
-fn function<'a>(file: &'a syn::File, name: &str) -> &'a syn::ItemFn {
-    file.items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Fn(function) if function.sig.ident == name => Some(function),
-            _ => None,
-        })
-        .unwrap()
-}
+#[path = "support/function.rs"]
+mod functions;
+#[path = "support/method_form.rs"]
+mod method_form;
+#[path = "support/trait_forms.rs"]
+mod trait_forms;
+
+use functions::function;
+use method_form::method_form;
+use trait_forms::trait_method_forms;
 
 fn function_form(context: &SourceContext<'_>, function: &syn::ItemFn) -> syn_canon::CanonicalForm {
     context
         .function(&function.sig, &function.block)
         .unwrap()
         .canonicalize()
+}
+
+fn left_right_forms(source: &syn::File) -> (CanonicalForm, CanonicalForm) {
+    let context = SourceContext::new([(&[][..], source)]);
+    let canonical = |name| {
+        let target = function(source, name);
+        context
+            .function(&target.sig, &target.block)
+            .unwrap()
+            .canonicalize()
+    };
+    (canonical("left"), canonical("right"))
+}
+
+fn distinct_function_views(
+    left_context: &SourceContext<'_>,
+    left: &syn::ItemFn,
+    right_context: &SourceContext<'_>,
+    right: &syn::ItemFn,
+) {
+    assert_ne!(
+        left_context
+            .function(&left.sig, &left.block)
+            .unwrap()
+            .canonicalize(),
+        right_context
+            .function(&right.sig, &right.block)
+            .unwrap()
+            .canonicalize(),
+    );
+}
+
+fn distinct_views_for_each_pair(pairs: &[(&str, &str)]) {
+    for (left, right) in pairs {
+        let left: syn::File = syn::parse_str(left).unwrap();
+        let right: syn::File = syn::parse_str(right).unwrap();
+        let left_context = SourceContext::new(core::iter::once((&[][..], &left)));
+        let right_context = SourceContext::new(core::iter::once((&[][..], &right)));
+        let left_fn = function(&left, "f");
+        let right_fn = function(&right, "f");
+        distinct_function_views(&left_context, left_fn, &right_context, right_fn);
+    }
 }
 
 #[test]
@@ -193,29 +236,6 @@ fn generated_names_cannot_capture_resolved_inherited_helpers() {
     );
 }
 
-fn impl_method<'a>(
-    context: &'a SourceContext<'a>,
-    source: &'a syn::File,
-    name: &str,
-) -> syn_canon::CanonicalForm {
-    source
-        .items
-        .iter()
-        .find_map(|item| match item {
-            syn::Item::Impl(impl_item) => impl_item.items.iter().find_map(|member| match member {
-                syn::ImplItem::Fn(function) if function.sig.ident == name => Some(
-                    context
-                        .function(&function.sig, &function.block)
-                        .unwrap()
-                        .canonicalize(),
-                ),
-                _ => None,
-            }),
-            _ => None,
-        })
-        .unwrap()
-}
-
 fn module_function<'a>(
     context: &'a SourceContext<'a>,
     source: &'a syn::File,
@@ -258,12 +278,12 @@ fn owner_self_names_resolve_through_the_module_environment() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_eq!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right")
     );
     assert_eq!(
-        impl_method(&context, &source, "low"),
-        impl_method(&context, &source, "high")
+        method_form(&context, &source, "low"),
+        method_form(&context, &source, "high")
     );
 }
 
@@ -279,8 +299,8 @@ fn owner_self_names_mangle_compound_owner_types() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_ne!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right")
     );
 }
 
@@ -440,18 +460,7 @@ fn super_qualified_imports_resolve_from_the_importing_module() {
 
 #[test]
 fn same_module_uses_resolve_to_their_local_values() {
-    let pair = |source: &syn::File| {
-        let context = SourceContext::new([(&[][..], source)]);
-        let canonical = |name| {
-            let function = function(source, name);
-            context
-                .function(&function.sig, &function.block)
-                .unwrap()
-                .canonicalize()
-        };
-        (canonical("left"), canonical("right"))
-    };
-    let (left, right) = pair(
+    let (left, right) = left_right_forms(
         &syn::parse_str(
             "
             fn helper() -> u32 { 1u32 }
@@ -463,7 +472,7 @@ fn same_module_uses_resolve_to_their_local_values() {
         .unwrap(),
     );
     assert_eq!(left, right);
-    let (left, right) = pair(
+    let (left, right) = left_right_forms(
         &syn::parse_str(
             "
             const helper: u32 = 1u32;
@@ -475,7 +484,7 @@ fn same_module_uses_resolve_to_their_local_values() {
         .unwrap(),
     );
     assert_eq!(left, right);
-    let (left, right) = pair(
+    let (left, right) = left_right_forms(
         &syn::parse_str(
             "
             static helper: u32 = 1u32;
@@ -491,18 +500,7 @@ fn same_module_uses_resolve_to_their_local_values() {
 
 #[test]
 fn aliased_uses_resolve_to_their_single_module_value() {
-    let pair = |source: &syn::File| {
-        let context = SourceContext::new([(&[][..], source)]);
-        let canonical = |name| {
-            let function = function(source, name);
-            context
-                .function(&function.sig, &function.block)
-                .unwrap()
-                .canonicalize()
-        };
-        (canonical("left"), canonical("right"))
-    };
-    let (left, right) = pair(
+    let (left, right) = left_right_forms(
         &syn::parse_str(
             "
             mod a { pub fn helper() -> u32 { 1u32 } }
@@ -515,7 +513,7 @@ fn aliased_uses_resolve_to_their_single_module_value() {
         .unwrap(),
     );
     assert_eq!(left, right);
-    let (left, right) = pair(
+    let (left, right) = left_right_forms(
         &syn::parse_str(
             "
             mod a { pub const helper: u32 = 1u32; }
@@ -528,7 +526,7 @@ fn aliased_uses_resolve_to_their_single_module_value() {
         .unwrap(),
     );
     assert_eq!(left, right);
-    let (left, right) = pair(
+    let (left, right) = left_right_forms(
         &syn::parse_str(
             "
             mod a { pub static helper: u32 = 1u32; }
@@ -545,17 +543,6 @@ fn aliased_uses_resolve_to_their_single_module_value() {
 
 #[test]
 fn imported_type_items_resolve_to_their_local_definitions() {
-    let pair = |source: &syn::File| {
-        let context = SourceContext::new([(&[][..], source)]);
-        let canonical = |name| {
-            let function = function(source, name);
-            context
-                .function(&function.sig, &function.block)
-                .unwrap()
-                .canonicalize()
-        };
-        (canonical("left"), canonical("right"))
-    };
     for declaration in [
         "struct helper;",
         "enum helper {}",
@@ -578,7 +565,7 @@ fn imported_type_items_resolve_to_their_local_definitions() {
             .as_str(),
         )
         .unwrap();
-        let (left, right) = pair(&source);
+        let (left, right) = left_right_forms(&source);
         assert_eq!(left, right);
     }
 }
@@ -686,12 +673,12 @@ fn generic_type_ids_keep_the_parameters_distinct() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_eq!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "same")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "same")
     );
     let (left, right) = (
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right"),
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right"),
     );
     assert_eq!(left, right);
     assert_ne!(left.owner_role_key(), right.owner_role_key());
@@ -712,12 +699,12 @@ fn generic_const_ids_keep_the_parameters_distinct() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_eq!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "same")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "same")
     );
     let (left, right) = (
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right"),
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right"),
     );
     assert_eq!(left, right);
     assert_ne!(left.owner_role_key(), right.owner_role_key());
@@ -737,8 +724,8 @@ fn descending_generic_type_ids_do_not_capture_seed_items() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_ne!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right")
     );
 }
 
@@ -756,8 +743,8 @@ fn descending_generic_const_ids_do_not_capture_seed_items() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_ne!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right")
     );
 }
 
@@ -777,12 +764,12 @@ fn macro_literal_owner_spaces_keep_the_owners_distinct() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_eq!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "renamed")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "renamed")
     );
     assert_ne!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right")
     );
 }
 
@@ -875,12 +862,12 @@ fn non_function_impl_members_leave_the_method_forms_alone() {
     .unwrap();
     let context = SourceContext::new([(&[][..], &source)]);
     assert_eq!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "same")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "same")
     );
     assert_ne!(
-        impl_method(&context, &source, "left"),
-        impl_method(&context, &source, "right")
+        method_form(&context, &source, "left"),
+        method_form(&context, &source, "right")
     );
 }
 
@@ -1319,7 +1306,7 @@ fn seeded_self_ids_do_not_capture_free_helpers() {
     ] {
         assert_eq!(
             function_form(&context, function(&source, free)),
-            impl_method(&context, &source, method)
+            method_form(&context, &source, method)
         );
     }
 }
@@ -1388,8 +1375,8 @@ fn self_type_views_retain_their_original_owner_binding() {
     let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
     let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
     assert_ne!(
-        impl_method(&local_context, &local, "f"),
-        impl_method(&imported_context, &imported, "f"),
+        method_form(&local_context, &local, "f"),
+        method_form(&imported_context, &imported, "f"),
     );
 }
 
@@ -1405,8 +1392,8 @@ fn underscored_self_types_keep_their_seed_binding() {
     let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
     let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
     assert_ne!(
-        impl_method(&local_context, &local, "f"),
-        impl_method(&imported_context, &imported, "f"),
+        method_form(&local_context, &local, "f"),
+        method_form(&imported_context, &imported, "f"),
     );
 }
 
@@ -1423,8 +1410,8 @@ fn unresolved_self_types_keep_their_injective_owner_text() {
     let left_context = SourceContext::new(core::iter::once((&[][..], &left)));
     let right_context = SourceContext::new(core::iter::once((&[][..], &right)));
     assert_ne!(
-        impl_method(&left_context, &left, "f"),
-        impl_method(&right_context, &right, "f"),
+        method_form(&left_context, &left, "f"),
+        method_form(&right_context, &right, "f"),
     );
 }
 
@@ -1518,24 +1505,7 @@ fn module_items_retain_their_seed_binding() {
             "fn f() { println!(); }",
         ),
     ];
-    for (defined, undefined) in pairs {
-        let defined: syn::File = syn::parse_str(defined).unwrap();
-        let undefined: syn::File = syn::parse_str(undefined).unwrap();
-        let defined_context = SourceContext::new(core::iter::once((&[][..], &defined)));
-        let undefined_context = SourceContext::new(core::iter::once((&[][..], &undefined)));
-        let defined_fn = function(&defined, "f");
-        let undefined_fn = function(&undefined, "f");
-        assert_ne!(
-            defined_context
-                .function(&defined_fn.sig, &defined_fn.block)
-                .unwrap()
-                .canonicalize(),
-            undefined_context
-                .function(&undefined_fn.sig, &undefined_fn.block)
-                .unwrap()
-                .canonicalize(),
-        );
-    }
+    distinct_views_for_each_pair(&pairs);
 }
 
 #[test]
@@ -1554,24 +1524,7 @@ fn imported_helpers_retain_their_kind_binding() {
             "static G: u32 = 1; fn f() -> u32 { G }",
         ),
     ];
-    for (imported, local) in pairs {
-        let imported: syn::File = syn::parse_str(imported).unwrap();
-        let local: syn::File = syn::parse_str(local).unwrap();
-        let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
-        let local_context = SourceContext::new(core::iter::once((&[][..], &local)));
-        let imported_fn = function(&imported, "f");
-        let local_fn = function(&local, "f");
-        assert_ne!(
-            imported_context
-                .function(&imported_fn.sig, &imported_fn.block)
-                .unwrap()
-                .canonicalize(),
-            local_context
-                .function(&local_fn.sig, &local_fn.block)
-                .unwrap()
-                .canonicalize(),
-        );
-    }
+    distinct_views_for_each_pair(&pairs);
 }
 
 #[test]
@@ -1628,24 +1581,7 @@ fn imported_helpers_differ_from_prelude_names() {
             "fn f() -> Option<u32> { None }",
         ),
     ];
-    for (imported, undefined) in pairs {
-        let imported: syn::File = syn::parse_str(imported).unwrap();
-        let undefined: syn::File = syn::parse_str(undefined).unwrap();
-        let imported_context = SourceContext::new(core::iter::once((&[][..], &imported)));
-        let undefined_context = SourceContext::new(core::iter::once((&[][..], &undefined)));
-        let imported_fn = function(&imported, "f");
-        let undefined_fn = function(&undefined, "f");
-        assert_ne!(
-            imported_context
-                .function(&imported_fn.sig, &imported_fn.block)
-                .unwrap()
-                .canonicalize(),
-            undefined_context
-                .function(&undefined_fn.sig, &undefined_fn.block)
-                .unwrap()
-                .canonicalize(),
-        );
-    }
+    distinct_views_for_each_pair(&pairs);
 }
 
 #[test]
@@ -1912,19 +1848,7 @@ fn trait_observers_preserve_literal_declaration_order() {
         let syn::Item::Trait(item) = &source.items[0] else {
             unreachable!()
         };
-        let forms: Vec<_> = item
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                syn::TraitItem::Fn(method) => Some(
-                    context
-                        .function(&method.sig, method.default.as_ref().unwrap())
-                        .unwrap()
-                        .canonicalize(),
-                ),
-                _ => None,
-            })
-            .collect();
+        let forms = trait_method_forms(&context, item);
         assert_eq!(forms[0], forms[2]);
         if attribute.is_empty() {
             assert_eq!(forms[0], forms[1]);

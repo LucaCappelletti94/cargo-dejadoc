@@ -1,5 +1,9 @@
 //! Public guards for the boolean folds' wrappers, attributes, items and walk bounds.
 
+#[path = "support/same.rs"]
+mod same;
+
+use same::same;
 use std::fmt::Write as _;
 
 use syn::visit_mut::VisitMut as _;
@@ -10,15 +14,6 @@ fn form(source: &str) -> syn_canon::CanonicalForm {
 
 fn failing(source: &str) -> syn_canon::CanonicalForm {
     syn_canon::canonicalize_failing(syn::parse_str(source).unwrap())
-}
-
-fn same(left: &str, right: &str) {
-    let a = form(left);
-    let b = form(right);
-    assert_eq!(a, b, "{left}\n{right}");
-    assert_eq!(a.body_units(), b.body_units());
-    assert_eq!(a.leaf_tokens(), b.leaf_tokens());
-    assert_ne!(failing(left), failing(right));
 }
 
 fn separate(left: &str, right: &str) {

@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 use proc_macro2::{TokenStream, TokenTree};
 
 pub use blocks::{Context, ContextKind, ContextWork, contexts};
-pub use context::{FunctionView, SourceContext};
+pub use context::{FunctionView, SourceContext, wrapped};
 pub use form::CanonicalForm;
 
 /// The canonical form of compiling syntax, equal across style folds, binder names and proven

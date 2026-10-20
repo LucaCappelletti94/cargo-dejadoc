@@ -3,6 +3,11 @@
 #[path = "support/dependency.rs"]
 mod support;
 
+#[path = "support/spans.rs"]
+mod spans;
+
+use spans::reset_spans;
+
 fn form(source: &str) -> String {
     syn_canon::canonicalize(syn::parse_str(source).unwrap()).to_string()
 }
@@ -29,6 +34,19 @@ fn renamed(source: &str, names: &[(&str, &str)]) -> String {
             .collect()
     }
     tokens(source.parse().unwrap(), names).to_string()
+}
+
+fn reversed_declarations_change_the_form<Source: Fn(&str, bool) -> String>(
+    source: &Source,
+    body: &str,
+) {
+    let original = source(body, false);
+    assert_ne!(form(&original), form(&source(body, true)), "{body}");
+    assert_eq!(
+        form(&original),
+        form(&renamed(&original, &[("low", "first"), ("high", "second")])),
+        "{body}"
+    );
 }
 
 fn scheduled(id: &str) {
@@ -148,27 +166,12 @@ fn graph_preserves_shadowing_reference_origins() {
 
 #[test]
 fn graph_scheduling_is_independent_of_constructed_ast_spans() {
-    fn shared(stream: proc_macro2::TokenStream) -> proc_macro2::TokenStream {
-        stream
-            .into_iter()
-            .map(|mut token| {
-                if let proc_macro2::TokenTree::Group(group) = token {
-                    token = proc_macro2::TokenTree::Group(proc_macro2::Group::new(
-                        group.delimiter(),
-                        shared(group.stream()),
-                    ));
-                }
-                token.set_span(proc_macro2::Span::call_site());
-                token
-            })
-            .collect()
-    }
     let case = support::cases()
         .iter()
         .find(|case| case.id == "D05_duplicate_labels")
         .unwrap();
-    let a = syn_canon::canonicalize(syn::parse2(shared(case.a.parse().unwrap())).unwrap());
-    let b = syn_canon::canonicalize(syn::parse2(shared(case.b.parse().unwrap())).unwrap());
+    let a = syn_canon::canonicalize(syn::parse2(reset_spans(case.a.parse().unwrap())).unwrap());
+    let b = syn_canon::canonicalize(syn::parse2(reset_spans(case.b.parse().unwrap())).unwrap());
     assert_eq!(a.to_string(), b.to_string());
 }
 
@@ -779,13 +782,7 @@ fn nested_storage_observations_preserve_producer_declaration_order() {
         "let _ = unsafe { &low };",
         "let _ = async { let _ = &low; };",
     ] {
-        let original = source(body, false);
-        assert_ne!(form(&original), form(&source(body, true)), "{body}");
-        assert_eq!(
-            form(&original),
-            form(&renamed(&original, &[("low", "first"), ("high", "second")])),
-            "{body}"
-        );
+        reversed_declarations_change_the_form(&source, body);
     }
 }
 
@@ -806,13 +803,7 @@ fn control_flow_payload_borrows_preserve_producer_declaration_order() {
         "return consume(&low); consume(())",
         "consume(&low)?; Ok(())",
     ] {
-        let original = source(body, false);
-        assert_ne!(form(&original), form(&source(body, true)), "{body}");
-        assert_eq!(
-            form(&original),
-            form(&renamed(&original, &[("low", "first"), ("high", "second")])),
-            "{body}"
-        );
+        reversed_declarations_change_the_form(&source, body);
     }
     assert_eq!(
         form(&source("consume(low)?; Ok(())", false)),

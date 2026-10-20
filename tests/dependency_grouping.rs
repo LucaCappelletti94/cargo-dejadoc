@@ -3,35 +3,15 @@
 #[path = "support/dependency.rs"]
 mod support;
 
-use dejadoc::{Dejadoc, DocTest, Report, SourceFile, TargetScan, group};
+#[path = "support/group_members.rs"]
+mod group_members;
+#[path = "support/site_file.rs"]
+mod site_file;
 
-fn site(item: &str, code: &str, info: &[&str]) -> DocTest {
-    DocTest {
-        file: format!("{item}.rs"),
-        line: 1,
-        end: None,
-        item: item.to_owned(),
-        info: info.iter().map(|tag| (*tag).to_owned()).collect(),
-        code: code.to_owned(),
-        allow: false,
-        self_type: None,
-        public: false,
-    }
-}
+use group_members::members;
+use site_file::site;
 
-fn members(report: &Report) -> Vec<Vec<&str>> {
-    let mut groups: Vec<Vec<&str>> = report
-        .groups
-        .iter()
-        .map(|group| {
-            let mut items: Vec<&str> = group.sites.iter().map(|site| site.item.as_str()).collect();
-            items.sort_unstable();
-            items
-        })
-        .collect();
-    groups.sort_unstable();
-    groups
-}
+use dejadoc::{Dejadoc, SourceFile, TargetScan, group};
 
 fn check_pair(case: &support::Case, failing: bool) {
     let info: &[&str] = if failing { &["compile_fail"] } else { &[] };
@@ -42,7 +22,12 @@ fn check_pair(case: &support::Case, failing: bool) {
     } else {
         vec![vec!["a"], vec!["b"]]
     };
-    assert_eq!(members(&report), expected, "{} failing={failing}", case.id);
+    assert_eq!(
+        members(&report.groups),
+        expected,
+        "{} failing={failing}",
+        case.id
+    );
 }
 
 #[test]
@@ -76,7 +61,7 @@ fn dependency_compile_fail_flags_separate_matching_source_forms() {
     ];
     let report = group(&sites, 2, 0);
     assert_eq!(
-        members(&report),
+        members(&report.groups),
         vec![vec!["fail_a", "fail_b"], vec!["pass_a", "pass_b"]]
     );
 }
@@ -90,7 +75,7 @@ fn dependency_text_fallback_keeps_literal_distinctions_and_site_identity() {
     ];
     let report = group(&sites, 1, 0);
     assert_eq!(
-        members(&report),
+        members(&report.groups),
         vec![vec!["compact", "spaced"], vec!["different"]]
     );
     assert!(report.groups.iter().all(|group| group.unparsed));
@@ -103,10 +88,13 @@ fn dependency_text_fallback_filters_by_original_word_count() {
         site("second", "let value=@;", &["compile_fail"]),
     ];
     let included = group(&sites, 2, 2);
-    assert_eq!(members(&included), vec![vec!["first", "second"]]);
+    assert_eq!(members(&included.groups), vec![vec!["first", "second"]]);
     assert!(included.groups[0].unparsed);
     assert_eq!(included.groups[0].tokens, 2);
-    assert_eq!(members(&group(&sites, 2, 3)), Vec::<Vec<&str>>::new());
+    assert_eq!(
+        members(group(&sites, 2, 3).groups.iter()),
+        Vec::<Vec<&str>>::new()
+    );
 }
 
 #[test]
@@ -119,7 +107,7 @@ fn dependency_nesting_fallback_cannot_merge_with_the_parsed_form() {
     ];
     let report = group(&sites, 1, 0);
     assert_eq!(
-        members(&report),
+        members(&report.groups),
         vec![vec!["deep"], vec!["parentheses", "plain"]]
     );
     let parsed = report.groups.iter().find(|group| !group.unparsed).unwrap();
@@ -163,7 +151,7 @@ fn dependency_function_groups_respect_original_module_scopes() {
             .fn_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);
     assert_eq!(
-        members(&report),
+        members(&report.groups),
         vec![
             vec!["dependency::left::first", "dependency::left::second"],
             vec!["dependency::right::fourth", "dependency::right::third"]
