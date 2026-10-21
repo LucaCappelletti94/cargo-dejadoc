@@ -1,0 +1,13 @@
+/// ```4;
+/// ```
+#[cfg(anot(dos))]
+pub fn c() {}
+//- ``/T let d = 6;
+/// ```
+#[cfg(all(not(t!est), ad(ycontest, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    // ```
+    #[r#cfg(test)]
+    pub e: u8,
+}

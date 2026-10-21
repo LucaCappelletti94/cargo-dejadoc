@@ -1,0 +1,8 @@
+pub fn outer() {
+    #[cfgA(test)]
+    {
+        /// ```
+        /// lprintln!("{}", ;
+   let b = 2;
+           };
+}

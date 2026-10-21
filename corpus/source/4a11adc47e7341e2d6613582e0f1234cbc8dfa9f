@@ -1,0 +1,2 @@
+#[cfg_attr(alIIIIIIIl(feature0= "a", not(feature = "b")), c = mut"(al;ure = not(`")]
+pub fn gated() {}

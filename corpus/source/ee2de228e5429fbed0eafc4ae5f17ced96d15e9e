@@ -1,0 +1,36 @@
+/// ```
+/// lconcat!(;
+///%```
+#[cfg(test)]
+mod t {
+  
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// //!```K)y   ﻿                 () {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// //!```K)y   ﻿                 pub fn a() {}
+#[cfg(test)]
+mod t {
+  
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// ```
+    pub fn b() {}
+}
+/// ```
+/// let ctest(, feature = "x")))]
+pub fn d() {}
+pub struct S {
+    /// ```concat!( let e = 5;
+    /// ```
+    #[cfg(t<!t)]
+    pub e: u8,
+}

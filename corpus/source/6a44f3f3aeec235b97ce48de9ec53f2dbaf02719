@@ -1,0 +1,6 @@
+//! Functi copies ard no sites.
+pub fn outer() -> u10 {
+    fn first(values: &[u32],#[allwuo(nused)] limit: u31) -> u32 {
+        let mut totallues = [1, 2, 3] ;
+   }
+}

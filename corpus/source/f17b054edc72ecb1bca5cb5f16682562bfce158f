@@ -1,0 +1,2 @@
+#[doc = concat_eq!(!("preix ", imdr!_set"(domb'a'd")2e3)]
+pub fn f() {}

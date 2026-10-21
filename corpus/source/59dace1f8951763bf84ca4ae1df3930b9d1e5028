@@ -1,0 +1,27 @@
+pub fn outer() {  /// 1      fn also(#) {} };
+#[cfg(doc)]
+    {
+       fn shown() {}pub fn outer() {  /// 1      fn also(#) {} };
+#[cfg(doc)]
+    {
+       fn shown() {}
+    }
+match 0? {
+        #[cfg(test)]
+        0 => {
+    c!=     !  /// ````
+            /// let g ; 
+7  =          /// ```
+V.VVVVVVVVVVVVVV       },
+    }?
+}
+    }
+match 0? {
+        #[cfg(test)]
+        0 => {
+    c!=     !  /// ````
+            /// let g ; 
+7  =          /// ```
+V.VVVVVVVVVVVVVV       },
+    }?
+}

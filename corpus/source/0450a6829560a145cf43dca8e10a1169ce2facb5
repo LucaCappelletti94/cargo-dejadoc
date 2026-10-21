@@ -1,0 +1,5 @@
+pub fn r() {;
+    
+   fn inner() { /// `let b = 2n= 3;
+ break   nner() }
+}

@@ -1,0 +1,40 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// @generated
+ {}
+    }
+#[cfg(test)]
+    let _ ; { /// ```
+        /// let b = 2;
+     {}
+/// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// V``
+            /// let d = 4;
+            /// ```
+            fn armed() {}
+        }///  |", 
+///     l   0 intro
+//"( 
+///  x = 1;
+///     ley = = 2;
+///||||||||||", 
+///     l x = struct    0
+_dejadoc => {
+             /// let f = 6;
+         fn fb() {}
+        },
+    };
+}
