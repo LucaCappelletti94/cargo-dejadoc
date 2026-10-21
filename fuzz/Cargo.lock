@@ -138,8 +138,8 @@ dependencies = [
 ]
 
 [[package]]
-name = "dejadoc"
-version = "0.6.0"
+name = "echoes"
+version = "0.7.0"
 dependencies = [
  "blake3",
  "cargo-config2",
@@ -162,10 +162,10 @@ dependencies = [
 ]
 
 [[package]]
-name = "dejadoc-fuzz"
+name = "echoes-fuzz"
 version = "0.0.0"
 dependencies = [
- "dejadoc",
+ "echoes",
  "libfuzzer-sys",
  "syn",
 ]

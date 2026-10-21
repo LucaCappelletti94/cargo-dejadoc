@@ -1,6 +1,6 @@
 # syn-canon
 
-[![CI](https://github.com/LucaCappelletti94/cargo-dejadoc/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/cargo-dejadoc/actions/workflows/ci.yml)
+[![CI](https://github.com/LucaCappelletti94/cargo-echoes/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/cargo-echoes/actions/workflows/ci.yml)
 [![crates.io](https://img.shields.io/crates/v/syn-canon.svg)](https://crates.io/crates/syn-canon)
 [![docs.rs](https://docs.rs/syn-canon/badge.svg)](https://docs.rs/syn-canon)
 
@@ -18,7 +18,7 @@ assert!(forms.insert(canonical("fn f(x: u64) -> u64 { x + 1 }")));
 println!("{forms:?}");
 ```
 
-`no_std` with `alloc`. It powers [`cargo-dejadoc`](https://github.com/LucaCappelletti94/cargo-dejadoc), which finds duplicated doctests.
+`no_std` with `alloc`. It powers [`cargo-echoes`](https://github.com/LucaCappelletti94/cargo-echoes), which finds duplicated doctests.
 
 Equal forms mean approximate duplication, since the normalization cannot see what the compiler resolves, such as inferred types, macro expansions or an enclosing `cfg`.
 

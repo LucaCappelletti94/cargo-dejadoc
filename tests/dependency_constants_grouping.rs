@@ -11,7 +11,7 @@ mod site_file;
 use group_members::members;
 use site_file::site;
 
-use dejadoc::{DocTest, group};
+use echoes::{DocTest, group};
 
 fn a09() -> &'static support::Case {
     support::cases()

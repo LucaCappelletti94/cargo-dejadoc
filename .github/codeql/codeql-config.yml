@@ -1,5 +1,5 @@
 ---
-name: dejadoc CodeQL configuration
+name: echoes CodeQL configuration
 
 queries:
   - uses: security-extended

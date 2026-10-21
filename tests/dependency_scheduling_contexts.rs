@@ -1,6 +1,6 @@
 //! Original-source dependency scheduling contracts.
 
-use dejadoc::{Dejadoc, Kind, SourceFile, TargetScan};
+use echoes::{Echoes, Kind, SourceFile, TargetScan};
 use syn_canon::SourceContext;
 
 #[path = "support/function.rs"]
@@ -46,7 +46,7 @@ fn original_module_files_supply_primitive_alias_facts() {
         ],
     };
     let report =
-        Dejadoc::default()
+        Echoes::default()
             .functions()
             .fn_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);
@@ -162,7 +162,7 @@ fn inline_modules_resolve_their_own_imported_aliases() {
         )],
     };
     let report =
-        Dejadoc::default()
+        Echoes::default()
             .functions()
             .fn_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);

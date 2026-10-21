@@ -90,11 +90,11 @@ pub fn human(report: &Report, verbose: bool) -> String {
     out.push('\n');
     if report.groups.iter().any(|g| g.kind == Kind::Doctest) {
         out.push_str(
-            "Remove the copies listed above, or keep one on purpose with a `rust,dejadoc` fence\n",
+            "Remove the copies listed above, or keep one on purpose with a `rust,echoes` fence\n",
         );
     }
     if report.groups.iter().any(|g| g.kind == Kind::Function) {
-        out.push_str("Act on each function group as its advice says, or keep one on purpose with a `// dejadoc: allow` comment above it\n");
+        out.push_str("Act on each function group as its advice says, or keep one on purpose with a `// echoes: allow` comment above it\n");
     }
     if !report.context_groups.is_empty() {
         out.push_str(
@@ -141,10 +141,10 @@ fn organization_human(out: &mut String, report: &Report) {
     }
     if !organization.coverage.complete {
         if organization.coverage.failures.is_empty() {
-            let _ = writeln!(out, "dejadoc: incomplete organization analysis");
+            let _ = writeln!(out, "echoes: incomplete organization analysis");
         }
         for failure in &organization.coverage.failures {
-            let _ = writeln!(out, "dejadoc: incomplete organization analysis, {failure}");
+            let _ = writeln!(out, "echoes: incomplete organization analysis, {failure}");
         }
     }
 }
@@ -240,10 +240,10 @@ fn reuse_human(out: &mut String, report: &Report) {
         }
     }
     for warning in &reuse.coverage.warnings {
-        let _ = writeln!(out, "dejadoc: {warning}");
+        let _ = writeln!(out, "echoes: {warning}");
     }
     for failure in &reuse.coverage.failures {
-        let _ = writeln!(out, "dejadoc: incomplete dependency analysis, {failure}");
+        let _ = writeln!(out, "echoes: incomplete dependency analysis, {failure}");
     }
 }
 
@@ -282,28 +282,28 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             let _ = match group.kind {
                 Kind::Doctest => writeln!(
                     &mut out,
-                    "::{level} file={file},line={line},title=dejadoc::{item} duplicates the doctest of {kept_item} at {kept_file}:{kept_line}, group {id}"
+                    "::{level} file={file},line={line},title=echoes::{item} duplicates the doctest of {kept_item} at {kept_file}:{kept_line}, group {id}"
                 ),
                 Kind::Function => match group.remedy.unwrap_or(Remedy::Delete) {
                     Remedy::Delete if copy.public => writeln!(
                         &mut out,
-                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} and is public API, {PUBLIC_ADVICE}, group {id}"
+                        "::{level} file={file},line={line},title=echoes::{item} repeats {kept_item} at {kept_file}:{kept_line} and is public API, {PUBLIC_ADVICE}, group {id}"
                     ),
                     Remedy::Delete => writeln!(
                         &mut out,
-                        "::{level} file={file},line={line},title=dejadoc::{item} duplicates the function {kept_item} at {kept_file}:{kept_line}, group {id}"
+                        "::{level} file={file},line={line},title=echoes::{item} duplicates the function {kept_item} at {kept_file}:{kept_line}, group {id}"
                     ),
                     Remedy::MergeCfg => writeln!(
                         &mut out,
-                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} under another cfg, one function under both cfgs can replace them, group {id}"
+                        "::{level} file={file},line={line},title=echoes::{item} repeats {kept_item} at {kept_file}:{kept_line} under another cfg, one function under both cfgs can replace them, group {id}"
                     ),
                     Remedy::GenericOrMacro => writeln!(
                         &mut out,
-                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} on another type, a generic or a macro can share it, group {id}"
+                        "::{level} file={file},line={line},title=echoes::{item} repeats {kept_item} at {kept_file}:{kept_line} on another type, a generic or a macro can share it, group {id}"
                     ),
                     Remedy::HelperOrMacro => writeln!(
                         &mut out,
-                        "::{level} file={file},line={line},title=dejadoc::{item} repeats {kept_item} at {kept_file}:{kept_line} and can't be deleted, a helper or a macro can share it, group {id}"
+                        "::{level} file={file},line={line},title=echoes::{item} repeats {kept_item} at {kept_file}:{kept_line} and can't be deleted, a helper or a macro can share it, group {id}"
                     ),
                 },
             };
@@ -319,7 +319,7 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             );
             let _ = writeln!(
                 &mut out,
-                "::{level} file={file},line={line},col={},endLine={},endColumn={},title=dejadoc::approximate context block in {item}, group {id}",
+                "::{level} file={file},line={line},col={},endLine={},endColumn={},title=echoes::approximate context block in {item}, group {id}",
                 site.column,
                 site.end,
                 site.end_column.saturating_sub(1)
@@ -338,7 +338,7 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
             let item = escape(&site.item);
             let _ = writeln!(
                 &mut out,
-                "::{reuse_level} file={file},line={},col={},endLine={},endColumn={},title=dejadoc reuse::{item} has {} approximate upstream reuse candidates requiring compatibility review",
+                "::{reuse_level} file={file},line={},col={},endLine={},endColumn={},title=echoes reuse::{item} has {} approximate upstream reuse candidates requiring compatibility review",
                 site.line,
                 site.column,
                 site.end,
@@ -349,7 +349,7 @@ pub fn annotations(report: &Report, no_fail: bool) -> String {
         for failure in &reuse.coverage.failures {
             let _ = writeln!(
                 &mut out,
-                "::error title=dejadoc::Incomplete dependency analysis, {}",
+                "::error title=echoes::Incomplete dependency analysis, {}",
                 escape(failure)
             );
         }
@@ -369,13 +369,13 @@ fn organization_annotations(out: &mut String, report: &Report) {
     if organization.coverage.failures.is_empty() {
         let _ = writeln!(
             out,
-            "::error title=dejadoc::Incomplete organization analysis"
+            "::error title=echoes::Incomplete organization analysis"
         );
     }
     for failure in &organization.coverage.failures {
         let _ = writeln!(
             out,
-            "::error title=dejadoc::Incomplete organization analysis, {}",
+            "::error title=echoes::Incomplete organization analysis, {}",
             escape(failure)
         );
     }
@@ -503,7 +503,7 @@ mod tests {
         report.groups[0].sites[1].public = true;
         assert_eq!(
             annotations(&report, false),
-            "::error file=src/a.rs,line=9,title=dejadoc::m::B::run repeats m::A::run at src/a.rs:3 and is public API, make it call the kept copy or deprecate it, group cd34ef56\n"
+            "::error file=src/a.rs,line=9,title=echoes::m::B::run repeats m::A::run at src/a.rs:3 and is public API, make it call the kept copy or deprecate it, group cd34ef56\n"
         );
         assert!(human(&report, false).contains(
             "  src/a.rs:9  m::B::run   (public API, make it call the kept copy or deprecate it)\n"
@@ -521,7 +521,7 @@ mod tests {
 
     #[test]
     fn function_annotations_follow_the_remedy() {
-        let head = "::error file=src/a.rs,line=9,title=dejadoc::m::B::run ";
+        let head = "::error file=src/a.rs,line=9,title=echoes::m::B::run ";
         for (remedy, body) in [
             (
                 Remedy::Delete,
@@ -554,7 +554,7 @@ mod tests {
         assert_eq!(lines.len(), 1);
         assert_eq!(
             lines[0],
-            "::error file=src/b.rs,line=97,title=dejadoc::m::b duplicates the doctest of m::a at src/a.rs:14, group ab12cd34"
+            "::error file=src/b.rs,line=97,title=echoes::m::b duplicates the doctest of m::a at src/a.rs:14, group ab12cd34"
         );
     }
 
@@ -602,13 +602,13 @@ mod tests {
             let annotations = annotations(&report, true);
             assert_eq!(
                 human.contains(&format!(
-                    "dejadoc: incomplete organization analysis, {failure}"
+                    "echoes: incomplete organization analysis, {failure}"
                 )),
                 !complete
             );
             assert_eq!(
                 annotations.contains(&format!(
-                    "::error title=dejadoc::Incomplete organization analysis, {failure}"
+                    "::error title=echoes::Incomplete organization analysis, {failure}"
                 )),
                 !complete
             );
@@ -652,13 +652,13 @@ mod tests {
         assert!(
             human
                 .lines()
-                .any(|line| line == "dejadoc: incomplete organization analysis"),
+                .any(|line| line == "echoes: incomplete organization analysis"),
             "{human}"
         );
         assert!(
             annotations(&report, true)
                 .lines()
-                .any(|line| line == "::error title=dejadoc::Incomplete organization analysis")
+                .any(|line| line == "::error title=echoes::Incomplete organization analysis")
         );
     }
 
@@ -953,8 +953,8 @@ mod tests {
                 .any(|l| l.contains("src/b.rs:41:9-44:10") && l.contains("(block)")),
             "{out}"
         );
-        assert!(out.contains("rust,dejadoc` fence"), "{out}");
-        assert!(out.contains("`// dejadoc: allow`"), "{out}");
+        assert!(out.contains("rust,echoes` fence"), "{out}");
+        assert!(out.contains("`// echoes: allow`"), "{out}");
         assert!(
             lines
                 .iter()
@@ -964,7 +964,7 @@ mod tests {
         );
         let last = lines.last().unwrap();
         assert!(
-            last.contains("approximate") && !last.contains("dejadoc"),
+            last.contains("approximate") && !last.contains("echoes"),
             "{out}"
         );
         assert_eq!(
@@ -991,11 +991,11 @@ mod tests {
         ] {
             let summary = out.lines().next().unwrap();
             assert_eq!(summary.contains("context blocks"), context, "{summary}");
-            assert_eq!(out.contains("rust,dejadoc` fence"), doctest, "{out}");
-            assert_eq!(out.contains("`// dejadoc: allow`"), function, "{out}");
+            assert_eq!(out.contains("rust,echoes` fence"), doctest, "{out}");
+            assert_eq!(out.contains("`// echoes: allow`"), function, "{out}");
             let last = out.lines().last().unwrap();
             assert_eq!(
-                last.contains("approximate") && !last.contains("dejadoc"),
+                last.contains("approximate") && !last.contains("echoes"),
                 context,
                 "{out}"
             );
@@ -1160,8 +1160,8 @@ src/b.rs:41:9-44:10  m::b (approximate dependency matches)
   vendored 0.1.0  vendored::h  request public extraction (depth 3)
   legacy 2.0.0  legacy::i  establish accessibility (depth 4)
     https://git.example.com/legacy/commit/def456
-dejadoc: index cache entry is stale
-dejadoc: incomplete dependency analysis, no index for the vendored dependency
+echoes: index cache entry is stale
+echoes: incomplete dependency analysis, no index for the vendored dependency
 
 "
         );
@@ -1186,11 +1186,11 @@ reuse opportunities (5 packages)"
         let out = annotations(&reuse_report(), false);
         assert_eq!(
             out,
-            "::notice file=src/a.rs,line=9,col=5,endLine=12,endColumn=5,title=dejadoc \
+            "::notice file=src/a.rs,line=9,col=5,endLine=12,endColumn=5,title=echoes \
 reuse::m::a has 2 approximate upstream reuse candidates requiring compatibility review\n\
-::notice file=src/b.rs,line=41,col=9,endLine=44,endColumn=9,title=dejadoc reuse::m::b has 2 \
+::notice file=src/b.rs,line=41,col=9,endLine=44,endColumn=9,title=echoes reuse::m::b has 2 \
 approximate upstream reuse candidates requiring compatibility review\n\
-::error title=dejadoc::Incomplete dependency analysis, no index for the vendored dependency\n"
+::error title=echoes::Incomplete dependency analysis, no index for the vendored dependency\n"
         );
     }
 

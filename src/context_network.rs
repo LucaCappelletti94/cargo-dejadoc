@@ -238,7 +238,7 @@ pub fn download(url: &str, destination: &Path) -> Result<(), String> {
         .to_string_lossy();
     let prepared = destination.parent().map_or(Ok(()), fs::create_dir_all);
     prepared.map_err(|err| fail(&id, url, format!("prepare {err}")))?;
-    let part = destination.with_file_name(format!("{name}.dejadoc-part-{id}"));
+    let part = destination.with_file_name(format!("{name}.echoes-part-{id}"));
     let written = match stream_to_file(response.into_body().into_reader(), &part, &id, url) {
         Ok(written) => written,
         Err(err) => {

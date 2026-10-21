@@ -1,7 +1,7 @@
 #!/bin/bash
 set -eu
 
-cd "$SRC/cargo-dejadoc"
+cd "$SRC/cargo-echoes"
 # the base image exports its own nightly as RUSTUP_TOOLCHAIN, so no toolchain is named here
 cargo fuzz build -O --debug-assertions --fuzz-dir fuzz
 
@@ -14,7 +14,7 @@ fi
 target_dir=fuzz/target/x86_64-unknown-linux-gnu/release
 for name in $targets; do
     cp "$target_dir/$name" "$OUT/"
-    cp fuzz/dejadoc.dict "$OUT/$name.dict"
+    cp fuzz/echoes.dict "$OUT/$name.dict"
     printf '[libfuzzer]\nmax_len = 8192\n' >"$OUT/$name.options"
     # the runner unpacks <target>_seed_corpus.zip as the starting corpus
     seeds="fuzz/seeds/$name"

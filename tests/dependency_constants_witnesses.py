@@ -360,7 +360,7 @@ def run_matrix(cases, *, request_id, toolchain="stable", timeout=DEFAULT_TIMEOUT
     needs_macro = any(case["externs"] for case in validated)
     macro_record = None
     scratch_root = pathlib.Path(
-        tempfile.mkdtemp(prefix="dejadoc-constants-witness-"))
+        tempfile.mkdtemp(prefix="echoes-constants-witness-"))
     try:
         if needs_macro and compiler_record["exit"] == 0:
             macro_record = _build_proc_macro(scratch_root, request_id,

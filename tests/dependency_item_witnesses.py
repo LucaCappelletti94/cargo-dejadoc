@@ -525,7 +525,7 @@ def main(argv=None):
     observers = []
     macro_paths = {}
     if runtime:
-        with tempfile.TemporaryDirectory(prefix="dejadoc-item-witness-") as scratch:
+        with tempfile.TemporaryDirectory(prefix="echoes-item-witness-") as scratch:
             scratch_root = pathlib.Path(scratch)
             if any(case["externs"] for case in runtime):
                 observers, macro_paths = _build_observers(

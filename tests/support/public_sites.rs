@@ -1,4 +1,4 @@
-use dejadoc::Group;
+use echoes::Group;
 
 /// Every site of the function groups is public and lives in `src/lib.rs`.
 pub(super) fn assert_public_sites(function_groups: &[&Group]) {

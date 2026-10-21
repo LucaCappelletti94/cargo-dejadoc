@@ -33,8 +33,8 @@ jobs:
           # The check branch adds exactly two copies and its review must post on both.
           EXPECTED_ROWS: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && '2' || '' }}
         run: |
-          status="$(cat "$RUNNER_TEMP/dejadoc-post-status" 2>/dev/null || echo missing)"
-          body="$RUNNER_TEMP/dejadoc-review.md"
+          status="$(cat "$RUNNER_TEMP/echoes-post-status" 2>/dev/null || echo missing)"
+          body="$RUNNER_TEMP/echoes-review.md"
           repo="$GITHUB_REPOSITORY"
           if [ -n "$EXPECTED_ROWS" ] && [ "$status" != "posted" ]; then
             echo "the check branch adds new copies, so the review must post, got $status"
@@ -47,8 +47,8 @@ jobs:
               grep -q 'tests/fixtures/dupws/alpha/src/util.rs' "$body" || { echo "the fixture sites are missing"; exit 1; }
               grep -q 'times in this scan' "$body" || { echo "the copy count wording is missing"; exit 1; }
               grep -q 'keeping the first copy at' "$body" || { echo "the kept copy location is missing"; exit 1; }
-              grep -q 'Support dejadoc](https://github.com/sponsors/LucaCappelletti94)' "$body" || { echo "the support link is missing"; exit 1; }
-              n_comments="$(grep -c 'Support dejadoc](https://github.com/sponsors/LucaCappelletti94)' "$body")"
+              grep -q 'Support echoes](https://github.com/sponsors/LucaCappelletti94)' "$body" || { echo "the support link is missing"; exit 1; }
+              n_comments="$(grep -c 'Support echoes](https://github.com/sponsors/LucaCappelletti94)' "$body")"
               [ "$n_comments" = "4" ] || { echo "expected one comment per removable copy, got $n_comments"; exit 1; }
               ;;
             posted)
@@ -68,7 +68,7 @@ jobs:
               }
               if api_retry 3 5 "repos/$repo/pulls/$n/files" --jq '.[].filename' | grep -q '^tests/fixtures/'; then
                 rows="$(api_retry 6 10 "repos/$repo/pulls/$n/comments" --jq '.[] | select(.user.login == "github-actions[bot]") | select(.path | startswith("tests/fixtures/")) | "\(.path)\t\(.start_line)\t\(.line)"')"
-                [ -n "$rows" ] || { echo "the inline dejadoc comments are missing on the fixture files"; exit 1; }
+                [ -n "$rows" ] || { echo "the inline echoes comments are missing on the fixture files"; exit 1; }
                 posted="$(printf '%s\n' "$rows" | wc -l)"
                 [ -z "$EXPECTED_ROWS" ] || [ "$posted" = "$EXPECTED_ROWS" ] || { echo "expected $EXPECTED_ROWS live comments, got $posted"; exit 1; }
                 # Each suggestion deletes one whole block, from its opening line to its
@@ -122,7 +122,7 @@ jobs:
           cwd: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && 'tests/fixtures/apicheck' || 'tests/fixtures/dupws' }}
           pr-number: ${{ github.event.pull_request.number }}
           mode: prepare
-          payload: dejadoc-payload
+          payload: echoes-payload
           only-new: false
           annotations: false
       - name: Check the prepared payload
@@ -132,21 +132,21 @@ jobs:
           EXPECTED_ROWS: ${{ startsWith(github.head_ref, 'dogfood-api-check-') && '2' || '' }}
         run: |
           set -euo pipefail
-          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
-          jq -e '.pr != "" and (.head_sha | length) == 40' dejadoc-payload/review.json > /dev/null \
+          status="$(cat "$RUNNER_TEMP/echoes-post-status")"
+          jq -e '.pr != "" and (.head_sha | length) == 40' echoes-payload/review.json > /dev/null \
             || { echo "the payload metadata is incomplete"; exit 1; }
           case "$status" in
             prepared)
-              rows="$(wc -l < dejadoc-payload/comments.ndjson)"
+              rows="$(wc -l < echoes-payload/comments.ndjson)"
               [ "$rows" -gt 0 ] || { echo "expected one row per removable copy in the diff, got none"; exit 1; }
               [ -z "$EXPECTED_ROWS" ] || [ "$rows" = "$EXPECTED_ROWS" ] || { echo "expected $EXPECTED_ROWS rows, got $rows"; exit 1; }
               jq -e 'select(.path | startswith("tests/fixtures/")) | .line >= .start_line and (.body | contains("```suggestion"))' \
-                dejadoc-payload/comments.ndjson > /dev/null \
+                echoes-payload/comments.ndjson > /dev/null \
                 || { echo "a payload row is malformed"; exit 1; }
               echo "the prepared payload holds one postable comment per removable copy"
               ;;
             skipped-nodiff)
-              [ ! -s dejadoc-payload/comments.ndjson ] \
+              [ ! -s echoes-payload/comments.ndjson ] \
                 || { echo "a skipped payload must hold no comment"; exit 1; }
               echo "the fixture files are not in this pull request diff, the payload is empty as expected"
               ;;
@@ -175,9 +175,9 @@ jobs:
       - name: Check the function findings
         run: |
           set -euo pipefail
-          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          status="$(cat "$RUNNER_TEMP/echoes-post-status")"
           [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
-          body="$RUNNER_TEMP/dejadoc-review.md"
+          body="$RUNNER_TEMP/echoes-review.md"
           removable=0
           declare -A shared=()
           while IFS=$'\t' read -r p line _ _ c _ _ _ _ _ end _ _ kind remedy _ _ _ public; do
@@ -197,7 +197,7 @@ jobs:
             esac
             [ "$last" = "}" ] || { echo "the suggestion on $p:$line-$end does not end on the closing brace: $last"; exit 1; }
             echo "verified $p:$line-$end deletes exactly one function"
-          done < "$RUNNER_TEMP/dejadoc-inline.tsv"
+          done < "$RUNNER_TEMP/echoes-inline.tsv"
           [ "$removable" = "3" ] || { echo "expected 3 removable copies, got $removable"; exit 1; }
           [ "${shared[public]:-0}" = "2" ] || { echo "expected 2 public copies, got ${shared[public]:-0}"; exit 1; }
           for remedy in generic-or-macro helper-or-macro merge-cfg; do
@@ -229,9 +229,9 @@ jobs:
       - name: Check the member paths
         run: |
           set -euo pipefail
-          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          status="$(cat "$RUNNER_TEMP/echoes-post-status")"
           [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
-          body="$RUNNER_TEMP/dejadoc-review.md"
+          body="$RUNNER_TEMP/echoes-review.md"
           for file in alpha/src/util.rs beta/src/util.rs; do
             grep -q "tests/fixtures/dupws/$file" "$body" || { echo "the $file sites are missing"; exit 1; }
           done
@@ -250,9 +250,9 @@ jobs:
       - name: Check the procedural macro findings
         run: |
           set -euo pipefail
-          status="$(cat "$RUNNER_TEMP/dejadoc-post-status")"
+          status="$(cat "$RUNNER_TEMP/echoes-post-status")"
           [ "$status" = "dry-run" ] || { echo "expected a dry run, got $status"; exit 1; }
-          body="$RUNNER_TEMP/dejadoc-review.md"
+          body="$RUNNER_TEMP/echoes-review.md"
           grep -q 'It is public API, so deleting it breaks its callers' "$body" || { echo "the public API comment is missing"; exit 1; }
           if grep -q '^```suggestion' "$body"; then
             echo "an exported procedural macro must not get a delete suggestion"

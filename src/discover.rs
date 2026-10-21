@@ -278,7 +278,7 @@ impl Walk<'_> {
 }
 
 fn record_failure(file: &Child, message: String, failures: &mut Vec<ModuleFailure>) {
-    eprintln!("dejadoc: {message}");
+    eprintln!("echoes: {message}");
     failures.push(ModuleFailure {
         file: file.path.to_string_lossy().into_owned(),
         module: file.segments.clone(),
@@ -1287,7 +1287,7 @@ mod tests {
 
     #[test]
     fn records_a_boundary_that_cannot_be_canonicalized() {
-        let missing = std::path::Path::new("/nonexistent/dejadoc-module-boundary");
+        let missing = std::path::Path::new("/nonexistent/echoes-module-boundary");
         let tree = module_tree(&target(std::path::Path::new("lib.rs")), Some(missing));
         assert!(tree.files.is_empty());
         assert_eq!(tree.failures.len(), 1);

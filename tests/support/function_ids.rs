@@ -1,4 +1,4 @@
-use dejadoc::{Kind, Report};
+use echoes::{Kind, Report};
 
 /// The sorted ids of the function groups of one report.
 pub(super) fn function_ids(report: &Report) -> Vec<&str> {

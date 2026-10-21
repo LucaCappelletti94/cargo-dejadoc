@@ -680,7 +680,7 @@ fn classify(info: &str) -> Option<(Vec<String>, bool)> {
                 out.push(t.to_string());
             }
             _ if t.starts_with("edition") => out.push(t.to_string()),
-            "dejadoc" => {
+            "echoes" => {
                 allow = true;
                 seen_other = true;
             }
@@ -1378,8 +1378,8 @@ mod tests {
     }
 
     #[test]
-    fn dejadoc_token_allows() {
-        let src = "/// ```rust,dejadoc\n/// fn main() {}\n/// ```\npub fn f() {}\n";
+    fn echoes_token_allows() {
+        let src = "/// ```rust,echoes\n/// fn main() {}\n/// ```\npub fn f() {}\n";
         assert_eq!(
             run(src),
             vec![dt("src/lib.rs", 1, "mycrate::f", &[], "fn main() {}", true)]
@@ -1387,8 +1387,8 @@ mod tests {
     }
 
     #[test]
-    fn dejadoc_alone_is_not_rust() {
-        let src = "/// ```dejadoc\n/// fn main() {}\n/// ```\npub fn f() {}\n";
+    fn echoes_alone_is_not_rust() {
+        let src = "/// ```echoes\n/// fn main() {}\n/// ```\npub fn f() {}\n";
         assert_eq!(run(src), vec![]);
     }
 
@@ -1442,7 +1442,7 @@ mod tests {
             match std::fs::read_to_string(&path) {
                 Ok(text) => Some((path.to_string_lossy().into_owned(), text)),
                 Err(err) => {
-                    std::eprintln!("dejadoc: cannot read doc include {}: {err}", path.display());
+                    std::eprintln!("echoes: cannot read doc include {}: {err}", path.display());
                     None
                 }
             }
@@ -1967,7 +1967,7 @@ pub fn outer() {\n    #[cfg(test)]\n    {\n        /// ```\n        /// let a = 
             ("ignore-wasm", &["ignore-wasm"]),
             ("rust (a comment) {.myclass}", &[]),
             ("rust no_run", &["no_run"]),
-            ("no_run,dejadoc", &["no_run"]),
+            ("no_run,echoes", &["no_run"]),
             ("compile_fail,E0597", &["compile_fail", "E0597"]),
             ("edition2021", &["edition2021"]),
             ("rust (a comment)", &[]),
@@ -1983,7 +1983,7 @@ pub fn outer() {\n    #[cfg(test)]\n    {\n        /// ```\n        /// let a = 
                     "mycrate::f",
                     attrs,
                     "fn main() {}",
-                    info.contains("dejadoc")
+                    info.contains("echoes")
                 )],
                 "{info}"
             );
@@ -1997,7 +1997,7 @@ pub fn outer() {\n    #[cfg(test)]\n    {\n        /// ```\n        /// let a = 
             "rust,foo,no_run",
             "custom,rust",
             "rust ignore",
-            "dejadoc",
+            "echoes",
             "foo,no_run",
             "rust,{unclosed",
             "rs",

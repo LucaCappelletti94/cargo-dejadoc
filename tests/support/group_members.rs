@@ -1,4 +1,4 @@
-use dejadoc::Group;
+use echoes::Group;
 
 /// The sorted item names of one group.
 fn sorted_items(group: &Group) -> Vec<&str> {

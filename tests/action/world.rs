@@ -45,7 +45,7 @@ impl World {
     /// A world with a fresh temp dir and a plain workspace.
     pub fn new(name: &str) -> Self {
         let tmp = tempfile::Builder::new()
-            .prefix(&format!("dejadoc-scen-{name}-"))
+            .prefix(&format!("echoes-scen-{name}-"))
             .tempdir_in(std::env::temp_dir())
             .expect("make the scenario dir");
         let workspace = tmp.path().join("ws");

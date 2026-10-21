@@ -2,7 +2,7 @@
 
 use std::collections::BTreeSet;
 
-use dejadoc::{DocTest, group};
+use echoes::{DocTest, group};
 
 #[path = "support/group_members.rs"]
 mod group_members;

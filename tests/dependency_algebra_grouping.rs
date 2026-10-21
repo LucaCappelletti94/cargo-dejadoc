@@ -12,7 +12,7 @@ mod public_sites;
 #[path = "support/site_src.rs"]
 mod site_src;
 
-use dejadoc::{Dejadoc, SourceFile, TargetScan, group};
+use echoes::{Echoes, SourceFile, TargetScan, group};
 use fixture_group::assert_fixture_group;
 use group_members::members;
 use public_sites::assert_public_sites;
@@ -83,14 +83,14 @@ fn algebra_contextual_function_groups_preserve_modules_owners_and_neighbours() {
     let text = include_str!("fixtures/algebraws/src/lib.rs");
     let target = target(text);
     for threshold in [0, 10] {
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .fn_min_tokens(threshold)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None);
         let function_groups: Vec<_> = report
             .groups
             .iter()
-            .filter(|group| group.kind == dejadoc::Kind::Function)
+            .filter(|group| group.kind == echoes::Kind::Function)
             .collect();
         let function_members = members(function_groups.iter().copied());
         assert_eq!(

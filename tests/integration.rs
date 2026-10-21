@@ -2,7 +2,7 @@
 
 #![cfg(feature = "std")]
 
-use dejadoc::{ContextKind, Dejadoc, Remedy, Report};
+use echoes::{ContextKind, Echoes, Remedy, Report};
 use std::path::Path;
 #[cfg(feature = "cli")]
 use std::process::Command;
@@ -10,7 +10,7 @@ use std::process::Command;
 const FIXTURE: &str = "tests/fixtures/dupws";
 
 fn scan() -> Report {
-    dejadoc::Dejadoc::default().run(FIXTURE).unwrap()
+    echoes::Echoes::default().run(FIXTURE).unwrap()
 }
 
 const FN_FIXTURE: &str = "tests/fixtures/fnws";
@@ -20,7 +20,7 @@ type FnGroup<'a> = (Vec<&'a str>, Vec<Option<&'a str>>, Option<Remedy>);
 
 #[test]
 fn functions_group_per_module_across_targets_and_cfgs() {
-    let report = Dejadoc::default().functions().run(FN_FIXTURE).unwrap();
+    let report = Echoes::default().functions().run(FN_FIXTURE).unwrap();
     assert_eq!(
         (report.total, report.functions, report.unique_functions),
         (0, 17, 8)
@@ -29,7 +29,7 @@ fn functions_group_per_module_across_targets_and_cfgs() {
         .groups
         .iter()
         .map(|g| {
-            assert_eq!(g.kind, dejadoc::Kind::Function);
+            assert_eq!(g.kind, echoes::Kind::Function);
             let items = g.sites.iter().map(|s| s.item.as_str()).collect();
             let types = g.sites.iter().map(|s| s.self_type.as_deref()).collect();
             (items, types, g.remedy)
@@ -121,13 +121,13 @@ fn functions_group_per_module_across_targets_and_cfgs() {
             (site.end.unwrap() - site.line + 1) as usize
         );
     }
-    let off = Dejadoc::default().run(FN_FIXTURE).unwrap();
+    let off = Echoes::default().run(FN_FIXTURE).unwrap();
     assert_eq!((off.functions, off.groups.len()), (0, 0));
 }
 
 #[test]
 fn copies_selected_by_module_declarations_merge_their_cfgs() {
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .functions()
         .run("tests/fixtures/modcfgws")
         .unwrap();
@@ -185,20 +185,20 @@ fn cfg_attr_branch_files_are_reported_and_never_linked_files_are_not() {
         files.dedup();
         files
     };
-    let default = Dejadoc::default()
+    let default = Echoes::default()
         .functions()
         .context_blocks()
         .run("tests/fixtures/modcfgws")
         .unwrap();
     assert_eq!(files(&default), ["src/fast/width.rs", "src/slow/width.rs"]);
     let cache = tempfile::tempdir().unwrap();
-    let dependencies = Dejadoc::default()
+    let dependencies = Echoes::default()
         .context_blocks()
-        .context_dependencies(dejadoc::DependencySearch {
+        .context_dependencies(echoes::DependencySearch {
             depth: Some(1),
             cache_dir: Some(cache.path().to_string_lossy().into_owned()),
             check_latest: Some(false),
-            ..dejadoc::DependencySearch::default()
+            ..echoes::DependencySearch::default()
         })
         .run("tests/fixtures/modcfgws")
         .unwrap();
@@ -266,8 +266,8 @@ fn allowed_sites_are_not_grouped() {
 
 #[test]
 fn config_threshold_suppresses_groups() {
-    let strict = Path::new(FIXTURE).join(".dejadoc-strict.toml");
-    let report = Dejadoc::default()
+    let strict = Path::new(FIXTURE).join(".echoes-strict.toml");
+    let report = Echoes::default()
         .config(&strict)
         .unwrap()
         .run(FIXTURE)
@@ -275,7 +275,7 @@ fn config_threshold_suppresses_groups() {
     assert_eq!(report.groups, Vec::new());
 
     // API threshold overrides the config file.
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .threshold(2)
         .config(&strict)
         .unwrap()
@@ -284,7 +284,7 @@ fn config_threshold_suppresses_groups() {
     assert_eq!(report.groups.len(), 2);
 
     // The API threshold still wins when set after the config file.
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .config(&strict)
         .unwrap()
         .threshold(2)
@@ -298,7 +298,7 @@ fn all_targets_builder_scans_bin_targets() {
     // The fixture's bin target (alpha/src/bin/dupbin.rs) is scanned only
     // with all_targets: one more doctest site, which alpha-renaming
     // joins into the function group.
-    let report = Dejadoc::default().all_targets().run(FIXTURE).unwrap();
+    let report = Echoes::default().all_targets().run(FIXTURE).unwrap();
     assert_eq!(report.total, 10);
     assert_eq!(report.unique, 4);
     assert_eq!(report.groups.len(), 2);
@@ -307,7 +307,7 @@ fn all_targets_builder_scans_bin_targets() {
 #[test]
 fn a_package_filter_keeps_the_package_bin_targets() {
     // `dupbin` is a target of package `alpha` with its own name.
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .package("alpha")
         .all_targets()
         .run(FIXTURE)
@@ -324,7 +324,7 @@ fn a_package_filter_keeps_the_package_bin_targets() {
 fn min_tokens_builder_filters_blocks() {
     // min-tokens 4 drops the 3-token unparsed group; only the
     // 4-token function group survives.
-    let report = Dejadoc::default().min_tokens(4).run(FIXTURE).unwrap();
+    let report = Echoes::default().min_tokens(4).run(FIXTURE).unwrap();
     assert_eq!(report.total, 9);
     assert_eq!(report.groups.len(), 1);
 }
@@ -333,24 +333,24 @@ fn min_tokens_builder_filters_blocks() {
 fn exit_code_reflects_duplicates() {
     let report = scan();
     assert_eq!(
-        dejadoc::exit_code(&report, false),
+        echoes::exit_code(&report, false),
         std::process::ExitCode::from(1)
     );
     assert_eq!(
-        dejadoc::exit_code(&report, true),
+        echoes::exit_code(&report, true),
         std::process::ExitCode::SUCCESS
     );
 }
 #[test]
 #[cfg(feature = "cli")]
 fn binary_runs_end_to_end() {
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(FIXTURE)
-        .arg("dejadoc")
+        .arg("echoes")
         .arg("--json")
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(out.status.code(), Some(1));
     let value: serde_json::Value = serde_json::from_slice(&out.stdout).expect("valid json output");
     assert_eq!(value["total"], 9);
@@ -360,13 +360,13 @@ fn binary_runs_end_to_end() {
 #[test]
 #[cfg(feature = "cli")]
 fn binary_prints_annotations_beside_the_report() {
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(FIXTURE)
-        .arg("dejadoc")
+        .arg("echoes")
         .arg("--github")
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(out.status.code(), Some(1));
     let text = String::from_utf8(out.stdout).expect("utf8 output");
     assert!(text.contains("9 doctests (4 unique)"), "{text}");
@@ -375,7 +375,7 @@ fn binary_prints_annotations_beside_the_report() {
     assert!(
         marks
             .iter()
-            .all(|l| l.starts_with("::error file=") && l.contains("title=dejadoc::")),
+            .all(|l| l.starts_with("::error file=") && l.contains("title=echoes::")),
         "{text}"
     );
 }
@@ -384,21 +384,21 @@ fn binary_prints_annotations_beside_the_report() {
 #[cfg(feature = "cli")]
 fn unknown_package_fails_with_its_name() {
     // Only the cargo subcommand token at position 1 is stripped, so a flag value spelled
-    // "dejadoc" reaches workspace discovery, which names no such member.
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    // "echoes" reaches workspace discovery, which names no such member.
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(FIXTURE)
-        .arg("dejadoc")
+        .arg("echoes")
         .arg("--json")
         .arg("--package")
-        .arg("dejadoc")
+        .arg("echoes")
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(out.status.code(), Some(2));
     assert_eq!(String::from_utf8_lossy(&out.stdout), "");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(
-        stderr.contains("no workspace member named `dejadoc`"),
+        stderr.contains("no workspace member named `echoes`"),
         "{stderr}"
     );
 }
@@ -422,27 +422,27 @@ fn a_bare_organization_flag_scans_the_current_repository_owner() {
         "origin",
         "https://gitlab.com/owner/app.git",
     ]);
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(dir.path())
         .env_remove("GITHUB_REPOSITORY_OWNER")
-        .args(["dejadoc", "--organization", "--no-fail"])
+        .args(["echoes", "--organization", "--no-fail"])
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(out.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert!(stderr.contains("is not a GitHub repository"), "{stderr}");
     // An invalid owner is refused before any request, so no network is needed.
     for args in [
-        ["dejadoc", "--organization", "--no-fail", "--json"],
-        ["dejadoc", "--organization=../evil", "--no-fail", "--json"],
+        ["echoes", "--organization", "--no-fail", "--json"],
+        ["echoes", "--organization=../evil", "--no-fail", "--json"],
     ] {
         let out = Command::new(bin)
             .current_dir(dir.path())
             .env("GITHUB_REPOSITORY_OWNER", "../evil")
             .args(args)
             .output()
-            .expect("run dejadoc binary");
+            .expect("run echoes binary");
         assert_eq!(out.status.code(), Some(2), "{args:?}");
         let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
         assert_eq!(report["organization"]["name"], "../evil", "{args:?}");
@@ -472,10 +472,7 @@ fn file_module_items_carry_module_prefix() {
 fn threshold_builder_narrows_groups() {
     // Dupws has one 4-site group and one 2-site group: raising the
     // threshold through the builder keeps only the 4-site group.
-    let report = dejadoc::Dejadoc::default()
-        .threshold(3)
-        .run(FIXTURE)
-        .unwrap();
+    let report = echoes::Echoes::default().threshold(3).run(FIXTURE).unwrap();
     assert_eq!(report.total, 9);
     assert_eq!(report.groups.len(), 1);
 }
@@ -483,14 +480,14 @@ fn threshold_builder_narrows_groups() {
 const CONTEXT_FIXTURE: &str = "tests/fixtures/contextws";
 
 fn context_scan() -> Report {
-    Dejadoc::default()
+    Echoes::default()
         .context_blocks()
         .context_min_tokens(0)
         .run(CONTEXT_FIXTURE)
         .unwrap()
 }
 
-fn context_items(group: &dejadoc::ContextGroup) -> Vec<&str> {
+fn context_items(group: &echoes::ContextGroup) -> Vec<&str> {
     group.sites.iter().map(|s| s.item.as_str()).collect()
 }
 
@@ -613,7 +610,7 @@ fn same_line_context_sites_keep_their_columns() {
 
 #[test]
 fn the_default_context_floor_drops_the_fixture_contexts() {
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .context_blocks()
         .run(CONTEXT_FIXTURE)
         .unwrap();
@@ -626,11 +623,11 @@ fn the_default_context_floor_drops_the_fixture_contexts() {
 fn exit_code_reflects_context_groups() {
     let report = context_scan();
     assert_eq!(
-        dejadoc::exit_code(&report, false),
+        echoes::exit_code(&report, false),
         std::process::ExitCode::from(1)
     );
     assert_eq!(
-        dejadoc::exit_code(&report, true),
+        echoes::exit_code(&report, true),
         std::process::ExitCode::SUCCESS
     );
 }
@@ -638,9 +635,9 @@ fn exit_code_reflects_context_groups() {
 #[test]
 fn config_file_enables_context_blocks() {
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(".dejadoc.toml");
+    let path = dir.path().join(".echoes.toml");
     std::fs::write(&path, "context-blocks = true\ncontext-min-tokens = 0\n").unwrap();
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .config(&path)
         .unwrap()
         .run(CONTEXT_FIXTURE)
@@ -652,9 +649,9 @@ fn config_file_enables_context_blocks() {
             .any(|g| g.sites.iter().any(|s| s.item.ends_with("::count_up")))
     );
     let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join(".dejadoc.toml");
+    let path = dir.path().join(".echoes.toml");
     std::fs::write(&path, "context-blocks = true\n").unwrap();
-    let report = Dejadoc::default()
+    let report = Echoes::default()
         .config(&path)
         .unwrap()
         .run(CONTEXT_FIXTURE)
@@ -666,18 +663,18 @@ fn config_file_enables_context_blocks() {
 #[test]
 #[cfg(feature = "cli")]
 fn context_flags_run_the_scan_end_to_end() {
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(CONTEXT_FIXTURE)
         .args([
-            "dejadoc",
+            "echoes",
             "--context-blocks",
             "--context-min-tokens",
             "0",
             "--json",
         ])
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(
         out.status.code(),
         Some(1),
@@ -731,12 +728,12 @@ fn context_flags_run_the_scan_end_to_end() {
 #[test]
 #[cfg(feature = "cli")]
 fn context_default_floor_and_no_fail_from_the_command_line() {
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(CONTEXT_FIXTURE)
-        .args(["dejadoc", "--context-blocks", "--json"])
+        .args(["echoes", "--context-blocks", "--json"])
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -754,14 +751,14 @@ fn context_default_floor_and_no_fail_from_the_command_line() {
     let out = Command::new(bin)
         .current_dir(CONTEXT_FIXTURE)
         .args([
-            "dejadoc",
+            "echoes",
             "--context-blocks",
             "--context-min-tokens",
             "0",
             "--no-fail",
         ])
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(
         out.status.code(),
         Some(0),
@@ -773,18 +770,18 @@ fn context_default_floor_and_no_fail_from_the_command_line() {
 #[test]
 #[cfg(feature = "cli")]
 fn context_annotations_are_approximate_with_coordinates() {
-    let bin = env!("CARGO_BIN_EXE_cargo-dejadoc");
+    let bin = env!("CARGO_BIN_EXE_cargo-echoes");
     let out = Command::new(bin)
         .current_dir(CONTEXT_FIXTURE)
         .args([
-            "dejadoc",
+            "echoes",
             "--context-blocks",
             "--context-min-tokens",
             "0",
             "--github",
         ])
         .output()
-        .expect("run dejadoc binary");
+        .expect("run echoes binary");
     assert_eq!(
         out.status.code(),
         Some(1),

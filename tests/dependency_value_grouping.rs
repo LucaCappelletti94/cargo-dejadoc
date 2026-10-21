@@ -23,7 +23,7 @@ use public_sites::assert_public_sites;
 use same::same;
 use site_src::site;
 
-use dejadoc::{Dejadoc, DocTest, SourceFile, TargetScan, group};
+use echoes::{DocTest, Echoes, SourceFile, TargetScan, group};
 
 #[test]
 fn value_grouping_keeps_exact_passing_members_and_excludes_failing_variants() {
@@ -123,14 +123,14 @@ fn value_cli_fixture_preserves_exact_function_and_doctest_members() {
     let text = include_str!("fixtures/valuews/src/lib.rs");
     let target = target(text);
     for threshold in [0, 13] {
-        let report = Dejadoc::default()
+        let report = Echoes::default()
             .functions()
             .fn_min_tokens(threshold)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None);
         let function_groups: Vec<_> = report
             .groups
             .iter()
-            .filter(|group| group.kind == dejadoc::Kind::Function)
+            .filter(|group| group.kind == echoes::Kind::Function)
             .collect();
         let function_members = members(function_groups.iter().copied());
         assert_eq!(
@@ -146,7 +146,7 @@ fn value_cli_fixture_preserves_exact_function_and_doctest_members() {
         let doctest_groups: Vec<_> = report
             .groups
             .iter()
-            .filter(|group| group.kind == dejadoc::Kind::Doctest)
+            .filter(|group| group.kind == echoes::Kind::Doctest)
             .collect();
         assert_eq!(doctest_groups.len(), 1);
         let sites = &doctest_groups[0].sites;
@@ -174,7 +174,7 @@ fn value_cli_fixture_boundaries_and_reversed_sites() {
     let text = include_str!("fixtures/valuews/src/lib.rs");
     let mut target = target(text);
     let scan = |floor: usize| {
-        Dejadoc::default()
+        Echoes::default()
             .functions()
             .fn_min_tokens(floor)
             .run_targets("", std::slice::from_ref(&target), &|_, _| None)
@@ -183,7 +183,7 @@ fn value_cli_fixture_boundaries_and_reversed_sites() {
     let function_groups: Vec<_> = base
         .groups
         .iter()
-        .filter(|group| group.kind == dejadoc::Kind::Function)
+        .filter(|group| group.kind == echoes::Kind::Function)
         .collect();
     assert_eq!(function_groups.len(), 3);
     for group in &function_groups {
@@ -193,7 +193,7 @@ fn value_cli_fixture_boundaries_and_reversed_sites() {
         assert!(!excluded.groups.iter().any(|member| member.id == group.id));
     }
     target.files[0].parsed.items.reverse();
-    let reversed_scan = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let reversed_scan = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,
@@ -202,7 +202,7 @@ fn value_cli_fixture_boundaries_and_reversed_sites() {
     let doctest_sites: Vec<DocTest> = base
         .groups
         .iter()
-        .filter(|group| group.kind == dejadoc::Kind::Doctest)
+        .filter(|group| group.kind == echoes::Kind::Doctest)
         .flat_map(|group| group.sites.iter().cloned())
         .collect();
     assert_eq!(doctest_sites.len(), 2);

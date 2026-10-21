@@ -216,7 +216,7 @@ pub fn report(
 
 /// The settled extraction request URL, title and body percent-encoded.
 pub fn issue_url(owner: &str, repo: &str, item: &str) -> String {
-    let title = format!("[DEJADOC] Extract a public helper from {item}");
+    let title = format!("[ECHOES] Extract a public helper from {item}");
     let body = "Please extract the following range into a public function so downstream crates can reuse it: https://github.com/{owner}/{repo}/blob/abcdef1234567890abcdef1234567890abcdef12/src/lib.rs#L20-L24\n<!-- Check open and closed issues and pull requests for this range before submitting, and state your willingness to contribute a pull request. -->";
     format!(
         "https://github.com/{owner}/{repo}/issues/new?title={}&body={}",

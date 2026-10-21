@@ -1,6 +1,6 @@
 //! Helper grouping membership, canonical sizes and thresholds in the actual fixture.
 
-use dejadoc::{Dejadoc, DocTest, Group, Kind, Report, SourceFile, TargetScan, group};
+use echoes::{DocTest, Echoes, Group, Kind, Report, SourceFile, TargetScan, group};
 
 #[path = "support/group_members.rs"]
 mod group_members;
@@ -44,7 +44,7 @@ fn target(text: &str) -> TargetScan {
 }
 
 fn scan(text: &str, fn_min_tokens: usize, min_tokens: usize, threshold: usize) -> Report {
-    Dejadoc::default()
+    Echoes::default()
         .functions()
         .fn_min_tokens(fn_min_tokens)
         .min_tokens(min_tokens)
@@ -189,7 +189,7 @@ fn helper_ws_fixture_boundaries_and_reversed_sites() {
         "no group reaches the raised threshold"
     );
     target.files[0].parsed.items.reverse();
-    let reversed_scan = Dejadoc::default().functions().fn_min_tokens(0).run_targets(
+    let reversed_scan = Echoes::default().functions().fn_min_tokens(0).run_targets(
         "",
         std::slice::from_ref(&target),
         &|_, _| None,

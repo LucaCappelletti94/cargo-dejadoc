@@ -194,7 +194,7 @@ fn dependency_configuration_fills_unset_cli_controls() {
     let cache = dir.path().join("index");
     put(
         dir.path(),
-        ".dejadoc.toml",
+        ".echoes.toml",
         &format!(
             "context-select = \"crate:app\"\ncontext-search = \"crate:app\"\n[context-dependencies]\ndepth = 1\ninclude-dev = true\ncheck-latest = false\ncache-dir = '{}'\n",
             cache.display()

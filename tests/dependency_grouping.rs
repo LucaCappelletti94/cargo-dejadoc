@@ -11,7 +11,7 @@ mod site_file;
 use group_members::members;
 use site_file::site;
 
-use dejadoc::{Dejadoc, SourceFile, TargetScan, group};
+use echoes::{Echoes, SourceFile, TargetScan, group};
 
 fn check_pair(case: &support::Case, failing: bool) {
     let info: &[&str] = if failing { &["compile_fail"] } else { &[] };
@@ -146,7 +146,7 @@ fn dependency_function_groups_respect_original_module_scopes() {
         library: true,
     };
     let report =
-        Dejadoc::default()
+        Echoes::default()
             .functions()
             .fn_min_tokens(0)
             .run_targets("", &[target], &|_, _| None);

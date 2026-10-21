@@ -4870,7 +4870,7 @@ mod tests {
     #[test]
     fn alpha_renames_let_chain_binder_in_a_match_guard() {
         // rustc accepts let-chains in arm guards and scopes the binder over
-        // guard and arm body. skills/dejadoc/SKILL.md declares local names
+        // guard and arm body. skills/echoes/SKILL.md declares local names
         // never separate two bodies.
         let a = canonicalize("match w { Some(v) if let Some(z) = q && z == v => z, _ => 2 }");
         let b = canonicalize("match w { Some(v) if let Some(t) = q && t == v => t, _ => 2 }");

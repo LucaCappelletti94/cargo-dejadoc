@@ -1,18 +1,18 @@
 [package]
-name = "dejadoc"
-version = "0.6.0"
+name = "echoes"
+version = "0.7.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Luca Cappelletti"]
 description = "Find duplicated Rust doctests, functions and contexts"
 license = "MIT"
-repository = "https://github.com/LucaCappelletti94/cargo-dejadoc"
+repository = "https://github.com/LucaCappelletti94/cargo-echoes"
 keywords = ["cargo-subcommand", "doctest", "duplicate-detection", "cli", "rustdoc"]
 categories = ["command-line-utilities", "development-tools"]
 exclude = ["/docs", "/skills", "/fuzz", "/.clusterfuzzlite"]
 
 [[bin]]
-name = "cargo-dejadoc"
+name = "cargo-echoes"
 path = "src/main.rs"
 required-features = ["cli"]
 

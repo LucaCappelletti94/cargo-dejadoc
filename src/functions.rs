@@ -241,7 +241,7 @@ impl Walk<'_> {
         let allow = line
             .checked_sub(2)
             .and_then(|above| self.lines.get(above))
-            .is_some_and(|above| above.trim() == "// dejadoc: allow");
+            .is_some_and(|above| above.trim() == "// echoes: allow");
         let item = match self_type {
             Some(ty) => format!("{module}::{ty}::{}", sig.ident),
             None => format!("{module}::{}", sig.ident),
