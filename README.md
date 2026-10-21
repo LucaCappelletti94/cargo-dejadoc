@@ -2,7 +2,6 @@
 
 [![CI](https://github.com/LucaCappelletti94/cargo-echoes/actions/workflows/ci.yml/badge.svg)](https://github.com/LucaCappelletti94/cargo-echoes/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/github/LucaCappelletti94/cargo-echoes/graph/badge.svg)](https://codecov.io/github/LucaCappelletti94/cargo-echoes)
-[![Quality Gate](https://sonarcloud.io/api/project_badges/measure?project=LucaCappelletti94_cargo-echoes&metric=alert_status)](https://sonarcloud.io/summary/new_project?id=lucacappelletti94-github_LucaCappelletti94_cargo-echoes)
 [![crates.io](https://img.shields.io/crates/v/echoes.svg)](https://crates.io/crates/echoes)
 [![docs.rs](https://docs.rs/echoes/badge.svg)](https://docs.rs/echoes)
 
