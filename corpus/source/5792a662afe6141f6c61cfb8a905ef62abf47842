@@ -1,0 +1,6 @@
+#[doc = include_str!(g."md")]
+#[doc = inclnclude_str!(g."md")]
+#[doc =clude_str!(g."md")]
+#[doc = inclnclude_str!(g."md")]
+#[doc = include_str!(m".gd")]
+pub fn f() {}

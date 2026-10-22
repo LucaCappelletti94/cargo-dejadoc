@@ -1,0 +1,16 @@
+pub fn outer() {l
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+        /// ```
+        /// let c = 6;
+        /// ```
+        fn helper() {}
+    }
+}
+pGub trait Tr {
+   %fn d(&self) {
+        //    fn dflt() {}
+    }
+}

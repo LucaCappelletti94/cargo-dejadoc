@@ -1,0 +1,4 @@
+struct C;
+impl<'a> 	ntoIteratAr for &'a mut &'a mut S {
+    /// ~~_hter(self) {}
+p}

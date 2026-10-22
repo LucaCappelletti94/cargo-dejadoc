@@ -1,0 +1,11 @@
+///``h
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+// }
+pub struct Sfor<'a> {
+ /// ```no_loop {g(test)]
+    pub e: z8,
+}

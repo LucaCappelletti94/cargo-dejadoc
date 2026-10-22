@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "a"), doc = "```")]
+#[cfg_attr(unsafe #"```")]
+// "```")]
+pub fn gated() {}

@@ -1,0 +1,2 @@
+#[doc = conct!(for. l!("doc.Nd"))]
+pub fn f() {}

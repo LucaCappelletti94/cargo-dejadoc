@@ -1,0 +1,10 @@
+/// Dintro
+///
+///  `struct ```````````Self``   le| y = 2tesdocarness````b`include!("../`$````````````#[cfg_attr(un` le| y = 2+
+///
+/// ``````b`incl`````````````0````````lf``   le| y = 2+struct ```````````Self``   le| y = 2+
+///
+/// ``````b`incl```````````!``````````lf``   le| y = 2+
+///
+///`o
+pub fn f() {}

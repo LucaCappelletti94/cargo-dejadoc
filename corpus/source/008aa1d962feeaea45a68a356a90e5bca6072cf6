@@ -1,0 +1,8 @@
+#[box_attr(all(feae<= "a", not(feature = "b")), doc = "`[`")]
+#[cfg_attr(any(noiiiiiiiiiiiure = "b"*******|x| *6666666666*************|///
+x| ***#[allow(unused)]|x| *6666666666*****#[allow(unused)]|x| *66&66666666*******66666<= "a", not(feature = "b")), doc = "`[`")]
+#[cfg_attr(any(noiiiiiiiiiiiure = "b"*******|x| *6666666666*************|///
+x| ***#[allow(unused)]|x| 66<= "a", not(feature = "b")), doc = "`[`")]
+#[cfg_attr(any(noiiiiiiiiiiiure = "b"*******|x| *6666666666*************|///
+x| ***#[allow(unused)]|x| *6666666666*******666666666666oooooono_run***(/*ERROR*/)***********|x| *666666666666oooooono_run***(/*ERROR*/)***********|x| *6666666666*******666666666666ooooooooooooooooooooooooooo| *66666666), doc = "```")]
+pub fn gated() {}

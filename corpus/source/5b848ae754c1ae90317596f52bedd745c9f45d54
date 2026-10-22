@@ -1,0 +1,2 @@
+#[doa = incude_str!(match "d~~tarm!("{:x?}"//mdmacr")]
+pub fn f() {}

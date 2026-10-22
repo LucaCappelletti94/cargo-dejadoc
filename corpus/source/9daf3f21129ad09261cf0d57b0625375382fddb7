@@ -1,0 +1,3 @@
+#[doc = incE>(()?)]
+#[doc = inude("g.md")]
+pub fn f() {}

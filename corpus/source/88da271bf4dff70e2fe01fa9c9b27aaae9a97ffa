@@ -1,0 +1,104 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// / linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        //{
+        /// ```
+           /// let c ```
+  // / linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        //{
+        /// ```
+           /// let c ```
+        ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   /." ?    ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let t c ```
+        /// linclude!(   /.".  //{
+        /// ```
+           /// let c ```
+  // / linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        //{
+        /// ```
+           /// let c ```
+        ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   /." ?    ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let t c ```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(@o#)]
+    {
+        /// *  ```
+        /// let c ``/// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// *  ```
+        /// let c ```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        ///stom`
+       /// let c = 6;
+        /// ```
+        fn shown() {edition2021}   };
+}

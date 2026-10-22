@@ -1,0 +1,11 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+ o     {}
+ 
+    }
+match 2 {
+       0 =>compile_fail {
+          },
+    };
+}

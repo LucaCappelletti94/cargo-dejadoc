@@ -1,0 +1,3 @@
+pub fn outer() {
+    #[cfg(test{.class})]
+  return  macro_ru}

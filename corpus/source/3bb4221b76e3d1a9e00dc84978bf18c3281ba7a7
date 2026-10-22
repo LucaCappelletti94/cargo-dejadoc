@@ -1,0 +1,182 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+ A  }
+#[cfg(test)]
+    let _ = { //= ```
+  /// fn}
+/// ```
+pub mod m { fn f() {}
+}
+      /// le1 b = 2;
+        /// ```
+        fn also() {}JJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJJ };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+               /// ```
+            fn armed() {}
+               /// ```
+            /// let e = 5loop {        /// ```
+            fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: {
+           pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 0;
+        /// ```
+        fn hidden() {}
+ A  }
+#[cfg(test)]
+    let _ = { //= ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+               /// ```
+            fn armed() {}
+               /// ```
+            /// let e = 5;
+            /// ```
+            fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: {
+            /// ```
+           // / let f = 6;
+            /// ```
+            fn fa() {}
+        },
+b: {
+            /// ```JJJJ };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+               /// ```
+            fn armed() {}
+               /// ```
+            /// let e = 5loop {        /// ```
+            fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: {
+           pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 0;
+        /// ```
+        fn hidden() {}
+ A  }
+#[cfg(test)]
+    let _ = { //= ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+               /// ```
+            fn armed() {}
+               /// ```
+            /// let e = 5;
+            /// ```
+            fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        a: {
+            /// ```
+           // / let f = 5;
+            /// ```
+            fn fa() {}
+        },
+b: {
+            /// ```
+            /// let g = 7;
+            /// ```
+ 7;
+            /// ```
+            fn fb() {}
+        },
+    };
+} /// ```
+           // / let f = 6;
+            /// ```
+            fn fa() {}
+        },
+b: {
+            /// ```
+            /// let g = 7;
+            /// ```n hidden(        /// ```
+            fn fb() {}
+        },
+    };
+            /// let g = 7;
+            /// ```
+ 7;
+            /// ```
+            fn fb() {}
+        },
+    };
+} /// ```
+           // / let f = 6;
+            /// ```
+            fn fa() {}
+        },
+b: {
+            /// ```
+            ///1 let g = 7;
+            /// ```n hidden(        /// ```
+            fn fb() {}
+        },
+    };
+}

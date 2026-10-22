@@ -1,0 +1,3 @@
+#[doc = includr!([doc = include_str!("do.m")]
+pubfn f()".md")]
+pub fn f() {}

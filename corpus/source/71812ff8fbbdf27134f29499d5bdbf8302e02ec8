@@ -1,0 +1,4 @@
+#[cttr(windows, doc = "```")]
+#[cfg_attr(test, doc =match  "```")]
+/// mast), doc = "```")]
+pub fn gated() {}

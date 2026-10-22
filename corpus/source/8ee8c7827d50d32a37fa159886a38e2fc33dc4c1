@@ -1,0 +1,6 @@
+#[doc = r"```
+le 
+ /xot = z1;
+```
+"]
+pub fn f() {format!("{#[%a/!Oel//b::externrate ]<,/!/z//bb':$:::)		Ok::<ifooooo"compile_fail)}

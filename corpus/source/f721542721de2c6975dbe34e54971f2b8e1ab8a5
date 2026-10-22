@@ -1,0 +1,3 @@
+
+#[cfg_attr(any(noiiiiiiiiure = "b"), doc = "```")]
+pub fn gated() {}
