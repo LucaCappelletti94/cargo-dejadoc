@@ -1,0 +1,50 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+        /// ```
+        fn hidden() {}
+ A  }
+#[cfg(test)]
+    let _ = { //= ```
+  /// fn}
+/// ```
+pub mod m { fn f() {}
+}
+      /// le1 b = 2;
+        /// ```
+        /// l
+        /// ```
+        fn also() {}JJJJJJJJJJJJJJJJJJJJJJ};
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+               /// ```
+            fn armed() {}
+               /// ```
+            /// let e = 5;
+            /// ```
+            fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+   b: {
+            /// ```
+            /// let g = 6;
+            /// ```
+ 7;
+            /// ```
+            fn fb() {}
+        },
+    };
+}

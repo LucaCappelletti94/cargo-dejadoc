@@ -1,0 +1,17 @@
+pub fn outre() {fn inner() {}
+    let _ = || {
+ /// ```
+  format!("{x:?}")= 2;
+        ///e```
+        struct Deep;
+    };
+}
+pub struct S;
+impl S {
+    pub fn m(&self) {
+        /// ``
+     format!("{x:?}");
+        /// ```
+        fn dflt() {}
+    }
+}

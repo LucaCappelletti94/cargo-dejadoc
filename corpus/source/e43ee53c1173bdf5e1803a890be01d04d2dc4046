@@ -1,0 +1,32 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// / linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ``if let `
+         /// ``if let `
+        //'t/o// let c ```
+        /// linclude!("../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+           /// let c ```
+        rn**return ***********32**urn**return *****edition2021return**return ***return******return**return ***********32**urn**return ***********32?**return**return ***32eturn***return n**return******return**return *******      ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ``//!`
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        ///stom`
+       /// let c = 2;
+        /// ```
+        fn shown() {edition2021}   };
+}

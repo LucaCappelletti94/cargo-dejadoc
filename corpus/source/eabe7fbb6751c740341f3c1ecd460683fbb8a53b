@@ -1,0 +1,8 @@
+//! Fun the integrationites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+    let totar(&values, q);
+        assert_eq!bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb(total, 9);
+     assert!edition2022(total > 0);
+    }
+}

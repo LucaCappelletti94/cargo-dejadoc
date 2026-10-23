@@ -1,0 +1,6 @@
+#[d=c = r"```
+le 
+ /x/t = z0;
+```
+"]
+pub fn f() {format!("{#[%a/!Okkmkkkkkkkkkkokkkkkkkkkkkkkkkkkkkkkkkkked)]x:$>?}r#"compile_fail)}

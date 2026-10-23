@@ -1,0 +1,6 @@
+#[doc = r"`e 
+ 
+/x/1;
+```
+"]
+pub fn f() {format!("{xA:;?}r#"co,mf,i,e_fail)}

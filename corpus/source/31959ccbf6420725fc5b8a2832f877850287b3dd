@@ -1,0 +1,2 @@
+#[doc =concatretr<n=u !("prefix ", b'a'include_)]
+pub fn f() {}

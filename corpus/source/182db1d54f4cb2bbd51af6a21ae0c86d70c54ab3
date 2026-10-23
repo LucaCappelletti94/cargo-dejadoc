@@ -1,0 +1,7 @@
+#[derive(Debug)]
+#[doc(hidden)]
+#[cfg_attr(no`(feature = "strrng") =for "```ignore4")]
+/// fn 
+/// ```
+pub struct Gate
+#[

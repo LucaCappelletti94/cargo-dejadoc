@@ -1,0 +1,10 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+            /// ```
+       while so() {
+            /// ```
+       while so   /// ```
+      },
+    };
+}

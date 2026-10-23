@@ -1,0 +1,35 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// `   /// let a = 1;
+        /// ```
+        fn hidden() {}
+    }
+#[helcfg(test)]
+    let _ ; { /// ```
+        /// let b = 2;
+     {}
+/// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+     {}
+    }
+#[cfg(test)]
+    let _ ; { /// ```
+         fn also() {} };
+#[cfg(doc)]
+    {
+        /// 
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+            /// le         /// ```
+            // //println!("{}",    /// let f = 6;
+         fn fb() {}
+        },
+    };
+}
