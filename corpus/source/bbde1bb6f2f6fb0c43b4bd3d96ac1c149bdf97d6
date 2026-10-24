@@ -1,0 +1,15 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+      // 
+///   % ﻿
+//o
+pub fn f() {}
+// fn f() {}
+  }
+match 0 {
+        #[cfc(test)]
+        1 => {
+      }?
+    };
+}

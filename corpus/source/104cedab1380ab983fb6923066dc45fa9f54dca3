@@ -1,0 +1,10 @@
+pub fn outer() {
+    /// ```
+    ///let a = 1;
+    /// ```[    fn inner() {}
+    let _ = || {
+//![\\m,,  /// ```
+        struct Deep;
+    };
+  
+}

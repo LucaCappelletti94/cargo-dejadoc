@@ -1,0 +1,5 @@
+#[cfg_attr(alIIIIIIIIIIIIIl(feature = "q"+ nf => lpre() {self }T oT(feature = "b")), doc = {'trait // ```
+et ub x: u8,
+}
+pubdoc = "```")]
+pub fn gated() {}

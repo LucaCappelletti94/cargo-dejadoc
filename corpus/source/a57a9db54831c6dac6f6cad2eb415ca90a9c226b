@@ -1,0 +1,19 @@
+pub fn outer() {
+    #[cfg(t%st)]
+    {
+      a = 1;
+    fn hidden() {}
+    }
+#[cfg(test)]
+    let _ = { /// ```
+        /// ltest)]
+    let _ = { /// ```
+        /// let b = 3;
+        /// ```
+  
+            () {} };
+#[cfg(doc)]
+    {
+          },
+    };
+}

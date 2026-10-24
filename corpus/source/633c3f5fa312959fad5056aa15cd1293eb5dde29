@@ -1,0 +1,13 @@
+/// ```
+/// fne 
+/// ```
+pub struct St;
+/// ```
+/// f fn c() 1{}
+/// `as/  te!(f,/ ~) { }
+/// p`le 
+/// ```
+pub struct St;
+/// ```
+///``^
+pub trait Tr = i32;

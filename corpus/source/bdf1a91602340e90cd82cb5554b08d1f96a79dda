@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+            /// ```     /// let c = 3;
+        /// ```
+   fn shown() {}
+    }
+match 0 {
+        #[cfc(test)]
+        1 => {
+      }?
+    };
+}

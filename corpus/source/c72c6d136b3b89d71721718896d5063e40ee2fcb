@@ -1,0 +1,8 @@
+pub fn outer() {
+    #[cg(sft)]extern
+    {
+        /// ```
+        /// 	pub fn f() {}
+    fn shown() {} }
+match 0 { };
+RRRTRRR}

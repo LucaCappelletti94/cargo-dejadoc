@@ -1,0 +1,16 @@
+//  l) {}
+/// ```
+pub union U { _: i32 }
+/// r r~r!/// ```
+/// fn e() {}
+/// ```
+pub union U { _: i32 }
+/// r r~r!(//     let x !(/>>>
+/// ```
+pub union U { _: i32 }
+/// r r~r!/// ```
+/// fn e() {}
+/// ```
+pub union U { _: i32 }
+/// r r~r!(//    let/0;
+///>#!%alow(ldead_code)][/**owhile n f() {}
