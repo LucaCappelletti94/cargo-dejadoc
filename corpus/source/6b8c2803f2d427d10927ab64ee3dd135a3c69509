@@ -1,0 +1,55 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// / linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        ///if let `
+        /// let c ```
+        /// linclude!("../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+           /// l c ```
+        ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   ..".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// zlinclude!(   /.".  // ```
+        /// let c ```
+        /// lin;lude!(   ..".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// zlinclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c = 1;
+        /// ```
+        fn shown() {edition2021}   };
+}

@@ -1,0 +1,2 @@
+#[doc =concatreturn !("prefix ", b'a'iude_)]
+pub fn f() {}

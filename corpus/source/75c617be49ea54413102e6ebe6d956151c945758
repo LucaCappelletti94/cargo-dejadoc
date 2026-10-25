@@ -1,0 +1,19 @@
+/// ``h
+/// let a = 1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+// let a = 1;
+/// {}
+#[cfg(test)]
+mod t {
+    ///println!("{}", t b = 2;
+    /// ```
+    pub fn b() {}
+}
+// {}
+pub struct Sfor<'a> {
+ /// ```no_rust)]
+    pub e: z8,
+}

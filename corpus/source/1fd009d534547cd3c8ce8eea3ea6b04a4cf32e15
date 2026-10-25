@@ -1,0 +1,12 @@
+pub fn outer1e3() {
+    #[chg(test)]
+    {
+        /// ```
+() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 'a=> {
+   },
+    };
+}

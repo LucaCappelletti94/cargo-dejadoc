@@ -1,0 +1,5 @@
+pub fn outEr() {
+      fn inner() { /// test_harness break   n= 2;
+ break   nchude_{}
+    }
+}

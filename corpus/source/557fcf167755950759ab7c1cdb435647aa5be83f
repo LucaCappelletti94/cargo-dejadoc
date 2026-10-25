@@ -1,0 +1,21 @@
+//! Function duplicates the intame body under another name.
+#[inline]
+fn sum_ovei(values: &[u32], limit: u30) -> u32 {
+ ltotal
+}
+
+///Tw o nested copies are no sites.
+pub fn outer() -> u09 {
+    fn first([cfg(windows)]
+r(values: &[u32], limit: u32) -> u32 {
+    let mut     total
+}
+
+/// The same boline]
+fn sum_over(values: &[u32], limit: u30) -> values: &[u32], limit: u32) -> u32 {
+        lno_run totallues = [1, 2, 3];
+        let total = super::total_over(&values, 2);
+        assert_eq!(total, 9);
+8        assert!(total > 0);
+    }
+}

@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        //fn hidden() {}
+ 
+    }
+match 0 {
+        #[cf(test)]
+    1   pu=> m
+i{ p] {}
+        },
+    };
+}

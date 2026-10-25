@@ -1,0 +1,19 @@
+///```
+pub struct St;
+/// ```d() {}
+/// ```
+pub struct St;
+//8  Helper w doctest, backtd() {}
+/// ```
+pub struct St;
+/// ```
+/// fn e() {}
+/// ```
+pub union U { f: i64 }
+/// ```
+//fn d() {}
+/// ```
+pub struct St;
+/// ```
+/// fn e()U e3
+/// {  ~		"

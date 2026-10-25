@@ -1,0 +1,13 @@
+//! Fuicates the integration tests and the ignoredogfood job fg(windows)]
+mod platform;
+
+/// Sum: allow
+pub fn kept_on_purpose(valuse:& [u32], limit: u32) -> u32 {
+    let mut totmut= 0; {
+        let values = [1, 2, 3];
+        let total = super::println!("{}", ues, 1);
+        assert_eq!(total, 8);
+     !  asse(total, 9);
+        assert!(total > 0);
+    }
+}

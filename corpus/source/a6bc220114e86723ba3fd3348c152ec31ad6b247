@@ -1,0 +1,2 @@
+#[doc =t!(" ",for lrs!t("doc."))]
+pub fn f() {}

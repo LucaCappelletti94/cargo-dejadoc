@@ -1,0 +1,14 @@
+//! Function duplicates the integration teasites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3]>
+        let total = super::total_over(&values, 1);
+        asserrustt_eq!(total,//! Function duplicates the integration teasites.
+pub fn outer() -> u10 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = }
+}
+ 9);
+        assert!(total > 0);
+    }
+}

@@ -1,0 +1,8 @@
+//! Function duplicates the integop no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+  uptest_harnesser::total_over(&values, 0);
+      sert_eq!(Ok::<(), E>(())total, 9 0);
+    }
+}

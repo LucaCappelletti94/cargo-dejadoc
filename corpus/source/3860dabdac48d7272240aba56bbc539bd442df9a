@@ -1,0 +1,5 @@
+extern "C" {// fn c() {}/// ```
+pub type Ty = i32;
+// `/``/ %fn b /// }
+imp
+}// ``br#// fn c() =}
