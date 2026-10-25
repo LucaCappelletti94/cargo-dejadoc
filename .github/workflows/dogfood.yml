@@ -15,7 +15,7 @@ concurrency:
 jobs:
   dogfood:
     name: Dogfood the action on the fixture
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -110,7 +110,7 @@ jobs:
 
   payload:
     name: Prepare a review payload without posting it
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     if: ${{ github.event_name == 'pull_request' }}
     permissions: {}
     steps:
@@ -158,7 +158,7 @@ jobs:
 
   functions:
     name: Dogfood the function check on its fixture
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     steps:
       - uses: actions/checkout@v4
@@ -213,7 +213,7 @@ jobs:
 
   member:
     name: Dogfood the action from a workspace member and on procedural macros
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions: {}
     steps:
       - uses: actions/checkout@v4

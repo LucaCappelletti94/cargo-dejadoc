@@ -36,7 +36,7 @@ Options can also live in `.echoes.toml` at the workspace root, and `cargo echoes
 on: pull_request
 jobs:
   echoes:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       pull-requests: write

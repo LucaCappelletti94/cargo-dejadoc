@@ -14,7 +14,7 @@ env:
 jobs:
   verify-version:
     name: Verify tag matches version
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     outputs:
       crate-release: ${{ steps.check.outputs.crate-release }}
 
@@ -49,7 +49,7 @@ jobs:
   publish:
     name: Publish to crates.io
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: read
       id-token: write
@@ -86,7 +86,7 @@ jobs:
   create-release:
     name: Create the GitHub release
     needs: ci
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-26.04
     permissions:
       contents: write
     steps:
@@ -112,7 +112,7 @@ jobs:
         # Keep this target list in sync with the platform case in action.yml.
         include:
           - target: x86_64-unknown-linux-gnu
-            os: ubuntu-latest
+            os: ubuntu-26.04
           - target: aarch64-unknown-linux-gnu
             os: ubuntu-24.04-arm
           - target: x86_64-apple-darwin
