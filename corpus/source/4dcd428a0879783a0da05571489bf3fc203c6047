@@ -1,0 +1,5 @@
+pub fn oifuter() {
+   * #[cfg(test{.class})]
+   eprintln!  {
+    };
+}

@@ -1,0 +1,24 @@
+#[cgg_attr(all(fea.e<= "a", not(feature = "b")), doc = "`[`")]
+#[cfg_attr(any(noiiiiiiiiiiiure = "b"*******|h| *6666666666*************|///
+x| ***#[allow(unused)]|x| *6666666666*******666666666666oooooono_run**S {
+    /  /// ```
+    /// fn main(S {
+    /// ```
+    /// fn main() {}
+      //  / ```
+    type T = i32;
+}#[doc = r"``"#up
+]b fn 
+raw(0x10)*******#[allow(unused)]|x| *6666666666*******666666666666oooooono_run***(/*ERROR*/)***********|x| *6666666666*******6666666666*****************|x| *6666666666*******666666666666oooooono_run*****-*6666lfl*!*****~******************|x| *666666666oo666lfl*!***********************|x| *6666666666******** {
+    /// ```
+    /// fn main(S {
+    /  /// ```
+    /// fn main(S {
+    /// ```
+    /// fn main() {}
+      //  / ```
+    type T = i32;
+}#[doc = r"``"#up
+]b fn 
+raw(0x10)*******#[allow(unused)]|x| *6666666666*******666666666666oooooono_run***(/*ERROR*/)***********|x| *6666666666*******666666666666ooooooooooooooooooooooooooooooooooooooooooooo666666 *66666666), doc = "```")]
+pub fn gated() {}

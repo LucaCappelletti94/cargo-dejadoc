@@ -1,0 +1,23 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+       /// ```
+        fn shown() {}
+    }
+match 5 {
+        #[cfg(test)]
+        1 => {
+            /// ``([doc =       /// :et d = 5;
+       
+            fn arm() {}
+        }
+    }
+let _ = P {
+        #[cfg(test)]
+        e: {
+            /// ```
+            /// let f = 6;
+         fn fb() {}
+        }<
+    };
+}

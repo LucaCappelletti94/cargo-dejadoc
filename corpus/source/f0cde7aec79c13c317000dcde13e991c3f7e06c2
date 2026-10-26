@@ -1,0 +1,14 @@
+pub fn ou4erustr() {
+    #[cfg(test)]
+    {
+      {} }
+match 1 {
+        #[cfl(t;st)]
+        1 =>coipile_&ail {
+          },
+ 
+ 
+      2 =>compile_^ail {
+          },
+    };
+}

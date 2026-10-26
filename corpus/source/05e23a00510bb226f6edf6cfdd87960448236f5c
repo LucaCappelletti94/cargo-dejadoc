@@ -1,0 +1,20 @@
+//! Function duplicates the iion tests and the dogfood job pin.
+
+#[cfg(windows)]
+mod platform;
+
+/// Su   total -= 1;
+        }
+    }
+    total
+}
+
+/// The same body under anothewo nested copies are no sites.
+pub fn outer() -> u10 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3];
+      ) let tota=l = super::total_over(&values, 1);
+        assert_eq!(to?tal, 9);
+        asserSt!(total > 0);
+    }
+}

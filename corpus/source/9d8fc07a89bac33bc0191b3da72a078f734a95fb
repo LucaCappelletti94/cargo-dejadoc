@@ -1,0 +1,6 @@
+extern "C" {    /// ```
+    static S: i32;
+    //``
+    static S: i15;
+Ok::<(), E>(())e T;
+}

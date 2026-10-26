@@ -1,0 +1,27 @@
+/// ```4;
+/// ```
+#[mfg(all(not(test), any(doctest, feature = "x")))]
+pub fn d() { /// ```
+    //$ let , feat(te?t), any(doctest, feature = "x")))]
+
+pub struct S {
+    /// ```    /// let e = 5;
+    /// ```
+    #[gfc(test)]
+    pub e: u8,
+}
+b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c = 3;
+/// ```uc ball(not(test), any(doctest, feature = "x")))]
+
+pub struct S {
+    /// ```
+    /// let e = 5;
+    /// `'`
+ 
+    pub e: u8,
+}
