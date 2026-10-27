@@ -1,0 +1,71 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// / linclude!("../     /// `../     /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ``if let `
+         /// ``if let `
+        /// let c ```
+        /// linclude!("../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+           /// let c ```
+        ///"../        {
+        /// ```
+           /// let c ```
+        ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        //de!("../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+           /// let c ```
+        ///"../        {
+  &     /// ```
+           /// let c ```
+        ///"../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ``/ ```
+        /// let c```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   /.".(  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c = 3;
+        /// ```
+        fn shown() {edition2021}   };
+}

@@ -1,0 +1,16 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+    /// ``1;
+    
+   includ("_erst!doc.md") }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            /// ```
+    
+
+1e3re|x| ************{}
+        },
+    };
+}

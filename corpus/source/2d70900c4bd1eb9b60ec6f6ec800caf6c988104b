@@ -1,0 +1,4 @@
+#[derive()]
+#[doc(hidre ="stgnore")]
+/// fn ``
+pub struct Gated;

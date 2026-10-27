@@ -1,0 +1,6 @@
+pub fn outer() 
+ {  #[cfg2(test)]
+ yield  t{
+    
+  };
+}

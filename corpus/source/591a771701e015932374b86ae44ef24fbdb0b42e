@@ -1,0 +1,9 @@
+pub fn outer() {
+    /// ```
+   ignore {
+    // ```
+   (/*ERROR*/) /iZZZ/
+///'a		= 0;
+1e3
+/f}
+}
