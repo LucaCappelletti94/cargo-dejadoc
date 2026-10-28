@@ -1,0 +1,4 @@
+//@generated~t o
+
+///>#r
+extern fn Ffor<ga>() {}

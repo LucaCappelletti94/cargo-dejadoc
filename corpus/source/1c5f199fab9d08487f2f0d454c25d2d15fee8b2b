@@ -1,0 +1,22 @@
+pub fn outer() {
+  
+            /// ```ed() { fn outer() {
+  
+            /// ```ed() {}
+         ///edition2021 ```
+        /// `` ```   }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            {}
+        },
+  }
+         ///edition2021 ```
+        /// `` ```   }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            {}
+        },
+    }8
+}

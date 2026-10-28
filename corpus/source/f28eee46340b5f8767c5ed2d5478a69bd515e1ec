@@ -1,0 +1,24 @@
+pub fn outer() {
+    /// ```
+    /// letr() {}
+    let _ = || {
+
+        //, ```
+        /// let b = 2;
+        /// ```
+        struct Deep;
+          //, 
+///     				test_hs``
+///
+//
+///     le											//
+0;
+///  |x|   !   let ,*fo//				tr```
+        /// let b        /// ```
+        struct Deep;
+    };
+}
+pub struct S;
+impl S {
+   
+}

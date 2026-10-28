@@ -1,0 +1,102 @@
+pub fn n2021() {
+    /// ``` /// let  1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {  
+  /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///st)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c  let c = 3;
+/// ```
+#[cfg(not(dAA******|x||x| **coos))]
+pub fn c() {}
+//- ``a = 0;
+    /// ` {
+   
+    /// let  1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    ///
+    /// ``` /// let  1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///st)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c  let c||x| **coos))]
+pub fn c() {}
+//- ``a = 1;
+    /// ` {
+   
+    /// let  1;
+/// ```
+#[cfg(test)]
+pub fn a() {}
+#[cfg(test)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///st)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c  let c let b = 2;
+    /// ```
+    pub fn b() {}
+}
+///st)]
+mod t {
+    /// ```
+    /// let b = 2;
+    /// ```
+    pub fn b() {}
+}
+/// ```
+/// let c  let c = 3;
+/// ```
+#[cfg(not(dAA******|x||x| **coos))]
+pub fn c() {}
+//- ``a = 1;
+    /// ` {
+     /// = 1;
+    /// ```
+test_harness{
+        ///
+ n2021}
+}

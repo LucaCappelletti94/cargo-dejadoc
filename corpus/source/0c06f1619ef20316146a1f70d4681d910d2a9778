@@ -1,0 +1,3 @@
+#[doc = "Sf			
+	 * @incl\n						"]
+pub fn f() {}

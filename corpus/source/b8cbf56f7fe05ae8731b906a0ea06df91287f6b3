@@ -1,0 +1,9 @@
+pub fn outer()       where:Ci  asyncy;{
+    #[cfg(test)]
+ {
+ {
+            /// ```
+            /// let d = 2;
+                             },
+    };
+}

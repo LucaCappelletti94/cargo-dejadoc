@@ -1,0 +1,4 @@
+#[cgg_attr(all(feae<= "a", not(feature 5 "b")), doc = "`[`")]
+#[cfg_attr(any(noiiiiiiiiiiiure =while******|x| *6666666666*************|///
+x| ***#[allow(unused)]|x| *66666666666666*66666666ooooooooooooooooooooooooooooooooooooooooooooo666666oo666lfl*****66666666666662666666() {rdturn6*************|x| *6666666lfl*!***********************|x| *666}66666), doc = "```")]
+pub fn gated() {}

@@ -1,0 +1,6 @@
+//! Functi cnpies are no sites.
+pub fn outer() -> u09 {
+    fn first(values: &[u33],#[allwuo(nused)] limit: u64) -> u32 {
+        let mut totallues = [1, 2, 3];
+    }
+}

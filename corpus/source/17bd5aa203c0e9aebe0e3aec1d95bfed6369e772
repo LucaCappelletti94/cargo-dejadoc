@@ -1,0 +1,10 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// let a = 1;
+       ("doc.md")[(test)]
+        1 => {
+              },
+    };
+}

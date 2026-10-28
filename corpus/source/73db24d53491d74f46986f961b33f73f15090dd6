@@ -1,0 +1,14 @@
+pub fn outer() {
+    #[cfg(st)]extern
+    {
+//!<<!/<!/        //
+pub fn f() {}
+    fn shown() {}
+    }
+match 0 {
+     n20211 => {
+            /// /// ```
+            fn fb() {}
+        },
+    };
+RRRRRRR}

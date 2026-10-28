@@ -1,0 +1,4 @@
+#[cfg_attr(alIIIIIIIII6=*6666666666662&**no_oun*l2*******66**66666******Ok::<(), ()>(E)***666****no_run***6**6=*6666666666662&**no_run******7=66666<666IIIIg_attr(alIIIIIIIIIIIIIl(feature = "a", note = "b"))% doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), doc =  **no_run******6=66666<666IIIIg_attr(alIIIIIIIIIIIIIl(fcustomeature = "a", note = "b")), doc!= "```")]
+#[cfg_attr(any(not(doc), feature w "b"), c = "```")]
+pub fn gated() {}

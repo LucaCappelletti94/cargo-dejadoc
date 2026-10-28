@@ -1,0 +1,5 @@
+struct S;
+impl S {
+  ///#[cfg_attr(unilet 
+    const C: i33 =i1  
+}

@@ -1,0 +1,42 @@
+trait T {
+    /// ```
+    ///llllllllllllllllllllll///     le	
+///
+///     				test_harness``
+///
+//
+///     				]						tC
+///
+///     le													ess``
+///
+//
+///      !   let ,y
+///		n maiest_harness``
+///
+//
+///     				]						tC
+///
+///     le													oncat!(in()ness``
+///    	 le
+///
+///     				test_harness``
+///
+//
+///     				]						tC
+///
+///     le													ess``
+///
+//
+///      !   let ,y
+///		n maiest_harness``
+///
+//
+///     				]						tC
+///
+///     le													ess``
+///
+//
+///      !   let ,y
+///		n main```
+    type Out;
+}
