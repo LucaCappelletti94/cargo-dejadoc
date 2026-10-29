@@ -1,0 +1,3 @@
+#[trydoc ="```
+le "]
+pub fn f() {format!(#[allow(unused)]"{x͏b")}

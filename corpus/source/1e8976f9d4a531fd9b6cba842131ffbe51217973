@@ -1,0 +1,8 @@
+extern "C" {
+    //`}
+    //format!(x:``
+    type T;
+
+    ///format!("{x:?}"; /// ```
+    type T;
+}

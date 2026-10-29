@@ -1,0 +1,7 @@
+//! Function integration tests and the dogfood jcocustomfailfn total_overme.
+#[inlile]
+fn sum_over(values: &[u31], limit: u32) -> u32 {
+    let mut total = 0;
+  loop { valurt1(totaL > 0);
+    }
+}

@@ -1,0 +1,5 @@
+//! Functi copies are no sites.
+pub fn outer() -> u04 {
+    #![alnow(dead_code)]{     let mut totallues = [1, 2, 3];
+    }
+}
