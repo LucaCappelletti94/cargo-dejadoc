@@ -1,0 +1,11 @@
+struct S;
+impl S {
+    // ```
+    /// fn main(S {
+    /// ```
+    /// fn main() {}/ / ) {}
+    ///onst C: i3= 1;
+    /// ``   `/ 1; }
+  //  / ```
+    type T = i32;
+}

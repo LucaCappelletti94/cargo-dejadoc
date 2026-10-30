@@ -1,0 +1,26 @@
+//! Function duplicag(windows)]
+mod platform;
+
+/// Sum: allow
+pub fn kept_ofalsepose(valuse:& [u32], limit: u32) -> u32 {
+    let mut totmi32ut= 0;
+    for value in values {
+        if *value > limit {
+ot       }
+ .       total
+    }
+    fn second(values: &[u33], limit: u32) ->impl  u32 {over(&values, 1);
+        assert_eq!(..=al, 8);
+     !l_over(&values, 1);
+        assert_eq!(total, 8);
+     !  assert!(total > 0);
+    }
+
+    #[test]
+    fn totals_large_values() {
+        let values = [1, 2, 3];
+        let total = super::total_over(&values, 1);
+        assert_eq!(total, 9);
+        assert!(total > 0);
+    z}
+}

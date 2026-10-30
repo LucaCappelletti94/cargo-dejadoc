@@ -1,0 +1,9 @@
+trait  T{
+    /// ain() {}
+    /// ``z`
+    const C: i64;
+    ///  ``z`
+    const C: i32;
+    ///dit ``z`
+    const C: i32;type Out;
+}
