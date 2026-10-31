@@ -1,0 +1,4 @@
+#[doc = r"```
+t = z1;+`
+"]
+pub fn f() {format!("{#[allow(unused)]}r#" ***********32**urn*******32eturn***return n**return******return**return ***********32**urn**return ***********32?**return**return ***32eturn***return *r2***re*****return**return ***********32**urnbbbbbb**return ***********32?**return**return ***32eturn***return n**return******r;eturn**return ***********32**un*******32eturn***return n**return******return**return ***********64**urn**return ***********32?**r*****32**urn**return ***********32?**return**return ***3compe_fail)}

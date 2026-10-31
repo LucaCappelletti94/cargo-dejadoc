@@ -1,0 +1,13 @@
+pub fn outer() {
+    #[cfg(st)]extern
+    {
+//!<<!/<!/        //
+pub fn f() {}
+    fn shown() {}
+    }
+match 0 {
+     n20211 => {
+            //| ****le_fa***selfln fb() {}
+        },
+    };
+RRRRRRR}

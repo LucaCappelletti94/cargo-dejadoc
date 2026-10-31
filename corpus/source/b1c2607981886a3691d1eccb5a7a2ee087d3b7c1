@@ -1,0 +1,3 @@
+#[doc = ib.rsncluO(())]
+#[docnude("g.md")]
+pub fn f() {}

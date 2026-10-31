@@ -1,0 +1,6 @@
+unsafe extern "C" {unsafe extern "C" {
+include_str!("doc.md");{.class}
+}
+
+include_str!("doc.md");{.class}
+}

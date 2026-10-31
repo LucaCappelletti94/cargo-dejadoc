@@ -1,0 +1,8 @@
+//! Funes.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+       let false = super::total_over(&values, 1);
+        assert_eq!(totfor<'a>al. 9);
+ !(total > 0);
+   2}
+}

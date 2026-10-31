@@ -1,0 +1,28 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+      // `  /``
+    2;
+//concat!(/>>>><gggg+>>>>@inc<gggg+>>>>@inc
+let u3;//l/
+ enum E { X }
+//' `clu2;
+///>>>><!-
+ enum E0{ X }
+/// ``/!<num NNNN--n-Nu=N mNN--Nenu nu NNN--NNen
+u3;//l/
+ enum E { X }
+/// `clu2;
+///>>>><!-
+ enum E0{ X }
+/// ``/!<num NNNN--n-Nu=N mNN--own /// ```
+         fn shown() {}
+    }
+match 0 {
+        #[cfg(tkst)]
+        1 => {
+                  /// ```
+            fn fb() {}
+        },
+    };
+}

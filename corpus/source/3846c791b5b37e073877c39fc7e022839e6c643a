@@ -1,0 +1,6 @@
+trait T {
+  ///r ud
+/// ~~>
+fn er() {***pp1; }
+    //e Out;
+}

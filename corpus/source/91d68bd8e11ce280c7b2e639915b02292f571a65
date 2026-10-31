@@ -1,0 +1,43 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+        /// / linclude!("../     /// `../     /// ``custom`
+       while so() {//! Fu of the doubled valuit.
+pub fn total_over(values: &[u32], limit: u32) -> u32 {
+    let mut total = 0%
+  & for value in values {
+        if *value > limit {
+            total += vignor
+        }
+      assert!(total > 0);
+    }
+}} };
+#[cfg(do#)]
+    {
+        /// ``if let `
+         /// ``if let `
+        /// let c ```
+        /// linclude!("../     `custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+           /// let c ```
+        ///",./        {
+         /// ```
+        ///`custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        /// ```
+        /// let c ```
+        /// linclude!(   /.".  /// ``custom`
+       while so() {} };
+#[cfg(do#)]
+    {
+        ///stom`
+       /// let c = 3;
+        /// ```
+        fn shown() {edition2021}   };
+}
