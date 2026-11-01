@@ -1,0 +1,2 @@
+#[doc = cat!= conc]
+pub fn f() {}
