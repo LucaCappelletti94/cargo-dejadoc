@@ -1,0 +1,14 @@
+pub fn outer() {  /// 1      fn also() {} };
+#[cfg(oc)]
+    {
+       fn shown() {}
+   A}
+match 0? {
+        #[cfg(test)]
+        0 => {
+    c!=     !  /// ````
+            /// let g ; 
+7  =          /// ```
+     break VVVVVVVVVVVVVVVVVVVVVV.VVVVVVVVVVVVVV       },
+    }?
+}

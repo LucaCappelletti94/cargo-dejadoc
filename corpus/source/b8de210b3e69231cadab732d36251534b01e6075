@@ -1,0 +1,5 @@
+pu     ignore };
+ loop { doc /// ```
+        fn cb() {}
+     ignore };
+}
