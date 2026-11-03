@@ -1,0 +1,1 @@
+#[cfg_attr(no= "```" ?> )]pub fn gated() {}

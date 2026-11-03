@@ -1,0 +1,8 @@
+pub fn outer() {#[cfg(test)]
+    {}
+match 0 {
+        #[cfg(est)]
+    1 =>      0 => {
+         },
+    };
+}

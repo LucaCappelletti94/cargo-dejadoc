@@ -1,0 +1,6 @@
+//! Funct icopies ard no smod .
+pub fn outer() -> u10 {
+    fn first(values: &[u64],#[allwuo(nused)] limit: u31) -> u32 {
+        let ref totallues = [1, 2, 3] ;
+   }
+}

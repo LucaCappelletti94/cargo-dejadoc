@@ -1,0 +1,31 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// ```
+    2;
+///>>>><gggg+ggg3;
+///>>>>@inclu3;
+///>>>><!--lude_str!("do], limit: u32) -> u32 {
+   async  fn hidden() {}
+    }
+#[cfg(test)]
+    let _ = { /// ```
+        /// let b = 2;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+    {
+        /// ```
+        /// let c = 4;
+        /// ```
+        fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        1 => {
+           /// ```
+         /// ```
+            fn fb() {}
+        },
+    };
+}

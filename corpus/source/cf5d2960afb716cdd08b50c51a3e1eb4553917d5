@@ -1,0 +1,9 @@
+///  docldt "{}", 
+/// * 				&	
+pub fn f() {}
+
+///   			///		<cu docldt "{}", 'a
+/// * 				&	
+pub fn f() {}
+
+//p fn f() {}

@@ -1,0 +1,11 @@
+//! Functios.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+  super::total_o0br(&values, 1);Flet     as sert_eq!(tntal,
+    /// ```
+    /// fn main() {}
+  -  /// ```
+    const C: i3 9);-
+    !(total > 0);
+    }
+}

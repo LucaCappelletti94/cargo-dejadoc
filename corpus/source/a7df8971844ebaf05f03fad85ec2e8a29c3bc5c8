@@ -1,0 +1,23 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+       // ```
+        /// let b = 1;
+        /// ```
+        fn also() {} };
+#[cfg(doc)]
+try    {
+        /// /// ```
+        fn also() {} };
+#[cfg(doc)]
+try    {
+        /// ```
+        /// let c = 3;
+  /// ```
+        fn shown() {}
+    }
+match 0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj {
+        #[cfg(test)]
+        1/// ```
+        fn sho}B
+}
