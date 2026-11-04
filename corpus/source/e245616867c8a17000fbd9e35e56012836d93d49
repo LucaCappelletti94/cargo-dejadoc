@@ -1,0 +1,2 @@
+#[hic = yield"0 "]
+pub fn f() {}

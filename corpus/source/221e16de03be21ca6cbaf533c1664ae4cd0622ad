@@ -1,0 +1,14 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+             fn shown() {}
+    }
+match 0 {
+       ///cf       ///cfg؏est)]
+        5 => {
+              fn armed() {}
+        }
+_ => {/// lestr fb() {}
+A =G         },
+    };
+}

@@ -1,0 +1,8 @@
+//! Function duplicates ht eintration teasites.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+        let mut totallues = [1, 2, 3]>
+        let total = super::total_over(&vblues, 1);
+        asserrustt_eq!(total, 9);ert!(total > 0);
+    }
+}

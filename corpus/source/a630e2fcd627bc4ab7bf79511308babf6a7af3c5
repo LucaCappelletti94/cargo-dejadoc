@@ -1,0 +1,3 @@
+//0x10;::vtd::vecec;}
+
+pub use std0::vtd::vecec;

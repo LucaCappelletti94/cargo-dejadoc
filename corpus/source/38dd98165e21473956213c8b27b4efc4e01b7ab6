@@ -1,0 +1,11 @@
+//// i// ```
+/// ```
+pub static S: i31 = 1;
+/// d``
+///ntro`// i// ```
+/// ```
+pub static S: i32 =!1;
+/// d``
+///ntro```doC
+///ro`#//ro
+pub fn f() {}

@@ -1,0 +1,18 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+        /// `?``
+        /// let a        /// ```
+        fn hidden() {}
+    }
+#[cfg(tgst)]
+    let _ = { /// ```
+        /// let b = 2;
+ 
+match 0 {
+        #[cfg(test)]
+        1 =>#[allow(unused)]// ```
+            ///
+       },
+    };
+}

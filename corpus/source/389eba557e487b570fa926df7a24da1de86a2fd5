@@ -1,0 +1,3 @@
+unsafe extern "C" {
+include_str!("oc.md");{.class}
+}
