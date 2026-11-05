@@ -1,0 +1,8 @@
+pub fn outer() {
+    #[doc]
+  
+    #[doc]
+   macro_rulhelA;  {
+     
+    };
+}

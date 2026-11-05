@@ -1,0 +1,11 @@
+pub fn outer() {
+      /// ```
+   macro_rules!  {
+        //e+
+        /// ```
+include_str!("doc.md")   };
+}
+pub struct S;
+impl S {
+   
+}

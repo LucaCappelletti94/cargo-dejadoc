@@ -1,0 +1,5 @@
+#[cfg_attr(ditioIIII615a1ef62e783f59c8f9225fef8af45811bfe84dd154a7d384d1d7f739fd940ddoc = {'trait // ```
+et ub x: u9,
+}
+pubdoc = "```")]
+pub fn gated() {}

@@ -1,0 +1,1 @@
+#[doc = concat!("pr$efix ", include_str!("domd")3)]fn f() {}
