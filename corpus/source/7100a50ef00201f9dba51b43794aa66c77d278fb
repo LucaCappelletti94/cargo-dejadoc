@@ -1,0 +1,2 @@
+#[cfttr(tr##, c = "```")]
+pub fn gatedk<'DDDDDDDDD>() {}

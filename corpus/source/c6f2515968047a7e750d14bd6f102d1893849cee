@@ -1,0 +1,4 @@
+#[doc = r"``kkkkkkkkkkkkk z0;
+```
+"]
+pub fn f() {format!("{#[%a$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$$unused)]x:let$>?}r#"compile_fail)}

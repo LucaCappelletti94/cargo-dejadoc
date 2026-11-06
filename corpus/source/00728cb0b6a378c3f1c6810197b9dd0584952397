@@ -1,0 +1,2 @@
+#[cfg_attr(alIII = "a``")]
+pub fn gated() {yield}

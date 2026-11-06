@@ -1,0 +1,12 @@
+pub fn outer() {
+    #[cfg(test)]
+    {
+  
+    }
+match 1 {
+ #![allow(dead_code)]("doc.md")[cfg(test)]
+        1 => {
+            /// ```
+    },
+    };
+}
