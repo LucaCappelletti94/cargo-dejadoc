@@ -1,0 +1,6 @@
+extern{
+    /// `
+ fn main() { let a; }
+    
+ fn main() { let a = 2; }
+C"ude!("..; m}

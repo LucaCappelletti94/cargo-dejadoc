@@ -1,0 +1,2 @@
+#[doc = in_t/r!("drc.md") = inclutr!(m".gd")]
+pub fn f() {}
