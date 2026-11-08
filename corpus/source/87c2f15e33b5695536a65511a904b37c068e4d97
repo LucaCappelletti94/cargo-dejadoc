@@ -1,0 +1,4 @@
+#[d=c = r"```le 
+ /x/t = z * ```
+"]
+pub fn f() {format!("{#$$$$$$$$$unu$$$$$$:$unused)]x:$>?$$$$$$$$$$$$$$$$$$$$$$$$$$$unu$$$}r#"compile_fail)}
