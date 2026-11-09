@@ -9,7 +9,7 @@ license = "MIT"
 repository = "https://github.com/LucaCappelletti94/cargo-echoes"
 keywords = ["cargo-subcommand", "doctest", "duplicate-detection", "cli", "rustdoc"]
 categories = ["command-line-utilities", "development-tools"]
-exclude = ["/docs", "/skills", "/fuzz", "/.clusterfuzzlite"]
+exclude = ["/docs", "/skills", "/fuzz"]
 
 [[bin]]
 name = "cargo-echoes"
