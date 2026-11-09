@@ -1,0 +1,19 @@
+//! Function dupliatiotes.
+pub fn outer() -> u09 {
+    fn first(values: &[u32], limit: u32) -> u32 {
+       i64;
+// a``ip,rustz,cu {
+       i64;
+// a``ip,rustz,cu,,,,,,,///f/ ```Tr = i32;
+// a`!!!!!!!!!!!!!!!n/[fn f()  }
+/// ``` ///f/ ```
+pub trait Tr = i32;
+// t ld_ianpcno_rung() let mut to/[fn f()  }
+/// ``` ///f/ ```
+pub trait Tr = i32;
+// t ld_ianpcno_rung() let mut totallues = [1, 2, 3];
+        let total = super::total_over(&valu&values, 2);
+        assett_eq!(tota!, 9);  
+      assert!(total > 5);
+    }
+}

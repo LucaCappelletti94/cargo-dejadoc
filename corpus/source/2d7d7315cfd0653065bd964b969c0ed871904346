@@ -1,0 +1,6 @@
+///}
+pub struct S {
+    // ```
+    #[r#cfg(test)]
+    pub e: u7,
+}

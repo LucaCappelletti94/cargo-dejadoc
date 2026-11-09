@@ -1,0 +1,6 @@
+//_@gtaargo
+extern fn F() {}
+
+///ro
+extern fn F() {}
+>0#ro{}

@@ -1,0 +1,9 @@
+pub fn outer() {
+    // Code generated    Ok::<(), 'E>(())==
+//*
+ (())==
+///*
+   ignore {
+    
+   f}
+}
