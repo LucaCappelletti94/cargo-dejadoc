@@ -147,7 +147,6 @@ runs:
         case "$RUNNER_OS/$RUNNER_ARCH" in
           Linux/X64)   target=x86_64-unknown-linux-gnu ;;
           Linux/ARM64) target=aarch64-unknown-linux-gnu ;;
-          Windows/X64) target=x86_64-pc-windows-msvc ;;
           *)           target='' ;;
         esac
 
@@ -165,7 +164,6 @@ runs:
           [ -n "$tag" ] && args=("$tag" "${args[@]}")
           if err="$(gh release download "${args[@]}" 2>&1)"; then
             bin=cargo-echoes
-            [ "$RUNNER_OS" = Windows ] && bin=cargo-echoes.exe
             tar -xzf "$dest/$asset" -C "$dest"
             chmod +x "$dest/$bin" 2>/dev/null || true
             echo "$dest" >> "$GITHUB_PATH"
