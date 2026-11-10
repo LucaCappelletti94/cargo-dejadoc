@@ -198,7 +198,7 @@ runs:
 
     - name: Restore the dependency index
       if: ${{ inputs.mode != 'post' && inputs.context-dependency-depth > 0 }}
-      uses: actions/cache/restore@0057852bfaa89a56745cba8c7296529d2fc39830
+      uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ env.echoes-context-index-dir }}/public
         key: echoes-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1
@@ -1134,7 +1134,7 @@ runs:
 
     - name: Save the dependency index
       if: ${{ always() && !cancelled() && inputs.mode != 'post' && inputs.context-dependency-depth > 0 && steps.scan.outputs.index-ok == 'true' && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) }}
-      uses: actions/cache/save@0057852bfaa89a56745cba8c7296529d2fc39830
+      uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
       with:
         path: ${{ env.echoes-context-index-dir }}/public
         key: echoes-context-index-${{ runner.os }}-${{ inputs.context-target != '' && inputs.context-target || 'any' }}-v1-${{ github.run_id }}-${{ github.run_attempt }}

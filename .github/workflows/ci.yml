@@ -19,9 +19,9 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: cargo fmt --all --check
@@ -44,19 +44,19 @@ jobs:
           - name: no-std
             run: cargo nextest run --workspace --lib --no-default-features
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@8cca0918f8471c33515202b73f56ab27f2bed283 # v2.87.29
+      - uses: taiki-e/install-action@3a3daafd3b7f23b8f65d9f5ba2db203fb59b79e2 # v2.90.2
         with:
           tool: cargo-nextest
-      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
         with:
           key: ${{ matrix.name }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - run: ${{ matrix.run }} --locked --cargo-profile fast-test --profile ci
       - if: matrix.name == 'default'
         run: cargo test --workspace --doc --locked
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: junit-${{ matrix.name }}
@@ -66,7 +66,7 @@ jobs:
   witnesses:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: dtolnay/rust-toolchain@stable
       - run: python3 -B -m unittest discover -s tests -p dependency_witnesses_test.py -v
         env:
@@ -78,7 +78,7 @@ jobs:
           --request-id "DG-CI-M0-${{ github.run_id }}-${{ github.run_attempt }}"
           --output "${{ runner.temp }}/dependency-witnesses.json"
           --timeout 180
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.dependency_witnesses.outcome != 'skipped'
         with:
           name: dependency-witnesses
@@ -90,7 +90,7 @@ jobs:
           --request-id "DG-CI-M2-${{ github.run_id }}-${{ github.run_attempt }}"
           --output "${{ runner.temp }}/dependency-constants-witnesses.json"
           --timeout 600
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.dependency_constants_witnesses.outcome != 'skipped'
         with:
           name: dependency-constants-witnesses
@@ -100,7 +100,7 @@ jobs:
         run: |
           python3 -B tests/dependency_constants_witnesses.py --cases tests/fixtures/dependency/algebra_cases.json --request-id "DG-CI-M3-${{ github.run_id }}-${{ github.run_attempt }}" --output "${{ runner.temp }}/dependency-algebra-witnesses.json" --timeout 600
           python3 -B tests/dependency_constants_witnesses.py --cases tests/fixtures/dependency/algebra_signed_cases.json --request-id "DG-CI-M3-SIGNED-${{ github.run_id }}-${{ github.run_attempt }}" --output "${{ runner.temp }}/dependency-algebra-signed-witnesses.json" --timeout 600
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always() && steps.dependency_algebra_witnesses.outcome != 'skipped'
         with:
           name: dependency-algebra-witnesses
