@@ -3,9 +3,21 @@ name: Audit
 
 "on":
   pull_request:
+    paths:
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - deny.toml
+      - .cargo/audit.toml
+      - .github/workflows/audit.yml
   push:
     branches:
       - main
+    paths:
+      - Cargo.lock
+      - "**/Cargo.toml"
+      - deny.toml
+      - .cargo/audit.toml
+      - .github/workflows/audit.yml
   schedule:
     # Keeps the default branch re-scanned as new advisories land.
     - cron: "23 4 * * 1"
