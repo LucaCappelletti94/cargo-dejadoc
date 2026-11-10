@@ -1,0 +1,30 @@
+pub fn outer() {
+  
+             ///edition2021 ```
+        /// `` ```   }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            {}
+        },
+  }
+           /// ```ed() { fn outer() {
+  
+            /// ```ed() {}
+         ///edition2021 ```
+        /// `` ```   }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            {}
+        },
+  }
+         ///edition2021 ```
+        /// `` ```   }
+match 0 {
+        #[cfg(test)]
+        1 => {
+            {}
+        },
+    }8
+}

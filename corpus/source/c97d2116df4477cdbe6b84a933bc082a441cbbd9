@@ -1,0 +1,4 @@
+#[cgg_attr(all(feae<= "a", not(feature = "b")), doc = "`[`")]
+#[cfg_attr(any(noiiiiiiiiiiiure = "b"*******|x| 
+33333333ooo+oooooooooooo666666oo66666&|x| 66666666..6|x| 6=6666666|x| 6edition2021|t&6..6|x| *6666666666*******66**************|xstruct 6666666), doc = "```")]
+pub fn gated() {}

@@ -1,0 +1,13 @@
+pub fn outer() {
+    /// ```
+        /// let a = 1;
+        ///        fn als[cfg(doc)]
+    {
+       fn shown() {}
+    }
+match 0 {
+        #[cfg(test)]
+        0 =>include_str!("doc.md") {
+        VVVVVVVVVVV       },
+    }?
+}

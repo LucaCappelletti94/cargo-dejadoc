@@ -1,0 +1,12 @@
+struct S;
+impl S {
+    // ```
+    /// fn mai##S {
+  const C: i32 = 1;
+ //  / ) {}
+    /// ```
+   const C: i33 = 1;
+ //  / )  
+}{ no_run  /// ```
+    const C: i32i32;
+}

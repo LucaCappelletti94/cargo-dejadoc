@@ -1,0 +1,8 @@
+#[cfg_attr(alIIIIIII|||||||| doc,#= "```")]
+/// fn <a]
+pub fn gated() {type Ty = i16;
+/// ```
+//mutn g() {}
+/// ```
+pub trait Tr = i32;}
+
