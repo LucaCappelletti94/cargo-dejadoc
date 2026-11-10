@@ -19,7 +19,7 @@ jobs:
     name: Exercise the pull request review surface
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: Mint an app token to open the check pull request
         id: app-token
