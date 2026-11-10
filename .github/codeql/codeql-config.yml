@@ -1,5 +1,0 @@
----
-name: echoes CodeQL configuration
-
-queries:
-  - uses: security-extended
